@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="GEO Optimiser: an agent-led hackathon proposal for evidence-based generative optimisation, with simulated dashboard evidence and Markdown tasks for downstream agents.">
+  <meta name="description" content="GEO Optimiser: an agent-led proposal for evidence-based generative optimisation, human-approved CMS publishing and governed content maintenance.">
   <meta name="color-scheme" content="light dark">
   <title>GEO Optimiser | Hackathon 2026</title>
   <script>
@@ -190,6 +190,19 @@
     .approval h4 { font-size: 14px; }
     .approval ol { padding-left: 22px; font-size: 13px; }
     .handoff { margin-top: 28px; padding-top: 24px; border-top: 2px solid var(--cp-accent); }
+    .cms-publish { margin-top: 28px; padding-top: 24px; border-top: 2px solid var(--cp-success); }
+    .cms-controls { display: grid; grid-template-columns: minmax(210px, .7fr) 1.3fr; gap: 24px; align-items: end; margin-top: 18px; }
+    .cms-controls label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 7px; }
+    .cms-controls select { width: 100%; padding: 10px 12px; border: 1px solid var(--cp-border-strong); border-radius: 5px; background: var(--cp-bg-elevated); color: var(--cp-text); }
+    .cms-status { margin-top: 14px; padding: 12px 14px; border-left: 3px solid var(--cp-warning); background: var(--cp-warning-soft); color: var(--cp-text); font-size: 12px; }
+    .cms-status.approved { border-color: var(--cp-success); background: var(--cp-success-soft); }
+    .publish-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 28px; }
+    .publish-card { border-top: 3px solid var(--cp-accent); padding-top: 17px; }
+    .publish-card:nth-child(2) { border-color: var(--cp-green); }
+    .publish-card:nth-child(3) { border-color: var(--cp-yellow); }
+    .publish-card h3 { font-size: 16px; }
+    .publish-card p { color: var(--cp-text-muted); font-size: 13px; margin-top: 8px; }
+    .publish-card small { display: block; color: var(--cp-accent); font-size: 11px; font-weight: 600; margin-top: 12px; }
     .artifact-list { margin-top: 18px; }
     .artifact { border-top: 1px solid var(--cp-border); padding: 14px 0; }
     .artifact summary { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
@@ -269,10 +282,11 @@
     .rewrite-piece h4 { font-size: 14px; margin-bottom: 8px; }
     .rewrite-piece p { font-size: 13px; color: var(--cp-text-muted); }
     .rewrite-piece small { display: block; margin-top: 10px; font-size: 11px; color: var(--cp-text-muted); }
-    .workflow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 22px; list-style: none; padding: 0; margin: 32px 0 0; }
+    .workflow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px 22px; list-style: none; padding: 0; margin: 32px 0 0; }
     .workflow li { position: relative; }
     .step-number { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 13px; font-weight: 650; border-radius: 50%; margin-bottom: 20px; position: relative; z-index: 1; }
     .workflow li:not(:last-child)::after { content: ""; position: absolute; top: 19px; left: 48px; right: -12px; height: 1px; background: var(--cp-border); }
+    .workflow li:nth-child(4)::after { display: none; }
     .workflow h3 { font-size: 15px; margin-bottom: 8px; }
     .workflow p { font-size: 13px; color: var(--cp-text-muted); }
     .workflow .step-output { font-size: 11px; color: var(--cp-accent); margin-top: 14px; font-weight: 600; }
@@ -288,7 +302,7 @@
     .parallel-nodes { display: grid; gap: 12px; }
     .parallel-nodes .node { min-height: 118px; }
     .architecture-caption { margin-top: 18px; border-left: 3px solid var(--cp-accent); padding-left: 14px; font-size: 12px; color: var(--cp-text-muted); }
-    .handoff-flow { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr; align-items: stretch; margin-top: 24px; border-top: 1px solid var(--cp-border); padding-top: 24px; }
+    .handoff-flow { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr; align-items: stretch; margin-top: 24px; border-top: 1px solid var(--cp-border); padding-top: 24px; }
     .handoff-flow .node { min-height: 144px; }
     .handoff-flow .approval-node { border-top-color: var(--cp-warning); }
     .integration-key { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--cp-border); }
@@ -350,8 +364,9 @@
     @media (max-width: 1050px) {
       .container { width: calc(100% - 48px); }
       .navlinks { gap: 16px; }
-      .workflow { grid-template-columns: repeat(3, 1fr); row-gap: 30px; }
-      .workflow li:nth-child(3)::after { display: none; }
+      .workflow { grid-template-columns: repeat(2, 1fr); row-gap: 30px; }
+      .workflow li:nth-child(4)::after { display: block; }
+      .workflow li:nth-child(even)::after { display: none; }
       .architecture-flow { grid-template-columns: 1fr 24px 1fr 24px 1fr; gap: 16px 0; }
       .architecture-flow > .arrow:nth-child(6) { display: none; }
       .node { min-height: 130px; }
@@ -394,15 +409,13 @@
       .stat:nth-child(2) { border: 0; padding-left: 0; }
       .stat:nth-child(3) { padding-left: 16px; }
       .stat-value { font-size: 28px; }
-      .evidence, .rewrite-grid, .audience-layout, .technical-grid, .delivery-grid, .integration-key { grid-template-columns: 1fr; gap: 24px; }
+      .evidence, .rewrite-grid, .audience-layout, .technical-grid, .delivery-grid, .integration-key, .publish-grid, .cms-controls { grid-template-columns: 1fr; gap: 24px; }
       .evidence > div:first-child { border-right: 0; padding-right: 0; }
       .evidence > div:last-child { border-top: 1px solid var(--cp-border); padding-left: 0; }
       .evidence { gap: 8px; }
       .mini-heading { align-items: flex-start; }
       .mini-heading small { text-align: right; }
       .workflow { grid-template-columns: 1fr 1fr; gap: 28px 22px; }
-      .workflow li:nth-child(3)::after { display: block; }
-      .workflow li:nth-child(even)::after { display: none; }
       .step-number { margin-bottom: 13px; }
       .architecture-flow { grid-template-columns: 1fr; gap: 10px; }
       .architecture-flow > .arrow:nth-child(6) { display: grid; }
@@ -468,7 +481,7 @@
   <header class="topbar">
     <nav class="container nav" aria-label="Main navigation">
       <a class="wordmark" href="#main"><span class="brand-grid" aria-hidden="true"><span></span><span></span><span></span><span></span></span>GEO Optimiser</a>
-      <div class="navlinks"><a href="#demo">Dashboard</a><a href="#workflow">How it works</a><a href="#architecture">Architecture</a><a href="#delivery">The build</a></div>
+      <div class="navlinks"><a href="#demo">Dashboard</a><a href="#workflow">How it works</a><a href="#architecture">Architecture</a><a href="#publishing">Publishing</a><a href="#delivery">The build</a></div>
       <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch colour theme" aria-pressed="false"><svg class="icon"><use href="#i-theme"/></svg></button>
     </nav>
   </header>
@@ -478,7 +491,7 @@
         <div class="eyebrow">Hackathon 2026 / Marketing intelligence</div>
         <h1 id="title">GEO Optimiser</h1>
         <p class="proposition">Make your content a better source for AI answers.</p>
-        <p class="problem">Search rankings don't tell marketers whether their content appears in generative answers. Brief a GEO agent with a webpage URL, inspect the visibility evidence, and receive prioritised Markdown tasks that downstream agents can turn into reviewable edits.</p>
+        <p class="problem">Search rankings don't tell marketers whether their content appears in generative answers. Brief a GEO agent with a webpage URL, inspect the visibility evidence, turn recommendations into reviewable edits, and publish an approved revision through the customer's existing CMS workflow.</p>
         <div class="intro-bottom">
           <div class="value-line"><span><svg class="icon"><use href="#i-check"/></svg>See where you appear</span><span><svg class="icon"><use href="#i-check"/></svg>Understand the content gaps</span><span><svg class="icon"><use href="#i-check"/></svg>Know what to change</span></div>
           <a class="primary" href="#demo">Explore the proposal <svg class="icon"><use href="#i-arrow"/></svg></a>
@@ -526,6 +539,7 @@
               <div class="rewrite"><div class="mini-heading"><h3>A more useful passage</h3><small>Illustrative rewrite &middot; No measured uplift</small></div><div class="rewrite-grid"><div class="rewrite-piece"><div class="eyebrow">Before / Generic marketing copy</div><h4>The future of teamwork is here.</h4><p>Northstar is the best way to work together. Our powerful, all-in-one platform takes productivity to the next level for every team.</p><small>Unsubstantiated superlative. No specific use case or supporting source.</small></div><div class="rewrite-piece after"><div class="eyebrow">After / Proposed, subject to verification</div><h4>How can remote teams track decisions in one place?</h4><p>Northstar brings project discussions, shared documents and decision logs into one workspace. For distributed teams, a decision log records the owner, context and next step, so colleagues can catch up asynchronously.</p><small>Before publishing: verify these features and add a link to the relevant product guide. This is an editorial example, not a claim about a real product.</small></div></div></div>
             </div>
             <section id="handoff" class="handoff" aria-labelledby="handoff-heading"><div class="mini-heading"><h3 id="handoff-heading" tabindex="-1">Markdown tasks for downstream agents</h3><span class="badge sim">Draft / simulated</span></div><p class="form-note">A versioned manifest and one task per recommendation. The complete run is exported, regardless of dashboard filters. No files are dispatched to agents; publication requires separate human approval.</p><div class="agent-actions"><button id="generate-tasks" class="primary" type="button" disabled>Generate Markdown tasks <svg class="icon" aria-hidden="true"><use href="#i-file"/></svg></button></div><p id="artifact-status" class="form-note">Complete an approved simulation to prepare the hand-off.</p><div id="artifact-list" class="artifact-list"></div></section>
+            <section id="cms-publish" class="cms-publish" aria-labelledby="cms-heading"><div class="mini-heading"><h3 id="cms-heading" tabindex="-1">Human-approved CMS publishing</h3><span class="badge sim">Connector simulation</span></div><p class="form-note">The content revision, destination and CMS action require a separate human approval. This mockup never contacts Shopify, Sitecore or Work IQ.</p><div class="cms-controls"><div><label for="cms-target">Illustrative CMS destination</label><select id="cms-target"><option value="shopify">Shopify / PDP or collection page</option><option value="sitecore">Sitecore / landing or campaign page</option></select></div><div class="agent-actions"><button id="approve-content" class="secondary" type="button" disabled>Record human approval <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></button><button id="publish-content" class="primary" type="button" disabled>Publish approved revision <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button></div></div><p id="cms-status" class="cms-status" role="status" aria-live="polite">Generate the Markdown bundle before preparing a CMS draft.</p></section>
           </div>
         </div>
         <noscript><p class="error">JavaScript is disabled. The proposal remains readable; the scripted conversation, query results, recommendation list and Markdown generation require JavaScript. No live agent is connected.</p></noscript>
@@ -533,7 +547,7 @@
     </section>
 
     <section id="workflow" class="section section-white" aria-labelledby="workflow-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">02 / The workflow</div><h2 id="workflow-title">Six stages. One evidence trail.</h2></div><p>The GEO front-end agent guides the marketer through evaluation, then packages evidence-linked tasks for downstream drafting and review.</p></div>
+      <div class="section-top"><div><div class="eyebrow">02 / The workflow</div><h2 id="workflow-title">Eight stages. One governed loop.</h2></div><p>The GEO front-end agent moves from evaluation to drafting, human approval, CMS publishing and measured retesting.</p></div>
       <ol class="workflow">
         <li><span class="step-number">01</span><h3>Fetch the page</h3><p>The marketer briefs the GEO agent with a URL and goal. The agent calls Microsoft Web IQ Browse for page content and metadata.</p><p class="step-output">Agent brief &rarr; snapshot</p></li>
         <li><span class="step-number">02</span><h3>Find target queries</h3><p>A query-generation LLM infers subject, audience and intent. The front-end agent presents candidate queries for marketer approval.</p><p class="step-output">Content &rarr; approved intent set</p></li>
@@ -541,11 +555,13 @@
         <li><span class="step-number">04</span><h3>Measure presence</h3><p>Match the page, domain, brand and key claims in answers and citations. Score each query-agent result.</p><p class="step-output">Evidence &rarr; visibility matrix</p></li>
         <li><span class="step-number">05</span><h3>Compare sources</h3><p>When the page is missing, inspect cited competitors for relevance, authority, structure, clarity, factual support, freshness, citations and machine readability.</p><p class="step-output">Competing pages &rarr; gaps</p></li>
         <li><span class="step-number">06</span><h3>Package improvements</h3><p>Produce a Markdown task per recommendation and a manifest. Include evidence, edits, rationale and acceptance checks for downstream agents.</p><p class="step-output">Gaps &rarr; .md tasks + manifest</p></li>
+        <li><span class="step-number">07</span><h3>Review &amp; approve</h3><p>Ground the draft in authorised Work IQ context, validate claims and bind human approval to the exact content revision and CMS destination.</p><p class="step-output">Draft &rarr; approved revision</p></li>
+        <li><span class="step-number">08</span><h3>Publish &amp; maintain</h3><p>Publish the approved revision through a scoped Shopify or Sitecore connector, then monitor the live page and propose future FAQ updates.</p><p class="step-output">CMS receipt &rarr; retest loop</p></li>
       </ol>
     </div></section>
 
     <section id="architecture" class="section" aria-labelledby="architecture-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">03 / System architecture</div><h2 id="architecture-title">An agent in. Agent-ready tasks out.</h2></div><p>The front-end agent owns the conversation and orchestration. Evaluator profiles test visibility; downstream agents draft changes. These are distinct roles.</p></div>
+      <div class="section-top"><div><div class="eyebrow">03 / System architecture</div><h2 id="architecture-title">Evidence in. Approved content live.</h2></div><p>The front-end agent coordinates evaluation and drafting. Human approval and the CMS publishing service remain separate control boundaries.</p></div>
       <figure class="architecture" style="margin-inline:0" aria-label="Proposed flow from marketer and GEO front-end agent through evaluation to Markdown files, downstream agents and human approval">
         <div class="architecture-flow">
           <div class="node proposal"><span class="badge proposed">Proposed agent</span><h3>GEO front-end agent</h3><p>Marketer conversation, query approval + dashboard evidence</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
@@ -553,24 +569,34 @@
           <div class="node proposal"><span class="badge proposed">Proposed component</span><h3>Query-generation LLM</h3><p>Subject, audience, intent</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
           <div class="parallel-nodes"><div class="node integration"><span class="badge real">Real service*</span><h3>Web IQ Search</h3><p>Ordered results + passages</p></div><div class="node integration"><span class="badge real">Real service*</span><h3>Microsoft Foundry evaluators</h3><p>Three proposed profiles; answers + citations</p></div></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
           <div class="node proposal"><span class="badge proposed">Proposed component</span><h3>Comparison engine</h3><p>Presence scoring + source gaps</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
-          <div class="node proposal"><span class="badge proposed">Proposed component</span><h3>Recommendation engine</h3><p>Evidence-linked task objects &rarr; Markdown output below</p></div>
+          <div class="node proposal"><span class="badge proposed">Proposed component</span><h3>Recommendation engine</h3><p>Evidence-linked tasks + authorised Work IQ guardrails</p></div>
         </div>
         <div class="handoff-flow" aria-label="Recommendation engine output and proposed downstream processing">
           <div class="node proposal"><span class="badge proposed">Versioned output contract</span><h3>Markdown task bundle</h3><p>Manifest + one .md per recommendation. Run IDs, evidence, priorities, proposed edits and acceptance checks.</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
-          <div class="node proposal"><span class="badge proposed">Proposed consumers</span><h3>Downstream agents</h3><p>Content editor + technical editor prepare drafts. Review agent checks facts and validation notes. No agents connected here.</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
-          <div class="node approval-node"><span class="badge sim">Separate approval gate</span><h3>Human review</h3><p>Review proposed changes before any separately authorised publishing process. Retest after approved edits.</p></div>
+          <div class="node proposal"><span class="badge proposed">Proposed consumers</span><h3>Content + review agents</h3><p>Prepare drafts, apply brand guardrails and return evidence mapping. They cannot approve or publish.</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
+          <div class="node approval-node"><span class="badge sim">Separate approval gate</span><h3>Human review</h3><p>Approve the exact revision and destination. Changed content invalidates approval.</p></div><span class="arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow"/></svg></span>
+          <div class="node integration"><span class="badge proposed">Illustrative connectors</span><h3>Shopify / Sitecore</h3><p>Scoped CMS draft and publish action, receipt, audit trail and rollback path.</p></div>
         </div>
-        <figcaption class="architecture-caption">The GEO agent coordinates tool calls and returns evidence to the dashboard. Proposed shared run record: page snapshot, approved queries, locale, timestamp, model/version, instructions, sources and raw answers. Comparison requests competitor pages through Browse. The offline fixture contains observations, not raw answer snapshots. Its five Markdown files preserve run provenance and draft-only status; they are never dispatched automatically.</figcaption>
+        <figcaption class="architecture-caption">The GEO agent coordinates tool calls and returns evidence to the dashboard. Proposed shared run record: page snapshot, approved queries, locale, timestamp, model/version, instructions, sources, raw answers, content revision, approvals and publication receipt. Comparison requests competitor pages through Browse. Work IQ contributes permission-trimmed brand and policy context. The offline fixture contains observations, not raw answer snapshots, and simulates the approval-to-CMS transition without network access.</figcaption>
       </figure>
       <div class="integration-key">
-        <div><span class="badge real">Real integration targets*</span><p><a href="https://webiq.microsoft.ai/" target="_blank" rel="noopener noreferrer">Microsoft Web IQ</a> and <a href="https://learn.microsoft.com/en-us/azure/foundry/agents/overview" target="_blank" rel="noopener noreferrer">Foundry Agent Service</a> are real services. Neither is connected here. Web IQ access is limited; endpoint contracts, quotas and model availability must be confirmed.</p></div>
-        <div><span class="badge proposed">Proposed implementation</span><p>The GEO front-end agent, evaluation orchestration and downstream editor/reviewer agents need live implementation. The front-end host and model are undecided; Foundry is a candidate. Markdown role labels are routing hints, not service endpoints.</p></div>
-        <div><span class="badge sim">Simulated in this file</span><p>The conversation is scripted. Scores, query results and recommendations are fictional. Brief approval, evidence filters and generation of five downloadable Markdown files work locally. No agents execute or publish changes.</p></div>
+        <div><span class="badge real">Real integration targets*</span><p><a href="https://webiq.microsoft.ai/" target="_blank" rel="noopener noreferrer">Microsoft Web IQ</a>, Work IQ, <a href="https://learn.microsoft.com/en-us/azure/foundry/agents/overview" target="_blank" rel="noopener noreferrer">Foundry Agent Service</a>, Shopify and Sitecore are real services. None is connected here; access, contracts and customer permissions must be confirmed.</p></div>
+        <div><span class="badge proposed">Proposed implementation</span><p>The GEO front-end agent, evaluation orchestration, downstream editor/reviewer agents and connector-neutral publishing service need live implementation. Work IQ provides authorised guardrails; CMS adapters preserve customer workflow and least-privilege controls.</p></div>
+        <div><span class="badge sim">Simulated in this file</span><p>The conversation, scores, query results and recommendations are fictional. Brief approval, evidence filters, five downloadable Markdown files and a human-approval-to-CMS interaction work locally. No network request or real publication occurs.</p></div>
+      </div>
+    </div></section>
+
+    <section id="publishing" class="section section-white" aria-labelledby="publishing-title"><div class="container">
+      <div class="section-top"><div><div class="eyebrow">04 / Governed CMS publishing</div><h2 id="publishing-title">Publish designed in, approval kept separate.</h2></div><p>The target flow is signal to content to human approval to page update, with an audit trail. Shopify and Sitecore are illustrative destinations from the reference deck.</p></div>
+      <div class="publish-grid">
+        <article class="publish-card"><h3>Human approval boundary</h3><p>The agent prepares a CMS draft and preview. A person approves the immutable content revision, destination and release note. Any edit invalidates that approval.</p><small>Nothing goes live without sign-off</small></article>
+        <article class="publish-card"><h3>Customer CMS workflow</h3><p>A connector maps approved content into allowlisted Shopify PDP or collection fields, or Sitecore landing and campaign components. It preserves existing workflow states, concurrency checks and rollback evidence.</p><small>Shopify and Sitecore are examples, not verified connectors</small></article>
+        <article class="publish-card"><h3>Maintained FAQs with Work IQ</h3><p>Visibility gaps and changed authorised guidance can trigger an FAQ proposal. Work IQ supplies permission-trimmed brand voice, approved messaging and workflow context; a human still approves every publication.</p><small>Continuously monitored, never unreviewed</small></article>
       </div>
     </div></section>
 
     <section class="section section-white" aria-label="Target users and differentiators"><div class="container audience-layout">
-      <div><div class="eyebrow">04 / Who it helps</div><h2>Built for the content decision.</h2>
+      <div><div class="eyebrow">05 / Who it helps</div><h2>Built for the content decision.</h2>
         <article class="audience-item"><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><div><h3>SEO &amp; growth marketers</h3><p>Extend ranking reports with query-level evidence of inclusion in generative answers.</p></div></article>
         <article class="audience-item"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><div><h3>Content &amp; product marketers</h3><p>Turn visibility gaps into specific briefs, supporting evidence and reviewable copy.</p></div></article>
         <article class="audience-item"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><div><h3>Agencies &amp; brand teams</h3><p>Explain source competition to clients and prioritise work across important buyer journeys.</p></div></article>
@@ -583,16 +609,16 @@
     </div></section>
 
     <section class="section" aria-labelledby="technical-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">05 / Technical approach</div><h2 id="technical-title">Make the evaluation inspectable.</h2></div><p>Use deterministic matching where possible; use LLM judgement where interpretation is necessary.</p></div>
+      <div class="section-top"><div><div class="eyebrow">06 / Technical approach</div><h2 id="technical-title">Make the evaluation inspectable.</h2></div><p>Use deterministic matching where possible; use LLM judgement where interpretation is necessary.</p></div>
       <div class="technical-grid">
         <article><h3>Agent-led orchestration</h3><p>The GEO front-end agent captures the brief and requests backend URL validation, Browse extraction and query-generation tools. The marketer approves intent before evaluation; service credentials remain server-side.</p><p>Fan out the same queries to Search and three Foundry evaluator profiles. Pin locale, prompts, model versions and retrieval settings. The agent presents evidence, coverage, latency and cost through the dashboard.</p></article>
         <article><h3>Match &amp; compare</h3><p>Normalise URLs using declared canonical and redirect evidence. Keep exact-page citations separate from domain citations and brand mentions. Use a reviewed semantic check for key claims.</p><p>Store raw answers and cited passages. Compare each missing-page result against the sources actually used, using the eight-factor content rubric from the workflow.</p></article>
-        <article><h3>Markdown hand-off contract</h3><p>Render recommendations and .md files from shared structured data. Version the schema; preserve run/task IDs, evidence references, priorities, draft edits and acceptance checks in one manifest and individual tasks.</p><p>Downstream agents validate the contract and prepare drafts. Their runtime must enforce permissions outside the files. Human approval precedes publishing; repeated-run evaluation tests whether approved changes affect visibility.</p></article>
+        <article><h3>Draft, approve &amp; publish contract</h3><p>Render recommendations and .md files from shared structured data. Version the schema; preserve run/task IDs, evidence references, priorities, draft edits and acceptance checks in one manifest and individual tasks.</p><p>Downstream agents prepare drafts with authorised Work IQ context. A separate CMS service verifies content and publish approvals against the exact revision, writes through a scoped connector, records the receipt and triggers a matched retest.</p></article>
       </div>
     </div></section>
 
     <section id="delivery" class="section section-white" aria-labelledby="delivery-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">06 / Hackathon scope</div><h2 id="delivery-title">Prove one complete loop.</h2></div><p>An agent-led brief, approved queries, dashboard evidence and Markdown tasks. This offline demo stops at file generation; downstream processing remains proposed.</p></div>
+      <div class="section-top"><div><div class="eyebrow">07 / Hackathon scope</div><h2 id="delivery-title">Prove the governed loop.</h2></div><p>An agent-led brief, approved queries, dashboard evidence, Markdown tasks and a simulated human-approved CMS transition. Live downstream processing remains proposed.</p></div>
       <div class="delivery-grid"><div><h3>Hackathon MVP <span class="badge proposed">Planned</span></h3><ul class="scope-list">
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Brief a GEO agent and fetch one accessible page through Web IQ Browse.</span></li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Generate and review 5&ndash;10 high-intent queries.</span></li>
@@ -600,17 +626,18 @@
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Show exact-page citations, mentions, coverage and competing sources.</span></li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Deliver four evidence-linked draft recommendations, including an explicitly unverified technical check, and one proposed rewrite.</span></li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Export a Markdown manifest and four task files; validate their contract before any downstream integration.</span></li>
-      </ul><p class="scope-note"><strong>Access fallback:</strong> use clearly labelled recorded fixtures if integrations are unavailable. No crawling behind logins, direct consumer-assistant testing, automatic publishing or guaranteed ranking improvement in the MVP.</p></div>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Demonstrate a separate human approval and simulated Shopify/Sitecore publish action, with no external CMS call.</span></li>
+      </ul><p class="scope-note"><strong>Access fallback:</strong> use clearly labelled recorded fixtures if integrations are unavailable. No crawling behind logins, direct consumer-assistant testing, unapproved publishing or guaranteed ranking improvement in the MVP.</p></div>
       <div><h3>Future roadmap</h3><ol class="roadmap">
-        <li><strong>Next / Connect and validate agents</strong><p>Implement the live GEO front end and evaluate downstream consumers against the Markdown contract. Add draft return and human-review workflows before publishing integrations.</p></li>
-        <li><strong>Then / Repeatable portfolio workflows</strong><p>Scheduled evaluations, variance estimates, multi-page prioritisation and CMS drafts. Preserve run history and detect stale tasks.</p></li>
-        <li><strong>Later / Broader validation</strong><p>Compare profiles with permitted observations of real assistants, subject to access and terms. Add independent query sets and reviewer calibration.</p></li>
+        <li><strong>Next / Connect and validate agents</strong><p>Implement the live GEO front end and evaluate downstream consumers against the Markdown contract. Add Work IQ-grounded drafts and human review.</p></li>
+        <li><strong>Then / Publish to one CMS sandbox</strong><p>Implement either a Shopify or Sitecore adapter with allowlisted destinations, immutable approvals, audit receipts, conflict detection and rollback.</p></li>
+        <li><strong>Later / Maintained content workflows</strong><p>Monitor enrolled FAQ blocks, propose bounded updates from Web IQ and authorised Work IQ context, publish only after approval and retest the exact revision.</p></li>
         <li><strong>Longer term / Business outcomes</strong><p>Connect observed citations with referral analytics and conversions where attribution is available. Test whether the workflow changes marketing decisions.</p></li>
       </ol></div></div>
     </div></section>
 
     <section class="section" aria-labelledby="risk-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">07 / Risks &amp; guardrails</div><h2 id="risk-title">Be precise about what we know.</h2></div><p>Visibility is observable. The reasons an external system selects a source are only partly observable.</p></div>
+      <div class="section-top"><div><div class="eyebrow">08 / Risks &amp; guardrails</div><h2 id="risk-title">Be precise about what we know.</h2></div><p>Visibility is observable. The reasons an external system selects a source are only partly observable.</p></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="Risks and mitigations, horizontally scrollable"><table class="risk-table"><thead><tr><th scope="col">Risk</th><th scope="col">Design response</th></tr></thead><tbody>
         <tr><td>Profiles are imperfect proxies</td><td>Copilot, ChatGPT and Claude have proprietary retrieval, prompts and personalisation. Label Foundry results as profile tests; never claim consumer-product parity.</td></tr>
         <tr><td>Access, cost &amp; retrieval gaps</td><td>Confirm Web IQ access and model availability early. Cap queries and retries; disclose extraction failures, unavailable pages and incomplete agent runs.</td></tr>
@@ -618,22 +645,24 @@
         <tr><td>Untrusted content &amp; unsafe URLs</td><td>Block private, local and metadata addresses, revalidate redirects and DNS, restrict egress and page size, and treat fetched text as untrusted data. Keep secrets server-side and never execute page instructions.</td></tr>
         <tr><td>Fabricated evidence or content misuse</td><td>Require traceable sources and human review. Respect access restrictions, site terms, privacy and copyright. Do not bypass paywalls or copy competitors' passages into proposed content.</td></tr>
         <tr><td>Unsafe or stale agent hand-offs</td><td>Validate schema versions, run/task IDs, evidence and file references. Treat brief and retrieved text as untrusted data, not instructions. Draft-only metadata is not a security boundary: downstream runtimes must independently restrict tools and require human approval before publication.</td></tr>
+        <tr><td>CMS overreach or stale approval</td><td>Use a dedicated least-privilege identity, allowlisted destinations, immutable revision hashes, concurrency checks, idempotency and a publication receipt. Reject changed, expired or unapproved drafts; retain a rollback or compensating-change path.</td></tr>
+        <tr><td>Work IQ context is stale or conflicting</td><td>Use permission-trimmed retrieval from designated authoritative sources, record freshness and provenance, surface conflicts and require a human to resolve them. Never treat retrieved content as approval.</td></tr>
       </tbody></table></div>
     </div></section>
 
     <section class="section section-white" aria-labelledby="success-title"><div class="container">
-      <div class="section-top"><div><div class="eyebrow">08 / Success metrics</div><h2 id="success-title">Earn trust before claiming impact.</h2></div><p>Proposed evaluation criteria, not achieved results. Set numeric targets after establishing a baseline.</p></div>
+      <div class="section-top"><div><div class="eyebrow">09 / Success metrics</div><h2 id="success-title">Earn trust before claiming impact.</h2></div><p>Proposed evaluation criteria, not achieved results. Set numeric targets after establishing a baseline.</p></div>
       <div class="metrics">
         <article class="metric"><h3>Measurement accuracy</h3><p>Citation and mention precision/recall against a human-labelled sample. Inspect canonical-URL and brand ambiguity errors.</p><small>Judge: can we trust the evidence?</small></article>
         <article class="metric"><h3>Editorial &amp; hand-off quality</h3><p>Recommendation usefulness, Markdown contract validity and downstream comprehension of evidence and acceptance checks. Measure time to an approved draft.</p><small>Judge: can the next agent use it?</small></article>
         <article class="metric"><h3>Visibility change</h3><p>Change in exact-page citation rate over repeated before/after runs. Report sample size, coverage and uncertainty.</p><small>Judge: does the change hold up?</small></article>
-        <article class="metric"><h3>Operational viability</h3><p>Completed evaluation rate, end-to-end latency and cost per page, broken down by extraction, search and model calls.</p><small>Judge: can we run it responsibly?</small></article>
+        <article class="metric"><h3>Operational viability</h3><p>Completed evaluation and publication rates, end-to-end latency, cost per page, approval trace completeness, connector conflicts and rollback outcomes.</p><small>Judge: can we run it responsibly?</small></article>
       </div>
     </div></section>
 
-    <section class="closing" aria-labelledby="closing-title"><div class="container"><div><h2 id="closing-title">From SEO reporting to evidence-based GEO.</h2><p>Brief an agent, inspect where content appears, and hand evidence-linked Markdown tasks to downstream editors. Next step: confirm service access and validate one evaluation and task hand-off with a content owner. Publication remains a separate human decision.</p></div><a class="secondary" href="#demo">Back to the agent <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div></section>
+    <section class="closing" aria-labelledby="closing-title"><div class="container"><div><h2 id="closing-title">From GEO insight to governed page updates.</h2><p>Brief an agent, inspect where content appears, create an evidence-linked draft, secure human approval and publish through the customer's CMS workflow. Work IQ-grounded FAQ maintenance can then repeat the loop without removing human control.</p></div><a class="secondary" href="#demo">Back to the agent <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div></section>
   </main>
-  <footer><div class="container"><div class="footer-top"><strong>GEO Optimiser / Hackathon 2026</strong><div><a href="https://webiq.microsoft.ai/" target="_blank" rel="noopener noreferrer">Microsoft Web IQ</a><a href="https://learn.microsoft.com/en-us/azure/foundry/agents/overview" target="_blank" rel="noopener noreferrer">Foundry documentation</a></div></div><p>Concept source: supplied hackathon brief. Service references reviewed 9 September 2026. Product design, scoring and agent profiles are proposals. Northstar, Atlas and Workbench data are fictional; .example domains are placeholders. This is an independent hackathon concept, not an official Microsoft product. No live integrations, tracking, external fonts or runtime dependencies.</p></div></footer>
+  <footer><div class="container"><div class="footer-top"><strong>GEO Optimiser / Hackathon 2026</strong><div><a href="https://webiq.microsoft.ai/" target="_blank" rel="noopener noreferrer">Microsoft Web IQ</a><a href="https://learn.microsoft.com/en-us/azure/foundry/agents/overview" target="_blank" rel="noopener noreferrer">Foundry documentation</a><a href="https://microsofteur-my.sharepoint.com/:p:/g/personal/thomasjones_microsoft_com/IQBy3ediM0mmR5qK9s3sVAGbAQ0IEEhXMFk_xyUKYw4qYg0?e=R4NznB" target="_blank" rel="noopener noreferrer">Reference deck</a></div></div><p>Concept sources reviewed 10 September 2026. Product design, scoring, agent profiles and CMS connectors are proposals. Northstar, Atlas and Workbench data are fictional; .example domains are placeholders. This is an independent hackathon concept, not an official Microsoft product. No live integrations, tracking, external fonts or runtime dependencies.</p></div></footer>
 
   <script>
     (() => {
@@ -805,7 +834,7 @@
         syncTheme();
       });
 
-      const conversation = { phase: "awaiting-brief", pending: null, run: null, files: [] };
+      const conversation = { phase: "awaiting-brief", pending: null, run: null, files: [], cmsApproved: false, published: false };
       const evidence = [
         { id: "ev-001", kind: "fixture-observation", queries: ["q-001"], sources: ["src-target", "src-atlas"], description: recommendations[0].observed },
         { id: "ev-002", kind: "fixture-observation", queries: ["q-001"], sources: ["src-target", "src-workbench"], description: recommendations[1].observed },
@@ -847,8 +876,14 @@
         conversation.pending = null;
         conversation.run = null;
         conversation.files = [];
+        conversation.cmsApproved = false;
+        conversation.published = false;
         document.getElementById("artifact-list").replaceChildren();
         document.getElementById("artifact-status").textContent = "Complete an approved simulation to prepare the hand-off.";
+        document.getElementById("approve-content").disabled = true;
+        document.getElementById("publish-content").disabled = true;
+        document.getElementById("cms-status").classList.remove("approved");
+        document.getElementById("cms-status").textContent = "Generate the Markdown bundle before preparing a CMS draft.";
         document.getElementById("report-content").hidden = true;
         setPhase("awaiting-brief");
       }
@@ -1014,19 +1049,57 @@
       document.getElementById("generate-tasks").addEventListener("click", () => {
         if (!conversation.run || state.running) return;
         conversation.files = generateMarkdownFiles(conversation.run);
+        conversation.cmsApproved = false;
+        conversation.published = false;
         renderArtifacts();
         setPhase("handoff-ready");
         document.getElementById("artifact-status").textContent = `5 Markdown files / Run ${conversation.run.id} / All profiles / No dispatch`;
-        appendTurn("agent", "The manifest and four Markdown tasks are ready below. Content and technical agents are proposed consumers, not connected services. All tasks are simulated drafts and require human approval before publishing.");
+        document.getElementById("approve-content").disabled = false;
+        document.getElementById("publish-content").disabled = true;
+        document.getElementById("cms-status").classList.remove("approved");
+        document.getElementById("cms-status").textContent = "CMS draft simulation ready. A human must approve the exact revision and destination before publish is enabled.";
+        appendTurn("agent", "The manifest and four Markdown tasks are ready below. Content and technical agents are proposed consumers, not connected services. The CMS simulation is ready for a separate human approval.");
         status.textContent = "Five Markdown files generated from the complete run snapshot.";
         document.getElementById("handoff-heading").focus({ preventScroll: true });
+      });
+      document.getElementById("cms-target").addEventListener("change", event => {
+        if (!conversation.files.length) return;
+        conversation.cmsApproved = false;
+        conversation.published = false;
+        document.getElementById("publish-content").disabled = true;
+        document.getElementById("cms-status").classList.remove("approved");
+        document.getElementById("cms-status").textContent = `Destination changed to ${event.target.options[event.target.selectedIndex].text}. Human approval must be recorded for this destination.`;
+      });
+      document.getElementById("approve-content").addEventListener("click", () => {
+        if (!conversation.run || !conversation.files.length || state.running) return;
+        const target = document.getElementById("cms-target");
+        const destination = target.options[target.selectedIndex].text;
+        conversation.cmsApproved = true;
+        conversation.published = false;
+        document.getElementById("publish-content").disabled = false;
+        document.getElementById("cms-status").classList.add("approved");
+        document.getElementById("cms-status").textContent = `Human approval recorded for run ${conversation.run.id} and ${destination}. Publish simulation is enabled for this unchanged revision.`;
+        appendTurn("agent", `Human approval recorded for the current revision and ${destination}. Any content or destination change would invalidate it.`);
+      });
+      document.getElementById("publish-content").addEventListener("click", () => {
+        if (!conversation.run || !conversation.cmsApproved || conversation.published || state.running) return;
+        const target = document.getElementById("cms-target");
+        const destination = target.options[target.selectedIndex].text;
+        conversation.published = true;
+        document.getElementById("publish-content").disabled = true;
+        document.getElementById("approve-content").disabled = true;
+        document.getElementById("cms-status").classList.add("approved");
+        document.getElementById("cms-status").textContent = `Simulated publication complete for ${destination}. No network request occurred. A live design would store the CMS revision, receipt, approver and rollback reference, then schedule a matched retest.`;
+        appendTurn("agent", `The approved revision has been published to the ${destination} simulation. No external CMS was contacted. The next governed step is to monitor the page and propose future FAQ maintenance when evidence or authorised Work IQ context changes.`);
+        status.textContent = "CMS publish simulation complete. No external content was changed.";
+        document.getElementById("cms-heading").focus({ preventScroll: true });
       });
       queries.forEach(query => {
         const item = document.createElement("li");
         item.textContent = query.text;
         document.getElementById("approval-queries").append(item);
       });
-      appendTurn("agent", "I am the simulated GEO front-end agent. Share a page URL and optional goal; I will guide query approval, show the fixture evidence, and prepare Markdown tasks for downstream review. Nothing is fetched, edited or published.");
+      appendTurn("agent", "I am the simulated GEO front-end agent. Share a page URL and optional goal; I will guide query approval, show the fixture evidence, prepare Markdown tasks and demonstrate a separate human-approved CMS transition. Nothing is fetched, edited or published externally.");
 
       syncTheme();
       renderRecommendations();

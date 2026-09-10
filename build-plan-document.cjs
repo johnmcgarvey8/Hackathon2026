@@ -72,7 +72,7 @@ for (let index = 0; index < lines.length; index += 1) {
 const document = new Document({
   title: "GEO Optimiser: Live Agent Build Plan",
   subject: "Implementation plan based on the GEO Optimiser HTML proposal",
-  description: "Planning only. Live GEO agent, verified evidence, Markdown hand-off and downstream proof.",
+  description: "Planning only. Live GEO agent, verified evidence, governed CMS publishing and continuous content maintenance.",
   styles: {
     default: { document: { run: { font: "Arial", size: 21, color: "242424" }, paragraph: { spacing: { line: 276 } } } },
     paragraphStyles: [
