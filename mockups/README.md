@@ -23,7 +23,7 @@ The visual styling follows the light theme in the repository's `geo-optimiser.ht
 | Projects | Simple brand and URL cards with an Open project action, accessible through All projects in the top picker |
 | Dashboard | Full-width, smooth 30-day GEO score chart with calculated percentage growth, followed by opportunity/review cards and project context; no schedule cards or duplicate navigation buttons |
 | Chat | Focused conversation canvas, searchable project history, source drawer, anchored composer, progress checkpoints, and result handoff |
-| Integrations | Platform grounding card, then Analytics, Content destinations, and Microsoft IQ accordions, each headed by its product logos. Content destinations always lists Sitecore, Shopify, and Azure Static Web Apps with per-project connection state |
+| Integrations | Platform grounding card, then Analytics, Content destinations, and Microsoft IQ accordions. Product logos sit on the connector cards and source rows inside each group. Content destinations always lists Sitecore, Shopify, and Azure Static Web Apps with per-project connection state |
 | Control Plane | Current execution card and Project History only |
 | Platform grounding | WebIQ, FoundryIQ, and FabricIQ are always on for every project and cannot be configured. They sit above the project-specific integrations on the Integrations screen |
 | Microsoft Clarity | Optional, project-specific analytics source |
