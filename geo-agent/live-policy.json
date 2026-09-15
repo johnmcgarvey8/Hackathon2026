@@ -1,0 +1,12 @@
+{
+  "policy_id": "daylesford-2026-09-14-first-test",
+  "owner": "local-developer",
+  "brief": {
+    "url": "https://www.daylesford.com/our-locations/daylesford-farm",
+    "audience": "UK visitors choosing a Cotswolds farm-shop and dining day out",
+    "goal": "Discover whether Daylesford Farm is cited",
+    "locale": "en-GB"
+  },
+  "deployment": "gpt-5.6-sol",
+  "endpoint": "https://hackathon-2026-geo-optimiser.services.ai.azure.com/openai/v1/"
+}

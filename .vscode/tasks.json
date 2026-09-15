@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "GEO: Check Chat Ports",
+      "type": "aitk",
+      "command": "debug-check-prerequisites",
+      "args": { "portOccupancy": [5679, 8090] }
+    },
+    {
+      "label": "GEO: Run Chat Debug Server",
+      "type": "process",
+      "command": "${workspaceFolder}/geo-agent/.venv/Scripts/python.exe",
+      "args": ["-m", "debugpy", "--listen", "127.0.0.1:5679", "-m", "geo_agent"],
+      "isBackground": true,
+      "dependsOn": "GEO: Check Chat Ports",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "GEO_CHAT_POLICY": "${workspaceFolder}/geo-agent/chat-policy.json",
+          "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
+          "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
+          "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
+          "GEO_PORT": "8090",
+          "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
+        }
+      },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^(.+):(\\d+): (.+)$", "file": 1, "line": 2, "message": 3 }],
+        "background": { "activeOnStart": true, "beginsPattern": ".*", "endsPattern": "Application startup complete|Uvicorn running on" }
+      }
+    },
+    {
+      "label": "GEO: Open Agent Inspector",
+      "type": "shell",
+      "command": "echo '${input:geoInspector}'",
+      "dependsOn": "GEO: Run Chat Debug Server",
+      "presentation": { "reveal": "never" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "geoInspector",
+      "type": "command",
+      "command": "ai-mlstudio.openTestTool",
+      "args": { "triggeredFrom": "tasks", "port": 8090 }
+    }
+  ]
+}

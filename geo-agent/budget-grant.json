@@ -1,0 +1,9 @@
+{
+  "grant_id": "approved-ten-more-runs-2026-09-14",
+  "owner": "local-developer",
+  "chat_policy_id": "daylesford-chat-2026-09-14-first-test",
+  "live_policy_id": "daylesford-2026-09-14-first-test",
+  "additional_chat_requests": 30,
+  "additional_live_runs": 10,
+  "approval": "John approved additional chat and Web IQ usage, then specified: extend the budget considerably make sure we can do 10 runs. Allocated 10 additional five-query, single-profile Daylesford runs (60 Web IQ requests and 60 Foundry requests), plus 30 additional chat model requests. Existing page, brief, indexed-only retrieval, local retention, per-call limits and no-retry rules remain unchanged. This is a call allowance, not a monetary ceiling or approval of any generated queries."
+}

@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GEO: Conversational Agent + Inspector",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5679 },
+      "preLaunchTask": "GEO: Open Agent Inspector",
+      "justMyCode": true
+    },
+    {
+      "name": "GEO: Conversational Agent Server",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/geo-agent/.venv/Scripts/python.exe",
+      "module": "geo_agent",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GEO_CHAT_POLICY": "${workspaceFolder}/geo-agent/chat-policy.json",
+        "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
+        "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
+        "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
+        "GEO_PORT": "8090",
+        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "GEO: Local Synthetic Backend",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "geo_agent",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/geo-agent/src",
+        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data",
+        "GEO_PORT": "8088"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

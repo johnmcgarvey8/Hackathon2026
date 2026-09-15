@@ -1,0 +1,14 @@
+{
+  "policy_id": "public-page-analysis-2026-09-14",
+  "owner": "local-developer",
+  "endpoint": "https://hackathon-2026-geo-optimiser.services.ai.azure.com/openai/v1/",
+  "deployment": "gpt-5.6-sol",
+  "max_analyses": 10,
+  "max_evaluations": 10,
+  "scope": "public-http-urls",
+  "browse_mode": "indexed-only",
+  "retain_local_evidence": true,
+  "max_output_tokens_per_call": 2000,
+  "monetary_ceiling": "not-specified-call-cap-approved",
+  "approval": "On 2026-09-14 the user explicitly selected 10 analyses + up to 10 optional evaluations: at most 10 Browse and 10 analysis model calls; optional evaluations add at most 10 query proposals, 50 Searches and 50 evaluator calls. Retain bounded local evidence, no retries, no monetary ceiling. Each evaluation needs a human brief and exact query approval. User selected the existing Daylesford Farm URL for the first live analysis. Existing chat and Daylesford evaluation budgets remain unchanged."
+}
