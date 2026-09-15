@@ -56,7 +56,7 @@ Chat histories, approvals, connector states, and executions are held in memory. 
 
 - All projects, metrics, source excerpts, brand documents, recommendations, and update results are synthetic.
 - The mockup makes no WebIQ, Clarity, Microsoft 365, Sitecore, Shopify, Azure, Foundry, or backend API calls.
-- Product logos in `assets` are simplified local SVG renditions used for identification in this demo. Sitecore, Shopify, Azure, Clarity, Word, and SharePoint are trademarks of their respective owners.
+- Product logos in `assets` are local files. `clarity.png` is Microsoft Clarity's published site icon; the remaining marks are simplified original SVG renditions used for identification in this demo. Sitecore, Shopify, Azure, Clarity, Word, and SharePoint are trademarks of their respective owners.
 - WebIQ, FoundryIQ, and FabricIQ grounding is shown as a standard platform capability for every eligible run. FoundryIQ covers model reasoning and evaluation; FabricIQ covers governed enterprise data.
 - Clarity is included only when configured for the selected project.
 - Microsoft IQ is represented as access to explicitly connected Word and SharePoint sources, not unrestricted tenant search.

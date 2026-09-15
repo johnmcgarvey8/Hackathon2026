@@ -768,13 +768,13 @@
           </section>
           <details class="integration-category" data-integration-group="analytics" ${session.integrationGroups.analytics ? "open" : ""}>
             <summary>
-              <span class="category-logos">${categoryLogo("clarity", "Microsoft Clarity")}</span>
+              <span class="category-logos">${categoryLogo("clarity.png", "Microsoft Clarity")}</span>
               <span class="category-heading"><strong>Analytics</strong><small>Understand visitor behaviour and AI referral traffic</small></span>
               ${pill(clarityConnected ? "1 connected" : "Not connected", clarityConnected ? "green" : "grey")}${icon("chevron")}
             </summary>
           <section class="integration-category-content integration-card">
             <div class="integration-title">
-              <img class="connector-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="36" height="36">
+              <img class="connector-logo" src="assets/clarity.png" alt="Microsoft Clarity" width="36" height="36">
               <div><h2>Microsoft Clarity</h2><small>Optional project analytics</small></div>
               <span style="margin-left:auto">${pill(current.clarity.label, clarityConnected ? "green" : "amber")}</span>
             </div>
@@ -794,7 +794,7 @@
           </details>
           <details class="integration-category" data-integration-group="cms" ${session.integrationGroups.cms ? "open" : ""}>
             <summary>
-              <span class="category-logos">${data.cmsConnectors.map(connector => categoryLogo(connector.logo, connector.type)).join("")}</span>
+              <span class="category-logos">${data.cmsConnectors.map(connector => categoryLogo(`${connector.logo}.svg`, connector.type)).join("")}</span>
               <span class="category-heading"><strong>Content destinations</strong><small>Prepare and review changes in your content systems</small></span>
               ${pill(`${current.cms.status === "connected" ? 2 : 1} connected`, "green")}${icon("chevron")}
             </summary>
@@ -805,7 +805,7 @@
           </details>
           <details class="integration-category" data-integration-group="iq" ${session.integrationGroups.iq ? "open" : ""}>
             <summary>
-              <span class="category-logos">${categoryLogo("word", "Microsoft Word")}${categoryLogo("sharepoint", "Microsoft SharePoint")}</span>
+              <span class="category-logos">${categoryLogo("word.svg", "Microsoft Word")}${categoryLogo("sharepoint.svg", "Microsoft SharePoint")}</span>
               <span class="category-heading"><strong>Microsoft IQ</strong><small>Customer documents and approved brand knowledge</small></span>
               ${pill(`${current.iq.sources.length} sources`, "purple")}${icon("chevron")}
             </summary>
@@ -843,8 +843,8 @@
       </section>`;
   }
 
-  function categoryLogo(name, alt) {
-    return `<img class="category-logo" src="assets/${name}.svg" alt="${escapeAttribute(alt)}" width="28" height="28">`;
+  function categoryLogo(file, alt) {
+    return `<img class="category-logo" src="assets/${file}" alt="${escapeAttribute(alt)}" width="28" height="28">`;
   }
 
   function connectorLogo(connector) {
@@ -1987,7 +1987,7 @@
           <small>Bounded synthetic source packet; not a claim about global ranking.</small>
         </div>
         <div class="source-layer">
-          <div class="source-title"><img class="source-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="25" height="25"><strong>Microsoft Clarity</strong>${pill(project().clarity.status === "connected" ? "Included" : "Unavailable", project().clarity.status === "connected" ? "teal" : "amber")}</div>
+          <div class="source-title"><img class="source-logo" src="assets/clarity.png" alt="Microsoft Clarity" width="25" height="25"><strong>Microsoft Clarity</strong>${pill(project().clarity.status === "connected" ? "Included" : "Unavailable", project().clarity.status === "connected" ? "teal" : "amber")}</div>
           <p class="small">${escapeHtml(item.evidence.clarity)}</p>
         </div>
         <div class="source-layer">
@@ -2090,7 +2090,7 @@
           <p class="small">Retrieves bounded public-page and discovery evidence for the requested scope.</p>
         </div>
         <div class="source-layer">
-          <div class="source-title"><img class="source-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="25" height="25"><strong>2. Clarity analytics</strong></div>
+          <div class="source-title"><img class="source-logo" src="assets/clarity.png" alt="Microsoft Clarity" width="25" height="25"><strong>2. Clarity analytics</strong></div>
           <p class="small">Adds project-specific on-site behavior only when the client workspace has Clarity configured.</p>
         </div>
         <div class="source-layer">
