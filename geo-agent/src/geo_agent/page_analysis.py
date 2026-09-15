@@ -51,8 +51,8 @@ ANALYSIS_LIMITS = [
 class PageAnalysisService:
     def __init__(self, store: RunStore, policy: AnalysisPolicy, webiq: WebIQ, foundry: Foundry,
                  url_validator: Callable[[str], str] = public_url):
-        if foundry.base_url != policy.endpoint or foundry.deployment != policy.deployment:
-            raise ProviderError("Foundry configuration does not match the page analysis policy")
+        if foundry.deployment != policy.deployment:
+            raise ProviderError("Foundry deployment does not match the page analysis policy")
         self.store, self.policy, self.webiq, self.foundry = store, policy, webiq, foundry
         self.validate_url = url_validator
         with store.connect() as connection:

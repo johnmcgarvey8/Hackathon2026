@@ -154,6 +154,8 @@ Loading a key alone does not enable live execution: the launcher requires an exp
 
 Set `AZURE_OPENAI_ENDPOINT` to the resource's HTTPS `/openai/v1/` base URL and `AZURE_AI_MODEL_DEPLOYMENT_NAME` to your deployment. A direct `/openai/v1/responses` endpoint is also accepted and normalised. The existing `AZURE_AI_PROJECT_ENDPOINT` setting is accepted as a compatibility fallback **only when it contains one of those direct OpenAI URLs**; an actual `/api/projects/...` endpoint is not accepted by this adapter.
 
+The runtime endpoint always comes from the environment so each developer can use an Azure resource they can access. The endpoint retained in existing policy files is audit metadata and is not enforced at startup. The deployment name must still match the policy so the governed model, owner, scope and persistent request budgets remain unchanged.
+
 Sign in locally with `az login` if needed, selecting the tenant/account with inference access. The adapter obtains an in-memory token for `https://ai.azure.com/.default`. Structured query generation and isolated evidence-only evaluation use the OpenAI Responses API, with `store=False`, a 2,000 output-token cap per call and no automatic retries. No model receives the local approval credential. See the [Azure OpenAI Responses documentation](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses).
 
 From the workspace root, opt in explicitly on a free port:

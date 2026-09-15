@@ -135,16 +135,17 @@ class ChatStore:
 
 
 class BudgetTransport(httpx.AsyncBaseTransport):
-    def __init__(self, store: ChatStore, inner: httpx.AsyncBaseTransport, calls: list):
+    def __init__(self, store: ChatStore, inner: httpx.AsyncBaseTransport, calls: list, base_url: str):
         self.store = store
         self.inner = inner
         self.calls = calls
+        self.base_url = base_url
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if len(self.calls) >= 3:
             raise ProviderError("Per-turn model request limit reached")
         body = json.loads(request.content)
-        expected = model_base_url(self.store.policy.endpoint) + "responses"
+        expected = self.base_url + "responses"
         if str(request.url) != expected or request.method != "POST" or body.get("store") is not False or body.get("max_output_tokens") != 2000 or body.get("model") != self.store.policy.deployment:
             raise ProviderError("Chat request does not match the approved policy")
         ordinal = self.store.reserve()
@@ -178,8 +179,8 @@ class BudgetTransport(httpx.AsyncBaseTransport):
 
 class ConversationAgent:
     def __init__(self, store: RunStore, policy: ChatPolicy, *, token_provider: Callable[[], str] = azure_cli_token,
-                 transport: httpx.AsyncBaseTransport | None = None):
-        self.base_url = model_base_url(policy.endpoint)
+                 transport: httpx.AsyncBaseTransport | None = None, endpoint: str | None = None):
+        self.base_url = model_base_url(endpoint or policy.endpoint)
         self.chats = ChatStore(store, policy)
         self.token_provider = token_provider
         self.transport = transport
@@ -221,7 +222,9 @@ class ConversationAgent:
                     messages.extend([Message("user", [turn["message"]]), Message("assistant", [turn["answer"]])])
             messages.append(Message("user", [request.message]))
             token = await asyncio.to_thread(self.token_provider)
-            transport = BudgetTransport(self.chats, self.transport or httpx.AsyncHTTPTransport(retries=0), calls)
+            transport = BudgetTransport(
+                self.chats, self.transport or httpx.AsyncHTTPTransport(retries=0), calls, self.base_url
+            )
             async with AsyncOpenAI(base_url=self.base_url, api_key=token, max_retries=0, timeout=90,
                                    http_client=httpx.AsyncClient(transport=transport, follow_redirects=False, trust_env=False)) as sdk:
                 client = OpenAIChatClient(model=self.chats.policy.deployment, async_client=sdk,

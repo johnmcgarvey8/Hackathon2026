@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from geo_agent.api import create_app
 from geo_agent.budget import BudgetGrant, apply_grant
 from geo_agent.conversation import ChatPolicy, ConversationAgent
-from geo_agent.foundry import Foundry, model_base_url
+from geo_agent.foundry import Foundry
 from geo_agent.live import LivePolicy, configured_live_workflow
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
 from geo_agent.webiq import WebIQ
@@ -56,9 +56,9 @@ def main() -> None:
     if chat_file:
         policy = ChatPolicy.model_validate_json(Path(chat_file).read_text(encoding="utf-8"))
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
-        if model_base_url(endpoint) != model_base_url(policy.endpoint) or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") != policy.deployment:
-            raise ValueError("Chat policy does not match the configured Foundry endpoint and deployment")
-        chat = ConversationAgent(RunStore(database), policy)
+        if os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") != policy.deployment:
+            raise ValueError("Chat policy does not match the configured Foundry deployment")
+        chat = ConversationAgent(RunStore(database), policy, endpoint=endpoint)
     analysis = None
     analysis_file = os.environ.get("GEO_ANALYSIS_POLICY")
     if analysis_file:

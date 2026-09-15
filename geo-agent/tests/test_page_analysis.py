@@ -44,6 +44,15 @@ def service_for(tmp_path):
     return PageAnalysisService(RunStore(tmp_path / "runs.sqlite3"), policy, FakeWeb(), foundry, url_validator=lambda value: value)
 
 
+def test_runtime_endpoint_can_differ_from_analysis_policy(tmp_path):
+    service = service_for(tmp_path)
+    policy = service.policy.model_copy(update={"endpoint": "https://policy.openai.azure.com/openai/v1/"})
+    configured = PageAnalysisService(
+        RunStore(tmp_path / "other.sqlite3"), policy, service.webiq, service.foundry
+    )
+    assert configured.foundry.base_url == "https://test.openai.azure.com/openai/v1/"
+
+
 def test_analysis_persists_and_replays_without_new_calls(tmp_path):
     service = service_for(tmp_path)
     request = AnalysisRequest(url=synthetic_inputs().brief.url, idempotency_key="first")

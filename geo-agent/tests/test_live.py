@@ -50,6 +50,16 @@ def live(tmp_path):
     return LiveWorkflow(store, policy, FakeWeb(), FakeFoundry())
 
 
+def test_runtime_endpoint_can_differ_from_policy(tmp_path):
+    store = RunStore(tmp_path / "runs.sqlite3")
+    policy = LivePolicy(
+        policy_id="test-policy", owner="alice", brief=synthetic_inputs().brief, deployment="test",
+        endpoint="https://policy.openai.azure.com/openai/v1/",
+    )
+    workflow = LiveWorkflow(store, policy, FakeWeb(), FakeFoundry())
+    assert workflow.foundry.base_url == "https://test.openai.azure.com/openai/v1/"
+
+
 def test_full_live_flow_is_gated_and_bounded(live):
     run = live.prepare(live.policy.brief, "alice", "prepare")
     with pytest.raises(Conflict, match="approval"):

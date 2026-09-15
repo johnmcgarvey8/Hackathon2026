@@ -38,8 +38,8 @@ class LiveWorkflow:
         self.policy = policy
         self.webiq = webiq
         self.foundry = foundry
-        if foundry.deployment != policy.deployment or foundry.base_url != policy.endpoint:
-            raise ProviderError("Foundry configuration does not match the approved live policy")
+        if foundry.deployment != policy.deployment:
+            raise ProviderError("Foundry deployment does not match the approved live policy")
         with store.connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS live_calls (policy_id TEXT, operation TEXT, payload TEXT, PRIMARY KEY (policy_id, operation))")
 

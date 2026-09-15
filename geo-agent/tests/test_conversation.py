@@ -53,10 +53,12 @@ def text_output(text):
 def test_framework_tool_roundtrip_history_and_idempotency(tmp_path):
     store, run = saved_run(tmp_path)
     requests = []
+    runtime_endpoint = "https://runtime.services.ai.azure.com/openai/v1/"
 
     def handler(request):
         body = json.loads(request.content)
         requests.append(body)
+        assert str(request.url) == runtime_endpoint + "responses"
         assert body["store"] is False and body["max_output_tokens"] == 2000
         assert {tool["name"] for tool in body["tools"]} == {"get_run_status", "get_answer", "get_evidence"}
         assert "previous_response_id" not in body
@@ -69,7 +71,10 @@ def test_framework_tool_roundtrip_history_and_idempotency(tmp_path):
             assert "What is my score?" in json.dumps(body["input"])
         return httpx.Response(200, json=model_response(text_output("The saved exact-page score is 40/100.")))
 
-    agent = ConversationAgent(store, policy_for(run), token_provider=lambda: "dummy", transport=httpx.MockTransport(handler))
+    agent = ConversationAgent(
+        store, policy_for(run), token_provider=lambda: "dummy", transport=httpx.MockTransport(handler),
+        endpoint=runtime_endpoint,
+    )
     chat = agent.chats.create("alice")
     first = ChatRequest(message="What is my score?", idempotency_key="first", expected_revision=0)
     result = asyncio.run(agent.respond(chat["chat_id"], "alice", first))
