@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Microsoft GEO workflow concept demo with project chat, agent control plane, brand context, and governed CMS updates.">
+  <meta name="color-scheme" content="light">
+  <title>Microsoft GEO | Workflow concept</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="workspace.css">
+  <script src="mock-data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="appbar">
+    <button class="mobile-menu icon-button" id="mobile-menu" type="button" aria-label="Open navigation" aria-expanded="false">
+      <span aria-hidden="true">&#9776;</span>
+    </button>
+    <div class="brand-lockup" aria-label="Microsoft GEO">
+      <span class="microsoft-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+      <span class="brand-name">Microsoft</span>
+      <span class="brand-divider" aria-hidden="true"></span>
+      <span class="product-name">GEO</span>
+    </div>
+
+    <label class="project-picker" for="project-select">
+      <span>Project</span>
+      <select id="project-select" aria-label="Select project"></select>
+    </label>
+
+    <div class="appbar-spacer"></div>
+    <span class="concept-badge">Concept demo</span>
+    <button class="icon-button" id="help-button" type="button" aria-label="About this prototype">?</button>
+    <div class="persona" aria-label="Signed in as Alex Morgan">
+      <span class="avatar">AM</span>
+      <span class="persona-copy"><strong>Alex Morgan</strong><small>GEO manager</small></span>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="navigation" id="navigation" aria-label="Primary navigation">
+      <nav>
+        <button class="nav-item" data-view="dashboard" type="button">
+          <span class="nav-icon" aria-hidden="true">&#9638;</span><span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="chat" type="button">
+          <span class="nav-icon" aria-hidden="true">&#9998;</span><span>Chat</span>
+        </button>
+        <button class="nav-item" data-view="control-plane" type="button">
+          <span class="nav-icon" aria-hidden="true">&#9678;</span><span>Control Plane</span>
+          <span class="nav-count" id="active-run-count" hidden>1</span>
+        </button>
+        <button class="nav-item" data-view="cms-updates" type="button">
+          <span class="nav-icon" aria-hidden="true">&#9997;</span><span>CMS Updates</span>
+          <span class="nav-count" id="review-count">0</span>
+        </button>
+        <button class="nav-item" data-view="integrations" type="button">
+          <span class="nav-icon" aria-hidden="true">&#8644;</span><span>Integrations</span>
+        </button>
+      </nav>
+    </aside>
+
+    <main id="main-content" class="main-content" tabindex="-1">
+      <div id="screen" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer" id="drawer" aria-labelledby="drawer-title" aria-modal="true" role="dialog" hidden>
+    <div class="drawer-header">
+      <div>
+        <p class="eyebrow" id="drawer-eyebrow">Details</p>
+        <h2 id="drawer-title">Details</h2>
+      </div>
+      <button class="icon-button" id="drawer-close" type="button" aria-label="Close details">&times;</button>
+    </div>
+    <div class="drawer-content" id="drawer-content"></div>
+  </aside>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden></div>
+  <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <div class="modal-header">
+      <h2 id="modal-title">About this prototype</h2>
+      <button class="icon-button" id="modal-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <p>This is a static click-through for a future Microsoft GEO workflow. All projects, analytics, evidence, documents, recommendations, CMS connections, approvals, and updates are synthetic.</p>
+      <p>WebIQ is represented as the standard grounding layer. Microsoft Clarity, Microsoft IQ brand context, Sitecore, and Shopify are project-scoped concepts. No network requests are made.</p>
+    </div>
+  </section>
+
+  <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+</body>
+</html>
