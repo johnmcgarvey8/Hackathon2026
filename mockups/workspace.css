@@ -328,6 +328,17 @@ a { color: var(--cp-link); text-underline-offset: 4px; }
 .connector-card.connector-available { background: var(--cp-bg-elevated); }
 .connector-card.connector-available .button.primary { justify-self: start; }
 .connector-logo { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 6px; }
+.grounding-card { margin-bottom: 0; }
+.grounding-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.grounding-list > li { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
+.grounding-list > li:first-child { border-top: 0; }
+.grounding-copy { flex: 1; min-width: 0; }
+.grounding-copy strong { display: block; font-size: 15px; font-weight: 650; }
+.grounding-copy small { display: block; margin-top: 2px; color: var(--cp-text-soft); }
+.grounding-copy p { margin: 6px 0 0; }
+.grounding-state { display: grid; justify-items: end; gap: 4px; text-align: right; }
+.grounding-list.compact > li { padding: 10px 0; align-items: center; }
+.grounding-list.compact .grounding-copy p { display: none; }
 .destination-logo { width: 18px; height: 18px; flex-basis: 18px; border-radius: 3px; }
 .cms-destination code { font-size: 11px; }
 

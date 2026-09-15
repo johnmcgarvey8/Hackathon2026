@@ -313,7 +313,7 @@
             </div>
             <div class="summary-line">
               <span class="status-dot ${current.clarity.status === "connected" ? "success" : "warning"}" aria-hidden="true"></span>
-              <span><strong>Project context</strong><small>WebIQ grounding is available. Clarity is ${current.clarity.status === "connected" ? "connected" : "not configured"}. Microsoft IQ has ${current.iq.sources.length} approved brand sources.</small></span>
+              <span><strong>Project context</strong><small>WebIQ, FoundryIQ and FabricIQ grounding are always on. Clarity is ${current.clarity.status === "connected" ? "connected" : "not configured"}. Microsoft IQ has ${current.iq.sources.length} approved brand sources.</small></span>
             </div>
             <div class="summary-line">
               <span class="status-dot success" aria-hidden="true"></span>
@@ -486,7 +486,7 @@
               <strong>${escapeHtml(goal)}</strong>${icon("arrow")}
             </button>`).join("")}
           </div>
-          <div class="welcome-grounding"><span class="status-dot success"></span> Grounded in WebIQ <span class="context-separator">&middot;</span> Your customer knowledge ${icon("lock")}</div>
+          <div class="welcome-grounding"><span class="status-dot success"></span> Grounded in WebIQ, FoundryIQ and FabricIQ <span class="context-separator">&middot;</span> Your customer knowledge ${icon("lock")}</div>
         </div>`;
     }
     if (state.chat.stage === "confirm") {
@@ -499,7 +499,7 @@
             <div class="confirmation">
               <div class="confirmation-row"><span>Goal</span><strong>${escapeHtml(state.chat.goal)}</strong></div>
               <div class="confirmation-row"><span>Scope</span><strong>${escapeHtml(state.chat.scope)} (${escapeHtml(state.chat.scopeType)})</strong></div>
-              <div class="confirmation-row"><span>Grounding</span><strong>WebIQ external evidence</strong></div>
+              <div class="confirmation-row"><span>Grounding</span><strong>WebIQ, FoundryIQ, and FabricIQ (always on)</strong></div>
               <div class="confirmation-row"><span>Analytics</span><strong>${current.clarity.status === "connected" ? `Clarity / ${escapeHtml(current.clarity.projectName)}` : "Clarity unavailable, workflow will continue without on-site analytics"}</strong></div>
               <div class="confirmation-row"><span>Brand context</span><strong>${current.iq.sources.map(source => `${escapeHtml(source.name)} ${escapeHtml(source.version)}`).join("<br>")}</strong></div>
               <div class="confirmation-row"><span>CMS target</span><strong>${escapeHtml(current.cms.type)} / ${escapeHtml(current.cms.environment)} (changes require separate review)</strong></div>
@@ -747,6 +747,25 @@
         )}
 
         <div class="integration-categories">
+          <section class="card grounding-card">
+            <div class="card-heading">
+              <div><h2>Platform grounding</h2><p class="small muted">Always on for every project. These services are not configurable.</p></div>
+              ${pill("Always on", "blue")}
+            </div>
+            <ul class="grounding-list">
+              ${data.groundingServices.map(service => `
+                <li>
+                  <img class="connector-logo" src="assets/${service.logo}.svg" alt="${escapeAttribute(service.name)}" width="36" height="36">
+                  <div class="grounding-copy">
+                    <strong>${escapeHtml(service.name)}</strong>
+                    <small>${escapeHtml(service.summary)}</small>
+                    <p class="small muted">${escapeHtml(service.detail)}</p>
+                  </div>
+                  <span class="grounding-state">${pill("Enabled", "green")}<small>${escapeHtml(service.scope)}</small></span>
+                </li>`).join("")}
+            </ul>
+            <p class="file-selection-note">Platform grounding runs alongside the customer knowledge sources below. Customer knowledge stays project-specific.</p>
+          </section>
           <details class="integration-category" data-integration-group="analytics" ${session.integrationGroups.analytics ? "open" : ""}>
             <summary>
               <span class="category-logos">${categoryLogo("clarity", "Microsoft Clarity")}</span>
@@ -820,7 +839,7 @@
         </section>
           </details>
         </div>
-        <p class="integration-platform-note">${icon("lock")} WebIQ grounding is always on. It is a shared platform service, not a project integration.</p>
+        <p class="integration-platform-note">${icon("lock")} WebIQ, FoundryIQ, and FabricIQ grounding is always on. They are shared platform services, not project integrations.</p>
       </section>`;
   }
 
@@ -1205,7 +1224,15 @@
         <p class="muted">Suggestions use the approved customer documents below.</p>
         <ul class="iq-source-list">${project().iq.sources.map(renderIqSource).join("")}</ul>
         <div class="divider"></div>
-        <p><strong>WebIQ</strong><br><small>Public discovery grounding</small></p>
+        <p class="small muted">Always-on platform grounding</p>
+        <ul class="grounding-list compact">
+          ${data.groundingServices.map(service => `
+            <li>
+              <img class="connector-logo" src="assets/${service.logo}.svg" alt="${escapeAttribute(service.name)}" width="36" height="36">
+              <div class="grounding-copy"><strong>${escapeHtml(service.name)}</strong><small>${escapeHtml(service.summary)}</small></div>
+            </li>`).join("")}
+        </ul>
+        <div class="divider"></div>
         <p><strong>Microsoft Clarity</strong><br><small>${escapeHtml(project().clarity.label)}</small></p>
         <button class="button" data-action="open-integrations">Manage sources</button>`);
       return;
@@ -1620,7 +1647,7 @@
       agents,
       audit: [
         "0m 00s Coordinator accepted the human-confirmed goal and scope",
-        `0m 00s WebIQ grounding enabled; Clarity ${current.clarity.status === "connected" ? "included" : "marked unavailable"}`,
+        `0m 00s WebIQ, FoundryIQ and FabricIQ grounding enabled; Clarity ${current.clarity.status === "connected" ? "included" : "marked unavailable"}`,
         `0m 00s Microsoft IQ sources pinned: ${current.iq.sources.map(source => `${source.type} ${source.version}`).join(", ")}`
       ]
     };
@@ -1954,13 +1981,13 @@
           ${metric("Impact / effort", `${item.impact} / ${item.effort}`, `Confidence: ${item.confidence}`)}
         </div>
         <div class="source-layer">
-          <div class="source-title"><span class="source-icon">WQ</span><strong>WebIQ grounding</strong>${pill("External evidence", "blue")}</div>
+          <div class="source-title"><img class="source-logo" src="assets/webiq.svg" alt="WebIQ" width="25" height="25"><strong>WebIQ grounding</strong>${pill("External evidence", "blue")}</div>
           <p class="small">${escapeHtml(item.evidence.webiq)}</p>
           <button class="button ghost" type="button" data-action="source-excerpt" data-id="${item.id}">Open retained source: webiq-${escapeHtml(item.id)}</button>
           <small>Bounded synthetic source packet; not a claim about global ranking.</small>
         </div>
         <div class="source-layer">
-          <div class="source-title"><span class="source-icon clarity">CL</span><strong>Microsoft Clarity</strong>${pill(project().clarity.status === "connected" ? "Included" : "Unavailable", project().clarity.status === "connected" ? "teal" : "amber")}</div>
+          <div class="source-title"><img class="source-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="25" height="25"><strong>Microsoft Clarity</strong>${pill(project().clarity.status === "connected" ? "Included" : "Unavailable", project().clarity.status === "connected" ? "teal" : "amber")}</div>
           <p class="small">${escapeHtml(item.evidence.clarity)}</p>
         </div>
         <div class="source-layer">
@@ -2059,11 +2086,11 @@
       "How recommendations are formed",
       `
         <div class="source-layer">
-          <div class="source-title"><span class="source-icon">WQ</span><strong>1. WebIQ grounding</strong></div>
+          <div class="source-title"><img class="source-logo" src="assets/webiq.svg" alt="WebIQ" width="25" height="25"><strong>1. WebIQ grounding</strong></div>
           <p class="small">Retrieves bounded public-page and discovery evidence for the requested scope.</p>
         </div>
         <div class="source-layer">
-          <div class="source-title"><span class="source-icon clarity">CL</span><strong>2. Clarity analytics</strong></div>
+          <div class="source-title"><img class="source-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="25" height="25"><strong>2. Clarity analytics</strong></div>
           <p class="small">Adds project-specific on-site behavior only when the client workspace has Clarity configured.</p>
         </div>
         <div class="source-layer">

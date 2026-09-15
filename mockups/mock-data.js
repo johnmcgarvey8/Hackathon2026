@@ -1,4 +1,30 @@
 window.GEO_MOCK_DATA = {
+  groundingServices: [
+    {
+      id: "webiq",
+      name: "WebIQ",
+      logo: "webiq",
+      summary: "Public discovery and citation evidence",
+      detail: "Retrieves bounded external passages, AI answer citations, and competing sources for every analysis.",
+      scope: "All projects"
+    },
+    {
+      id: "foundryiq",
+      name: "FoundryIQ",
+      logo: "foundry",
+      summary: "Model reasoning and evaluation grounding",
+      detail: "Supplies the shared model catalogue, evaluation harness, and safety checks used by every agent.",
+      scope: "All projects"
+    },
+    {
+      id: "fabriciq",
+      name: "FabricIQ",
+      logo: "fabric",
+      summary: "Governed enterprise data grounding",
+      detail: "Joins analytics, commerce, and content performance tables held in the organisation's Fabric estate.",
+      scope: "All projects"
+    }
+  ],
   cmsConnectors: [
     {
       id: "sitecore",

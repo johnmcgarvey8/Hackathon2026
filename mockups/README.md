@@ -23,9 +23,9 @@ The visual styling follows the light theme in the repository's `geo-optimiser.ht
 | Projects | Simple brand and URL cards with an Open project action, accessible through All projects in the top picker |
 | Dashboard | Full-width, smooth 30-day GEO score chart with calculated percentage growth, followed by opportunity/review cards and project context; no schedule cards or duplicate navigation buttons |
 | Chat | Focused conversation canvas, searchable project history, source drawer, anchored composer, progress checkpoints, and result handoff |
-| Integrations | Analytics, Content destinations, and Microsoft IQ accordions. Content destinations always lists Sitecore, Shopify, and Azure Static Web Apps with their logos and per-project connection state |
+| Integrations | Platform grounding card, then Analytics, Content destinations, and Microsoft IQ accordions, each headed by its product logos. Content destinations always lists Sitecore, Shopify, and Azure Static Web Apps with per-project connection state |
 | Control Plane | Current execution card and Project History only |
-| WebIQ | Always-on external grounding and evidence layer, not a project integration |
+| Platform grounding | WebIQ, FoundryIQ, and FabricIQ are always on for every project and cannot be configured. They sit above the project-specific integrations on the Integrations screen |
 | Microsoft Clarity | Optional, project-specific analytics source |
 | Microsoft IQ | Conceptual project knowledge layer referencing approved Word and SharePoint brand sources |
 | Results | Prioritized actions with impact, effort, evidence, brand alignment, confidence, ownership, and verification |
@@ -56,8 +56,8 @@ Chat histories, approvals, connector states, and executions are held in memory. 
 
 - All projects, metrics, source excerpts, brand documents, recommendations, and update results are synthetic.
 - The mockup makes no WebIQ, Clarity, Microsoft 365, Sitecore, Shopify, Azure, Foundry, or backend API calls.
-- Connector logos in `assets` are simplified local SVG renditions used for product identification in this demo. Sitecore, Shopify, and Azure are trademarks of their respective owners.
-- WebIQ grounding is shown as a standard platform capability for every eligible run.
+- Product logos in `assets` are simplified local SVG renditions used for identification in this demo. Sitecore, Shopify, Azure, Clarity, Word, and SharePoint are trademarks of their respective owners.
+- WebIQ, FoundryIQ, and FabricIQ grounding is shown as a standard platform capability for every eligible run. FoundryIQ covers model reasoning and evaluation; FabricIQ covers governed enterprise data.
 - Clarity is included only when configured for the selected project.
 - Microsoft IQ is represented as access to explicitly connected Word and SharePoint sources, not unrestricted tenant search.
 - Recommendation generation waits for the simulated brand-context gate.
