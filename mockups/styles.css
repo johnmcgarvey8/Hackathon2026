@@ -1349,33 +1349,6 @@ tr.clickable:hover {
   gap: 12px;
 }
 
-.integration-icon {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--ms-blue-light);
-  color: var(--ms-blue-darker);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.integration-icon.clarity {
-  background: linear-gradient(135deg, #2d7d9a, #5c2e91);
-  color: #fff;
-}
-
-.integration-icon.cms {
-  background: linear-gradient(135deg, var(--ms-blue), var(--teal));
-  color: #fff;
-}
-
-.integration-icon.iq {
-  background: linear-gradient(135deg, var(--purple), #8764b8);
-  color: #fff;
-}
-
 .integration-detail {
   display: grid;
   grid-template-columns: 120px 1fr;

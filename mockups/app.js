@@ -755,7 +755,7 @@
             </summary>
           <section class="integration-category-content integration-card">
             <div class="integration-title">
-              <span class="integration-icon clarity">CL</span>
+              <img class="connector-logo" src="assets/clarity.svg" alt="Microsoft Clarity" width="36" height="36">
               <div><h2>Microsoft Clarity</h2><small>Optional project analytics</small></div>
               <span style="margin-left:auto">${pill(current.clarity.label, clarityConnected ? "green" : "amber")}</span>
             </div>
