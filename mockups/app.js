@@ -862,11 +862,13 @@
       </article>`;
   }
 
-  function renderIqSource(source) {    return `
+  function renderIqSource(source) {
+    return `
       <li>
         <button class="iq-source-button" type="button" data-action="iq-source-details" data-id="${source.id}">
           ${sourceLogo(source.type)}
-          <span><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(source.type)} &middot; Customer brand guidance</small></span>
+          <span><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(source.type)} &middot; ${source.placeholder ? "Placeholder, content to be added" : "Customer brand guidance"}</small></span>
+          ${source.placeholder ? `<span class="nav-tag">Placeholder</span>` : ""}
           <span class="iq-source-arrow" aria-hidden="true">&#8250;</span>
         </button>
       </li>`;
@@ -1131,7 +1133,7 @@
       state.chat.messages.push({ speaker: "user", text: value });
       const current = project();
       const answer = /brand|guideline|word|sharepoint|iq/i.test(value)
-        ? `The Brand Context agent references ${current.iq.sources.map(source => `${source.name} (${source.version})`).join(" and ")}. Guidance must be current before new suggestions or CMS drafts can proceed.`
+        ? `The Brand Context agent references ${current.iq.sources.map(source => `${source.name} (${source.version})`).join(", ")}. Guidance must be current before new suggestions or CMS drafts can proceed.`
         : /progress|status/i.test(value)
           ? `The project run is ${state.activeRun?.status || "not started"}. Control Plane contains the saved checkpoints and any content work waiting for human review.`
           : `These are illustrative recommendations grounded in synthetic WebIQ excerpts${current.clarity.status === "connected" ? " with Clarity behaviour signals" : "; Clarity is unavailable"}. Each action lists confidence and brand constraints. Select actions to prepare a CMS review bundle. This demo does not perform unrestricted chat or make live model calls.`;
@@ -1422,7 +1424,7 @@
     if (action === "refresh-iq") {
       project().iq.status = "connected";
       project().iq.sources.forEach(source => source.status = "current");
-      toast("Microsoft IQ sources refreshed. Both approved sources remain current.");
+      toast(`Microsoft IQ sources refreshed. All ${project().iq.sources.length} approved sources are current.`);
       render();
       return;
     }
@@ -1772,7 +1774,7 @@
       items,
       audit: [
         "12:46 Human selected recommendations for CMS preparation",
-        `12:46 Brand Context Agent bound ${current.iq.sources.map(source => `${source.type} ${source.version}`).join(" and ")}`,
+        `12:46 Brand Context Agent bound ${current.iq.sources.map(source => `${source.type} ${source.version}`).join(", ")}`,
         "12:46 Awaiting item-level reviewer decisions"
       ]
     };
@@ -2039,8 +2041,9 @@
         </dl>
         <section class="card flat">
           <h3>Sections available to agents</h3>
-          ${source.sections.map(section => `<div class="summary-line"><span class="status-dot success"></span><span><strong>${escapeHtml(section)}</strong><small>Approved for project context</small></span></div>`).join("")}
+          ${source.sections.map(section => `<div class="summary-line"><span class="status-dot ${source.placeholder ? "warning" : "success"}"></span><span><strong>${escapeHtml(section)}</strong><small>${source.placeholder ? "Outline only, content to be added" : "Approved for project context"}</small></span></div>`).join("")}
         </section>
+        ${source.placeholder ? `<div class="callout amber"><strong>Placeholder document</strong><p class="small">The section outline is agreed, the guidance itself has not been written yet. Agents treat this source as unavailable until content is added.</p></div>` : ""}
         <p class="small muted">The concept limits retrieval to these approved project sources. It does not represent an unrestricted tenant-wide search.</p>
       `
     );

@@ -144,6 +144,18 @@ window.GEO_MOCK_DATA = {
             updated: "15 Sep 2026",
             status: "current",
             sections: ["Approved product terminology", "Audience principles", "Claims library", "Content owners"]
+          },
+          {
+            id: "day-landing",
+            type: "Word",
+            name: "Daylesford Landing Page Guidelines.docx",
+            location: "Microsoft 365 / Brand Governance",
+            owner: "Digital marketing",
+            version: "v0.1 placeholder",
+            updated: "15 Sep 2026",
+            status: "current",
+            placeholder: true,
+            sections: ["Page structure", "Headline and hero copy", "Calls to action", "Measurement and tagging"]
           }
         ]
       },

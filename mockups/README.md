@@ -1,4 +1,4 @@
-# Microsoft GEO workflow mockup
+# Microsoft GEO Optimizer workflow mockup
 
 **BLUF:** Open `index.html` to explore a standalone, synthetic click-through of the proposed project, Chat, Control Plane, Microsoft IQ, recommendation, and governed CMS workflow.
 
@@ -40,6 +40,7 @@ The visual styling follows the light theme in the repository's `geo-optimiser.ht
 - The compact **Agent surfaces** strip identifies Teams, Custom Web Apps, and MCP as planned channels, not working connections.
 - **Dashboard** uses 31 synthetic daily score points, including the baseline 30 days earlier. Percentage growth is calculated from the first and last values; an expandable data table provides the daily scores.
 - Expand **Demo source controls** to simulate changed or unavailable brand guidance. Refresh sources before re-reviewing affected proposals.
+- Daylesford carries a third source, `Daylesford Landing Page Guidelines.docx`, as a placeholder. Its section outline is shown, the guidance content is not written yet.
 - Start runs from **Chat** and follow their live checkpoints in **Control Plane**. Project History retains completed and failed executions. Demo-scenario controls and maintenance panels are not shown.
 - Agent executions use their displayed per-stage durations: about **9m 37s** with Clarity, or **8m 19s** without it. Elapsed time and stage progress update while you navigate elsewhere. **Skip to results (demo)** explicitly fast-forwards a run; cancellation stops it. No real provider work occurs.
 - CMS changes retain their audit trail and prior bundles in the bundle selector. Stale brand versions invalidate approvals for unpublished items.
