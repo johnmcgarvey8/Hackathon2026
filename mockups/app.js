@@ -749,7 +749,7 @@
         <div class="integration-categories">
           <details class="integration-category" data-integration-group="analytics" ${session.integrationGroups.analytics ? "open" : ""}>
             <summary>
-              <span class="category-symbol analytics">${icon("trend")}</span>
+              <span class="category-logos">${categoryLogo("clarity", "Microsoft Clarity")}</span>
               <span class="category-heading"><strong>Analytics</strong><small>Understand visitor behaviour and AI referral traffic</small></span>
               ${pill(clarityConnected ? "1 connected" : "Not connected", clarityConnected ? "green" : "grey")}${icon("chevron")}
             </summary>
@@ -775,7 +775,7 @@
           </details>
           <details class="integration-category" data-integration-group="cms" ${session.integrationGroups.cms ? "open" : ""}>
             <summary>
-              <span class="category-symbol cms">${icon("cms-updates")}</span>
+              <span class="category-logos">${data.cmsConnectors.map(connector => categoryLogo(connector.logo, connector.type)).join("")}</span>
               <span class="category-heading"><strong>Content destinations</strong><small>Prepare and review changes in your content systems</small></span>
               ${pill(`${current.cms.status === "connected" ? 2 : 1} connected`, "green")}${icon("chevron")}
             </summary>
@@ -786,7 +786,7 @@
           </details>
           <details class="integration-category" data-integration-group="iq" ${session.integrationGroups.iq ? "open" : ""}>
             <summary>
-              <span class="category-symbol iq">${icon("sources")}</span>
+              <span class="category-logos">${categoryLogo("word", "Microsoft Word")}${categoryLogo("sharepoint", "Microsoft SharePoint")}</span>
               <span class="category-heading"><strong>Microsoft IQ</strong><small>Customer documents and approved brand knowledge</small></span>
               ${pill(`${current.iq.sources.length} sources`, "purple")}${icon("chevron")}
             </summary>
@@ -822,6 +822,10 @@
         </div>
         <p class="integration-platform-note">${icon("lock")} WebIQ grounding is always on. It is a shared platform service, not a project integration.</p>
       </section>`;
+  }
+
+  function categoryLogo(name, alt) {
+    return `<img class="category-logo" src="assets/${name}.svg" alt="${escapeAttribute(alt)}" width="28" height="28">`;
   }
 
   function connectorLogo(connector) {
