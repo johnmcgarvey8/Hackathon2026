@@ -45,3 +45,19 @@ def test_default_env_file_is_relative_to_agent_not_working_directory(tmp_path, m
     monkeypatch.chdir(elsewhere)
     load_environment()
     assert os.environ["WEBIQ_API_KEY"] == "dummy-agent-value"
+
+
+def test_main_reports_token_path_from_configured_data_directory(tmp_path, monkeypatch, capsys):
+    import geo_agent.__main__ as launcher
+
+    monkeypatch.setattr(launcher, "load_environment", lambda: None)
+    monkeypatch.setattr(launcher, "create_app", lambda *args, **kwargs: object())
+    monkeypatch.setattr(launcher.uvicorn, "run", lambda *args, **kwargs: None)
+    monkeypatch.setenv("GEO_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("GEO_API_TOKEN", raising=False)
+    for name in ("GEO_LIVE_POLICY", "GEO_BUDGET_GRANT", "GEO_CHAT_POLICY", "GEO_ANALYSIS_POLICY", "GEO_MEASUREMENT_POLICY"):
+        monkeypatch.delenv(name, raising=False)
+
+    launcher.main()
+
+    assert capsys.readouterr().out.strip() == f"Local API token: {(tmp_path / 'local-api-token').resolve()} (value not logged)"

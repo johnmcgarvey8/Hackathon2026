@@ -1,10 +1,10 @@
 # GEO Agent: Conversational Evidence Assistant
 
-The local GEO agent analyses public page URLs and holds multi-turn conversations about saved evaluation evidence. Page analysis returns observed and inferred findings with validated verbatim quotes, plus improvement hypotheses requiring review. The Microsoft Agent Framework chat remains read-only and bound to its existing saved run; the browser's separate analysis workflow uses structured Foundry calls. Neither model can approve evaluations or publish changes. New multi-model measurement and validated recommendation libraries are offline-tested but are not connected to the browser or live runner. No Azure resources were provisioned by this build. The [build plan](../geo-agent-build-plan.md) remains the roadmap; the [offline proposal](../geo-optimiser.html) is unchanged.
+The local GEO agent analyses public page URLs and holds multi-turn conversations about saved evaluation evidence. Page analysis returns observed and inferred findings with validated verbatim quotes, plus improvement hypotheses requiring review. The Microsoft Agent Framework chat remains read-only and bound to its existing saved run; the browser's separate analysis workflow uses structured Foundry calls. Neither model can approve evaluations or publish changes. The v2 measurement console connects the durable multi-profile workflow to the local browser in explicit mock mode. No Azure resources were provisioned by this build. The [build plan](../geo-agent-build-plan.md) remains the roadmap; the [offline proposal](../geo-optimiser.html) is unchanged.
 
 ## V2 Backend Milestone
 
-The recommended release is a shared website for hackathon colleagues, backed by this FastAPI service and Foundry model inference. MCP remains a possible later wrapper. The current local website still uses its original single-profile, human-approved workflow; it is not a shared multi-model application yet.
+The recommended release is a shared website for hackathon colleagues, backed by this FastAPI service and Foundry model inference. MCP remains a possible later wrapper. The local website exposes the durable workflow at `/measurements` in mock mode or under an explicitly approved live policy and grant; it remains a single-user development surface rather than a deployed shared application.
 
 | Component | Implemented and offline-tested |
 | --- | --- |
@@ -12,14 +12,19 @@ The recommended release is a shared website for hackathon colleagues, backed by 
 | [Paired planner](src/geo_agent/foundry.py) | `Foundry.propose_pairs` reuses the saved snapshot, validates quoted passages and rejects duplicate queries or invalid priority order. |
 | [Evaluator providers](src/geo_agent/providers.py) | OpenAI Responses for ChatGPT-style and Copilot-style profiles; Anthropic Messages via `anthropic==0.125.0` for Claude-backed answers. Canonical endpoint validation, approved prompt guards, bounded evidence, 2,000 output tokens and no automatic retries. |
 | [Measurement scoring](src/geo_agent/evaluation.py) | Exact-page citation rate, errors and coverage; separate Web IQ presence/position metrics; same-domain, unsupported-citation and raw-mention details. Model comparisons use only the common completed query set. |
-| [Recommendations](src/geo_agent/recommendations.py) | Up to two saved alternatives per query and three draft hypotheses. Exact quotes resolve within the correct query. Reports bind to both inputs and complete measurement data. No candidates means no recommendation model call. |
-| [Draft exports](src/geo_agent/artifacts.py) | `render_measurement_bundle` validates reports and produces deterministic ZIPs containing measurement data, scores and recommendations. No provider call or publishing permission. Existing run exports are unchanged. |
+| [Recommendations](src/geo_agent/recommendations.py) | Automatic, deterministic content-strategy report separates returned excerpt patterns from cited sources and final-answer wording, with exact quotes and original-page changes to test. No provider call. Optional legacy model reports remain supported with up to three reviewed draft hypotheses. |
+| [Draft exports](src/geo_agent/artifacts.py) | `render_measurement_bundle` validates reports and produces deterministic ZIPs containing measurement data, scores, recommendations and a sanitized human review record. Only accepted tasks become Markdown planning files. No provider call or publishing permission. Existing run exports are unchanged. |
+| [Durable runtime](src/geo_agent/persistence.py) | SQLAlchemy-backed runs, events, approvals, jobs, operation claims, v2 budget consumption and artifact metadata. The mock and live workers share the same claim-before-call path. |
+| [Live worker](src/geo_agent/measurement_worker.py) | Separate queue worker with immutable owner/policy-bound grants, proportional capacity for one or more complete runs, failed-call charging and graceful shutdown. Startup validation makes no provider call. |
+| [Measurement console](src/geo_agent/measurement.html) | Owner-scoped run recovery, explicit preparation and evaluation confirmations, exact-query approval, visible provenance and limitations, one- or three-profile results, retained evidence, human recommendation decisions, cancellation and authenticated ZIP download. The bearer token remains in browser memory. |
 
 All profiles are controlled evidence-packet simulations, not measurements of the consumer Copilot, Claude or ChatGPT services. The same ordered search packet must be used for each profile's answer to a query. Target-page text is not added to evaluator input; only returned search evidence can earn citation credit. A Claude label requires the Anthropic adapter, not a GPT persona. Actual deployments, access and underlying model identities still require live preflight.
 
+The Copilot-style system prompt is intentionally diagnostic: it identifies buyer criteria supported by the packet, labels material criteria that cannot be answered as evidence gaps, and supplies concrete next steps only when grounded in cited evidence. It must not infer missing product capabilities or page-content absence from an evidence gap. The common evidence-only guard remains authoritative for every profile.
+
 The citation score is `round(100 * completed answers citing the exact page / completed answers)`. Failed calls reduce coverage; no completed answers means N/A. Priority does not weight the score. Search absence means the exact page was not in that saved top-five packet, not global invisibility or rank six. Recommendations are hypotheses: quote checks prove traceability, not semantic correctness, causal ranking factors or guaranteed gains.
 
-The v2 ZIP contains `manifest.json`, `manifest.md`, `measurement.json`, `scores.json` and `recommendations.json`. Its manifest is `geo-measurement-manifest/v1`, distinct from the legacy run manifest `geo-manifest/v2`. With the installed package, scores can be recomputed from the retained JSON:
+The v2 ZIP contains `manifest.json`, `manifest.md`, `measurement.json`, `scores.json`, `recommendations.json` and `recommendation-review.json`. The review file excludes reviewer identity. Each accepted task also produces `recommendations/rec-N.md` as a human planning input; rejected and unreviewed drafts remain only in the evidence report. Acceptance grants no editing or publishing permission. Its manifest is `geo-measurement-manifest/v1`, distinct from the legacy run manifest `geo-manifest/v2`. With the installed package, scores can be recomputed from the retained JSON:
 
 ```python
 from pathlib import Path
@@ -30,15 +35,111 @@ measurement = MeasurementResults.model_validate_json(Path("measurement.json").re
 scores = measurement_scores(measurement)
 ```
 
-The exported input hash is an integrity fingerprint, not evidence that a human approved execution. These library contracts do not yet persist a v2 run, approval, job or attempt ledger. The caller must enforce ownership, approval and budget before any provider invocation. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
+The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, and interrupted or ambiguous claims are not automatically replayed. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
 
-Verification on 15 September 2026: **395 tests passed**, with two existing Starlette/AnyIO dependency deprecation warnings. The [component integration test](tests/test_artifacts.py) uses SDK mock transports to exercise one Browse, one analysis, one paired plan, five searches, fifteen answer attempts and one recommendation call. It tests full completion and an isolated Claude failure, shared evidence packets, redacted errors and score recomputation from the ZIP. This is a test composition, not a production orchestrator. No real provider calls were made during this milestone.
+Verification: **506 tests passed**, with two existing Starlette/AnyIO dependency deprecation warnings. The [live runtime test](tests/test_live_runtime.py) uses SDK mock transports and the durable budget ledger to exercise one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 charged operations with no external traffic. Focused tests also prove proportional multi-run allowances, same-owner multi-URL use, atomic exhaustion, immutable grant binding, owner isolation, failed-call charging, complete human recommendation decisions, sanitized accepted-task exports and the Copilot-style evidence-gap guard. The browser checks cover the six-stage UI against both intercepted responses and the durable mock worker, including explicit provenance, automatic content recommendations, legacy draft review, desktop/mobile layout, reload recovery, safe rendering and ZIP integrity.
+
+### Grounding and Answer Assessment
+
+Returned evidence is not the same as a citation in the answer. The [evidence assessment](src/geo_agent/evidence_assessment.py) audits saved data without Web IQ, model or judge calls. It keeps the original exact-page score and approved measurement inputs unchanged. The Measure stage separates **Grounding evidence**, **Answer and citations**, and **Source trace**; Export retains a compact summary and a link back to Measure.
+
+New measurement asks only for URL, audience, goal and locale. After Browse, the existing [preparation analysis call](src/geo_agent/foundry.py) uses the saved page content plus model knowledge to infer the primary brand, distinctive/common-word aliases and brand domain. It returns a `PreparationAnalysis` response, preserving the legacy `PageAnalysis` API. Preparation still uses exactly one Browse, one analysis and one query-planning call, with the same 2,000-token limit and no automatic retries. No additional model or Web IQ call is added for brand setup.
+
+The inferred name or an alias must appear in a validated verbatim passage quote. Unsupported or unanchored suggestions are discarded; unclear pages can return no brand. Model knowledge may suggest a canonical name or alias, but cannot expand domain ownership: only the exact browsed hostname is retained when the model identifies a first-party page. For example, `Microsoft Clarity` can have ambiguous alias `Clarity` and domain `clarity.microsoft.com`; `microsoft.com` is never inferred as owned. This is model-generated configuration, not independent verification of names, aliases or ownership.
+
+The [preparation transaction](src/geo_agent/persistence.py) saves the definition with `source: page-analysis` alongside the prepared run, only if no definition already exists. Manual overrides win. The suggestion, rationale and page quotes survive reload in the saved preparation analysis. Query review shows a compact brand summary with optional **Brand details** and **Edit brand definition**; no separate brand-confirmation checkbox is required. If the brand is unidentified, query approval still works and brand metrics remain N/A. Existing runs can use **Set brand** without rerunning paid preparation. Corrections append a definition version without changing approved queries, evaluator prompts, run revisions or budgets. Names/aliases are limited to 120 characters, with up to ten aliases and ten domains. Domain matches require an exact host or dot-bounded subdomain.
+
+| Finding | Denominator and limits |
+| --- | --- |
+| Brand in Web IQ evidence | Successful query packets with a nonambiguous brand text match / successful packets. Titles and retained passages are inspected; domains are a separate signal. Successful empty packets count as absent. Failed/missing searches remain unknown and lower coverage. |
+| Brand in answers | Completed answers with a nonambiguous text match / completed answers. A negative mention still counts as a mention, not an endorsement. |
+| Supplied sources cited | Unique valid model-reported citation IDs / supplied source records across completed answers. Each profile answer is a separate opportunity; profiles do not multiply Web IQ retrieval counts. |
+| Brand-source conversion | Completed answers citing a brand-bearing source / completed answers supplied a brand-bearing source. The source-level branded cited fraction is also retained. Neither metric replaces answer brand presence or exact-page citation. |
+
+Matching is literal, Unicode-normalized and case-insensitive, with word/phrase boundaries. Ambiguous aliases count toward strict brand presence only when the same source also contains a distinctive alias/name or has a configured brand-owned host. Answers require corroboration in the answer itself, not the question or supplied packet. The query's `branded` flag describes the input query and is never used as an output brand finding. No saved definition means N/A brand metrics; valid citation inspection remains available. Matching results depend on the saved definition, including any model-inferred assumptions.
+
+Every source trace is scoped by query ID plus evidence ID. It shows cited, not cited or unknown; duplicate citation IDs count once and unsupported IDs remain explicit validity findings. Optional shared wording means at least six consecutive normalized words occur in both excerpt and answer; overlapping matches shared by multiple sources are marked non-unique. Original text and match spans are retained for safe highlights. No match does not establish lack of support. A citation is not proof of claim support, uncited evidence may influence output, and source-selection motives and claim-level citation alignment were not recorded. More citations are not inherently better. No hidden reasoning or semantic judge result is claimed.
+
+Authenticated owner/Geo.Operator routes in [measurement_api.py](src/geo_agent/measurement_api.py):
+
+- `POST /api/v2/briefs` accepts the existing flat brief plus optional manual `brand_definition`; run and manual definition creation are atomic. The UI omits this field and lets preparation generate it. Old clients remain valid.
+- `POST /api/v2/runs/{id}/brand-definition` accepts `definition` and `expected_definition_version` (zero for first save). Stale changes return 409; repeating the current definition returns it without creating another version.
+- `GET /api/v2/runs/{id}/evidence-assessment?definition_version=N` returns configuration, report and hash. Version is optional and defaults to latest. Pending work has no fabricated per-query results: detailed analysis waits for the saved measurement. Run lists and compact progress responses do not include assessments.
+- `GET /api/v2/runs/{id}/evidence-assessment/download?definition_version=N` returns a reproducible companion ZIP; optional `measurement_hash` rejects stale data. Downloads do not mutate the run.
+
+New export requests may pin `definition_version` and `definition_hash`. Assessed bundles use `geo-measurement-manifest/v2` and add `evidence-assessment.json` and `evidence-assessment.md`, bound to `geo-evidence-assessment/v1` / `brand-citation-audit/v1`. Unassessed exports retain v1 bytes. Already-exported runs always retain their original ZIP; the separate `geo-evidence-assessment-manifest/v1` companion contains the report, definition, saved measurement and original scores. Reports are recomputed and verified before rendering. Reproduce with `build_evidence_assessment(measurement, record, run_id=..., run_revision=...)` using the report's pinned definition/version and run metadata; no provider is needed.
+
+The additive [0003 migration](migrations/versions/0003_brand_definitions.py) creates `run_brand_definitions`. Local SQLite initialization creates missing tables without altering existing records. Back up storage and wait for an idle API before restarting an existing installation; worker policies and grants need no change. SQLite upgrade, concurrent saves, rollback, old approval hashes and original export preservation are tested. PostgreSQL migration execution has not been verified in this environment.
+
+Automatic setup requires both the API and measurement worker to load the updated code, because the saved preparation response now includes the inferred brand. Stop new submissions, wait for idle jobs, back up storage and restart both processes together; do not mix an older worker/API with new preparation records. Existing runs and manual definitions remain valid. No further table migration, policy change or budget grant is needed for this automation. Offline tests cover inferred and missing brands, unsupported quotes, restricted domains, manual override precedence, restart persistence and transaction rollback without provider replay. Actual live model extraction quality has not been retested.
+
+### Evidence-Based Content Recommendations
+
+The Recommendations step turns a saved measurement into content experiments for the original page, without another Web IQ or model call. [build_content_strategy](src/geo_agent/recommendations.py) uses nonexclusive English wording cues for definitions, how-to instructions, comparisons, quantified evidence, features/integrations and pricing/access. These are excerpt patterns, not a semantic assessment or verified full-page formats. The report also works for saved runs without a brand definition or a model-generated recommendation report.
+
+- **Grounding recommendations:** show which types appear in returned excerpts, how many sources and queries contain them, exact quotations, source URLs and original-page matches. Each type suggests a change to test; missing capture evidence prompts a full-page check before adding content.
+- **LLM recommendations:** separate model-reported citation counts from matching wording in final answers. Citation opportunities count only completed answers supplied that query's source. Evidence IDs remain query-scoped. Quoted answers and cited source passages support content experiments, not claims about hidden preferences or selection motives.
+- **Content strategy:** prioritise the observed patterns, verify original facts and test one change against the same query set under fresh human approval and sufficient allowance. Returned frequency is not a causal ranking factor; a citation does not prove claim support, and uncited evidence may still influence an answer. Failed or missing results reduce coverage rather than becoming negative findings.
+
+Authenticated owner/Geo.Operator `GET /api/v2/runs/{id}/content-strategy` returns `geo-content-strategy/v1` using method `english-excerpt-cues/v1`. The companion `/content-strategy/download` route returns a deterministic ZIP with the report in JSON and Markdown, the saved measurement and a hash-bound manifest. An optional `measurement_hash` rejects stale downloads with 409. Both routes are read-only and private/no-store. They do not alter approved inputs, run revisions, scores, existing exports, budgets or legacy model-report hashes. Browser report loading is revision-cached with stale-response guards and an explicit read-only reload after failures.
+
+The browser no longer requests the optional recommendation model pass when starting a measurement. Existing model-generated tasks retain their accept/reject review and export requirements. Automatic content advice does not need that review record and grants no editing or publishing permission. Restart an idle API to activate the new routes; no worker restart, migration or policy/grant change is needed for this read-only report. Sources and offline checks: [report tests](tests/test_recommendations.py), [API tests](tests/test_measurement_api.py), [ZIP tests](tests/test_artifact_storage.py) and [browser regression](tests/check_measurement_browser.cjs).
 
 ### Shared Release Gates
 
-The next implementation work is durable owner-bound v2 runs, jobs and per-operation call claims; an asynchronous API; Entra sign-in and CSRF protection; and the query, model, score and recommendation views in the existing website. Shared hosting needs durable PostgreSQL storage, not App Service local SQLite. Claims must commit before network dispatch; ambiguous interrupted attempts must never be replayed automatically.
+The local implementation now has durable owner-bound v2 runs, jobs, per-operation claims and an independently launched worker; an asynchronous API; and query, model, score, recommendation and export views. Shared release still requires Entra sign-in, CSRF protection, deployment of the worker and PostgreSQL-backed storage. Local bearer authentication and SQLite are development controls, not shared-hosting controls.
 
-Before enabling live multi-model execution, obtain explicit approval for the model roster, new team/per-user allowance, retained data and hosting costs. A complete run is bounded at **6 Web IQ requests and 18 model requests**, each model call allowing at most 2,000 output tokens. This is not a monetary cap. No new allowance is enabled: existing local policies, grants and usage ledgers are unchanged and do not fund this new workflow. Provisioning, deployment, a real three-model canary and colleague-isolation verification remain outstanding.
+Before enabling live execution, obtain explicit approval for the model roster, per-user allowance, retained data and hosting costs. A complete one-profile run is bounded at **6 Web IQ requests and 7 model requests**; a three-profile run uses **6 Web IQ requests and 17 model requests**. Each model call allows at most 2,000 output tokens. These operation limits are separate from the grant's monetary authorisation ceiling. Existing grants and usage ledgers remain immutable. Provisioning, deployment, a real three-model canary and colleague-isolation verification remain outstanding.
+
+## Run the Mock Measurement Console
+
+Set the checked-in mock policy, start the local server, then open http://127.0.0.1:8090/measurements and connect with the generated local API token file:
+
+```powershell
+$env:GEO_MEASUREMENT_POLICY = (Resolve-Path './geo-agent/measurement-policy.json').Path
+$env:GEO_PORT = '8090'
+& './geo-agent/.venv/Scripts/python.exe' -m geo_agent
+```
+
+Create a brief, confirm the three preparation operations, review and approve the exact five query pairs, then confirm five synthetic searches and fifteen synthetic evaluator calls. Evidence-based content recommendations follow automatically. Existing model-generated draft tasks still require accept/reject review before exporting; acceptance creates a planning file but does not authorise editing or publishing. Runs, jobs, evidence, reviews and exported ZIPs survive a browser refresh; only the selected run ID is retained in session storage. The token remains in memory and must be supplied again after reload. This policy makes no Web IQ or Foundry requests.
+
+The console guides the active run through Brief, Prepare, Approve, Measure, Recommendations and Export. Completed stages remain available for review; query approval and Start measurement remain explicit human actions. Short requests display pending and recovery feedback without locking the interface for the lifetime of a worker job. Unsaved query edits require confirmation before navigation.
+
+Authenticated `GET /api/v2/runs/{id}/progress` returns compact, owner-scoped job activity and recorded operation counts without provider metadata or operation keys. Visible, online pages poll at 1-5 second intervals, backing off on transient read failures. Unchanged run revisions do not trigger full-run downloads or panel reconstruction. Hidden/offline pages pause monitoring; returning resumes safe reads. Failed, unresolved and not-attempted work is not counted as completed, and optional recommendations are identified separately. Ambiguous responses trigger a saved-state read where possible, never an automatic mutation or provider retry. Older running APIs use saved-run/job polling until restarted to load the new endpoint.
+
+The console matches [the original GEO Optimiser design](../geo-optimiser.html): its Microsoft-blue Clawpilot overrides, four-colour mark, cool surfaces, Segoe UI typography and compact controls. Guided stage navigation, keyboard focus management and light/dark layouts are retained. Lucide 0.468.0 icons are embedded locally with their ISC notice; the browser needs no CDN. The original reference file is unchanged.
+
+Browser checks are split between an intercepted API contract test (no server required) and the real durable mock workflow (mock server required):
+
+```powershell
+npm install --prefix ./geo-agent/.data/browser-check --no-audit --no-fund playwright@1.58.2 @axe-core/playwright@4.10.2
+node ./geo-agent/tests/check_measurement_browser.cjs
+$env:GEO_BROWSER_BASE_URL = 'http://127.0.0.1:8090'
+$env:GEO_BROWSER_TOKEN = (Get-Content './geo-agent/.data/local-api-token' -Raw).Trim()
+try { node ./geo-agent/tests/check_measurement_browser_live.cjs }
+finally { Remove-Item Env:GEO_BROWSER_TOKEN }
+```
+
+The intercepted check includes 65 real monitoring updates over more than a minute, transient status failures, dropped cancellation responses, older-API compatibility, immutable recommendation review and WCAG A/AA axe checks at 320, 390, 768 and 1440px in both themes. It asserts no full-run refetch or panel replacement during unchanged revisions. These checks do not measure live provider latency or replace manual accessibility review.
+
+The durable browser check refuses a live policy before creating any run. It creates a local synthetic run and export; use an isolated `GEO_DATA_DIR` and its corresponding token file, and set `GEO_BROWSER_BASE_URL` to that mock server. Never aim this test at the live API on 8094. The original offline HTML and build plan remain unchanged.
+
+## Run the Live Measurement Worker
+
+The v2 API remains enqueue-only in live mode. A separate worker processes those jobs only when all live settings are present and an immutable grant matches the policy ID, complete policy hash and run owner. Each score-only run uses 13 operations with one profile or 23 with three profiles: one Browse, two preparation model calls, five Searches and five evaluator calls per profile. A grant can authorise 1 to 100 complete runs by multiplying every mandatory stage allowance by the same run count. Recommendations remain optional and are capped at one call per authorised run. Claims consume allowance before dispatch; failed and interrupted calls are not refunded or retried.
+
+No live v2 policy or grant is checked in. After the model roster and direct endpoints have been discovered and the exact spend has been approved, start the API and worker with the same `GEO_DATA_DIR` and `GEO_MEASUREMENT_POLICY`. Set the worker-only grant separately:
+
+```powershell
+$env:GEO_MEASUREMENT_POLICY = 'C:\approved\clarity-live-policy.json'
+$env:GEO_MEASUREMENT_BUDGET_GRANT = 'C:\approved\clarity-live-budget-grant.json'
+$env:GEO_DATA_DIR = (Resolve-Path './geo-agent/.data').Path
+$env:AZURE_OPENAI_ENDPOINT = 'https://<resource>.services.ai.azure.com/openai/v1/'
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME = '<approved-preparation-deployment>'
+& './geo-agent/.venv/Scripts/python.exe' -m geo_agent.measurement_worker
+```
+
+`WEBIQ_API_KEY` must already be available in `geo-agent/.env` or the process environment. The worker does not print credentials, probe providers or acquire a Foundry token at startup. Once running, it immediately leases queued jobs, so do not launch it before approving the policy, grant and pending workload.
 
 ## Analyse a Public Page
 
@@ -92,6 +193,7 @@ $env:GEO_CHAT_POLICY = (Resolve-Path './geo-agent/chat-policy.json').Path
 $env:GEO_LIVE_POLICY = (Resolve-Path './geo-agent/live-policy.json').Path
 $env:GEO_BUDGET_GRANT = (Resolve-Path './geo-agent/budget-grant.json').Path
 $env:GEO_ANALYSIS_POLICY = (Resolve-Path './geo-agent/analysis-policy.json').Path
+$env:GEO_MEASUREMENT_POLICY = (Resolve-Path './geo-agent/measurement-policy.json').Path
 $env:GEO_PORT = '8090'
 & './geo-agent/.venv/Scripts/python.exe' -m geo_agent
 ```
@@ -179,7 +281,7 @@ The checked-in [test policy](live-policy.json) defines the per-run limits: one i
 5. Inspect status, events, source excerpts and citation matches through the run/evidence endpoints.
 6. `POST /runs/{run_id}/exports` with `expected_revision` freezes the run. Download its `download_url` with the same bearer token.
 
-Downloads from the existing API contain `manifest.md`, `run.json` and `scores.json`. They include approved inputs, answers and retained source excerpts, with branded/unbranded scores reported separately. Live records include provider trace IDs, response IDs and token usage. This legacy workflow does not generate recommendation tasks; the internal `recommendations-ready` state means evaluation finished. Its manifest uses `geo-manifest/v2`; the offline prototype's v1 task contract is not silently reused. The new measurement exporter described above is separate and is not exposed through these routes. All exports require human review and grant no publishing permission.
+Downloads from the existing API contain `manifest.md`, `run.json` and `scores.json`. They include approved inputs, answers and retained source excerpts, with branded/unbranded scores reported separately. Live records include provider trace IDs, response IDs and token usage. This legacy workflow does not generate recommendation tasks; the internal `recommendations-ready` state means evaluation finished. Its manifest uses `geo-manifest/v2`; the v2 measurement exporter is separately exposed through authenticated `/api/v2/runs/{run_id}/exports` and artifact routes. All exports require human review and grant no publishing permission.
 
 ## First Live Result
 
@@ -213,15 +315,17 @@ The direct inference connection works; the following broader setup remains separ
 
 | Item | Current position |
 | --- | --- |
-| Foundry Toolkit | No selected project; direct model inference works. Local Inspector configuration exists; hosted project integration is deferred. |
-| Model identity | Deployment name and provider-returned model string are retained. Underlying model version is not independently established. |
-| Foundry identity | Azure CLI Entra inference succeeded. Azure Identity was not added because its dependency lacked a usable Windows ARM64 wheel in this environment. |
-| Web IQ | Browse and Search succeeded. Live crawling remains disabled; expanding retrieval requires a separate safety review. |
+| Foundry Toolkit | No project is selected in the extension. The existing direct Azure AI connection is canonical and targets the dedicated GEO resource; hosted project integration is deferred. |
+| Model roster | Confirmed: `gpt-5.6-sol` on `hackathon-2026-geo-optimiser` for preparation and ChatGPT-style evaluation; existing `gpt-5-mini` on `GPT5-Editor` for Copilot-style evaluation. Recommended Claude evaluator: `claude-sonnet-4-6` version `1`, `GlobalStandard`, MaaS capacity `1`, deployment name `claude-sonnet-4-6-geo` on `hackathon-2026-geo-optimiser` in `eastus`. The model is generally available with inference deprecation dated 10 February 2027. The subscription reports 80 available quota units, but this deployment has not been created because Anthropic's required industry declaration is still pending. |
+| Foundry identity | Azure CLI is authenticated and the portable `azd` plus `microsoft.foundry` extension pass their dependency check when the portable directory is added to process-local `PATH`. Azure Identity was not added because its dependency lacked a usable Windows ARM64 wheel in this environment. |
+| Web IQ | A non-empty key and the documented v3 Browse/Search endpoints are configured; earlier bounded Browse and Search calls succeeded. Live crawling remains disabled; expanding retrieval requires a separate safety review. |
 | Local tooling | Portable ARM64 `azd` is under `%LOCALAPPDATA%/Programs/AzureDevCLI-local`; its path is not persisted. Azure CLI and azd sign-ins passed the preflight. The preflight resets PATH, so the portable executable must be resolved explicitly. |
-| Runtime | Local synchronous API, no durable worker, hardened deployment, automated cost accounting or transitive dependency lock. |
+| Runtime | Local durable jobs and mock worker are implemented; separate worker hosting, hardened deployment, automated cost accounting and a transitive dependency lock remain outstanding. |
 
 Place service secrets in the local [.env](.env), environment variables or an approved secret store. The existing workspace `Credentials` file was not read or modified; adding it to `.gitignore` does not untrack it if it was already committed.
 
 ## Next Build Increment
 
-Connect the tested v2 components through durable owner-bound execution and the shared website, following the release gates above. Keep the current saved-page analysis and single-profile citation workflow under their existing allowances. Chat remains bound to the original run. All further calls require sufficient approved capacity; citation searches additionally require exact query approval. Canonical equivalence, CMS publishing and Work IQ remain separate later work, with their own review and approvals.
+The first one-profile `https://clarity.microsoft.com/` canary completed under its immutable 13-operation grant. New browser-testing grants may now authorise several complete URL runs for the same owner and allowed domains. The API token continues to identify the owner; the separate grant remains the spending boundary and records exact operation allowances, policy hash, monetary authorisation ceiling and approval. Every run still requires its own exact query approval before evaluation.
+
+After the local canary, prepare the connected v2 workflow for shared hosting: add Entra authentication and CSRF protection, move persistence to PostgreSQL, deploy the worker separately and complete colleague-isolation tests. Keep the current saved-page analysis and single-profile citation workflow under their existing allowances. Chat remains bound to the original run. All live calls require sufficient approved capacity and exact query approval. Canonical equivalence, CMS publishing and Work IQ remain separate later work, with their own review and approvals.

@@ -1,0 +1,1447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEO Optimiser | Measurement Console</title>
+<script>
+(() => {
+  const param = new URLSearchParams(window.location.search).get("scoutTheme");
+  const theme = param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", theme);
+})();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-hover: #9a1a41;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #f59e0b;
+  --cp-link: #0078d4;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a;
+  --cp-bg-elevated: #343231;
+  --cp-surface: #292929;
+  --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747;
+  --cp-border-strong: #5f5f5f;
+  --cp-text: #dedede;
+  --cp-text-muted: #919191;
+  --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1;
+  --cp-accent-hover: #fb7b91;
+  --cp-accent-soft: rgba(253, 142, 161, 0.14);
+  --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80;
+  --cp-danger: #f87171;
+  --cp-warning: #fbbf24;
+  --cp-link: #4da6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  --cp-overlay: rgba(41, 41, 41, 0.88);
+  --cp-panel: rgba(41, 41, 41, 0.72);
+  --cp-panel-strong: rgba(41, 41, 41, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+:root {
+  --cp-bg: #f5f7f9;
+  --cp-bg-elevated: #fafbfc;
+  --cp-accent: #0067b8;
+  --cp-accent-hover: #005a9e;
+  --cp-accent-soft: #edf5fc;
+  --cp-highlight: #dceeff;
+  --cp-success: #107c10;
+  --cp-success-soft: #edf6ec;
+  --cp-danger: #a4262c;
+  --cp-warning: #835b00;
+  --cp-warning-soft: #fff5d6;
+  --cp-red: #f25022;
+  --cp-green: #7fba00;
+  --cp-blue: #00a4ef;
+  --cp-yellow: #ffb900;
+  --cp-line: #e7ecf1;
+}
+html[data-theme="dark"] {
+  --cp-bg: #1d2023;
+  --cp-bg-elevated: #222629;
+  --cp-surface: #282d31;
+  --cp-surface-soft: #30363b;
+  --cp-text: #f0f2f4;
+  --cp-text-muted: #b6bec6;
+  --cp-text-soft: #b0bac2;
+  --cp-accent: #77c3ff;
+  --cp-accent-hover: #a8d8ff;
+  --cp-accent-fg: #14222c;
+  --cp-accent-soft: #233d50;
+  --cp-highlight: #294a63;
+  --cp-success: #9bdb8a;
+  --cp-success-soft: #2d3c2c;
+  --cp-warning: #f7ce65;
+  --cp-warning-soft: #403b29;
+  --cp-line: #343c43;
+}
+* { box-sizing: border-box; letter-spacing: 0; }
+body { margin: 0; min-width: 280px; background: var(--cp-bg); color: var(--cp-text); font: 15px/1.5 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+a { color: var(--cp-link); text-underline-offset: 4px; }
+button, input, select, textarea { font: inherit; color: var(--cp-text); }
+button, input, select, textarea { border: 1px solid var(--cp-border-strong); border-radius: 8px; background: var(--cp-surface); padding: 10px 12px; }
+button { cursor: pointer; white-space: nowrap; }
+button:hover { background: var(--cp-surface-soft); }
+button:disabled { cursor: default; opacity: .5; }
+button.primary { color: var(--cp-accent-fg); background: var(--cp-accent); border-color: var(--cp-accent); }
+button.primary:hover { background: var(--cp-accent-hover); }
+button.danger { color: var(--cp-danger); border-color: var(--cp-danger); }
+:focus-visible { outline: 2px solid var(--cp-link); outline-offset: 3px; }
+[hidden] { display: none !important; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; background: var(--cp-surface); border-bottom: 1px solid var(--cp-border); }
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand-grid { width: 23px; height: 23px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; flex: 0 0 auto; }
+.brand-grid span:nth-child(1) { background: var(--cp-red); }
+.brand-grid span:nth-child(2) { background: var(--cp-green); }
+.brand-grid span:nth-child(3) { background: var(--cp-blue); }
+.brand-grid span:nth-child(4) { background: var(--cp-yellow); }
+h1, h2, h3, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: 19px; font-weight: 650; }
+h2 { margin-bottom: 12px; font-size: 20px; }
+h3 { margin-bottom: 8px; font-size: 15px; }
+.muted, small { color: var(--cp-text-muted); }
+.header-actions, .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.header-actions a { white-space: nowrap; }
+.mode { padding: 4px 8px; border: 1px solid var(--cp-border); border-radius: 4px; color: var(--cp-text-muted); font-size: 12px; text-transform: uppercase; }
+main { max-width: 1320px; margin: 0 auto; padding: 24px; }
+#connection { max-width: 680px; padding: 28px 0; border-bottom: 1px solid var(--cp-border); }
+#connection label, .field label { display: block; margin: 0 0 6px; font-weight: 600; }
+#connection input[type="password"] { flex: 1 1 280px; min-width: 0; }
+#connection input[type="file"] { display: block; width: 100%; margin-bottom: 16px; }
+#status { min-height: 28px; margin: 8px 0; color: var(--cp-text-muted); overflow-wrap: anywhere; }
+#status.error { color: var(--cp-danger); }
+.brief-band { padding: 20px 0 24px; border-bottom: 1px solid var(--cp-border); }
+.form-grid { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(180px, 1fr) 120px auto; gap: 12px; align-items: end; }
+.field input, .field select { width: 100%; min-width: 0; }
+.workspace-grid { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); min-height: 580px; }
+.run-sidebar { padding: 24px 20px 24px 0; border-right: 1px solid var(--cp-border); }
+.run-sidebar .toolbar { margin-bottom: 12px; }
+.run-list { display: grid; gap: 4px; }
+.run-list button { width: 100%; min-height: 64px; padding: 10px; border: 0; border-left: 3px solid transparent; border-radius: 0; text-align: left; white-space: normal; }
+.run-list button[aria-current="true"] { border-left-color: var(--cp-accent); background: var(--cp-accent-soft); }
+.run-list strong, .run-list span { display: block; overflow-wrap: anywhere; }
+.run-list span { color: var(--cp-text-muted); font-size: 12px; }
+.run-detail { min-width: 0; padding: 24px 0 48px 28px; }
+.empty { padding: 80px 24px; color: var(--cp-text-muted); text-align: center; }
+.run-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.run-heading a { overflow-wrap: anywhere; }
+.run-heading small { display: block; margin-top: 4px; }
+.state { flex: none; padding: 4px 8px; border: 1px solid var(--cp-border-strong); border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.state.ready, .state.exported { color: var(--cp-success); border-color: var(--cp-success); }
+.state.partial, .state.needs-review { color: var(--cp-warning); border-color: var(--cp-warning); }
+.state.failed, .state.cancelled { color: var(--cp-danger); border-color: var(--cp-danger); }
+.progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); padding: 22px 0; margin: 20px 0 4px; border-top: 1px solid var(--cp-border); border-bottom: 1px solid var(--cp-border); list-style: none; }
+.progress li { position: relative; padding-top: 24px; color: var(--cp-text-muted); text-align: center; font-size: 12px; }
+.progress li::before { position: absolute; top: 0; left: 50%; width: 14px; height: 14px; border: 2px solid var(--cp-border-strong); border-radius: 50%; background: var(--cp-bg); content: ""; transform: translateX(-50%); }
+.progress li:not(:last-child)::after { position: absolute; top: 7px; left: calc(50% + 9px); width: calc(100% - 18px); height: 2px; background: var(--cp-border); content: ""; }
+.progress li.done { color: var(--cp-text); font-weight: 600; }
+.progress li.done::before, .progress li.done::after { border-color: var(--cp-accent); background: var(--cp-accent); }
+.run-section { padding: 20px 0; border-bottom: 1px solid var(--cp-border); overflow-wrap: anywhere; }
+.run-section:last-child { border-bottom: 0; }
+.action-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; background: var(--cp-accent-soft); border-left: 3px solid var(--cp-accent); }
+.action-strip label { display: flex; align-items: flex-start; gap: 8px; }
+input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--cp-accent); }
+.query-list, .result-list { display: grid; gap: 0; }
+.query, .result { padding: 16px 0; border-top: 1px solid var(--cp-border); }
+.query:first-child, .result:first-child { border-top: 0; }
+.recommendation { padding: 18px 0; border-top: 1px solid var(--cp-border); }
+.recommendation:first-child { border-top: 0; }
+.recommendation h3 { margin-bottom: 6px; }
+.recommendation-decision { display: flex; gap: 8px; margin-top: 14px; padding: 0; border: 0; }
+.recommendation-decision legend { margin-bottom: 7px; font-size: 12px; font-weight: 700; }
+.recommendation-decision label { display: flex; align-items: center; gap: 6px; min-height: 38px; padding: 8px 12px; border: 1px solid var(--cp-border-strong); border-radius: 6px; cursor: pointer; }
+.recommendation-decision input { accent-color: var(--cp-accent); }
+.evidence-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.evidence-columns h4 { margin-bottom: 5px; }
+.query-meta { color: var(--cp-accent); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.query p, .result p { margin-bottom: 8px; }
+.query-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.query-editor-grid .field-wide { grid-column: 1 / -1; }
+.query-editor-grid label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 700; }
+.query-editor-grid textarea { width: 100%; min-height: 76px; resize: vertical; }
+.query-editor-grid .branded-field { display: flex; align-items: center; gap: 8px; }
+.grounding { font-family: Consolas, "Courier New", Courier, monospace; color: var(--cp-text-muted); font-size: 13px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--cp-border); border: 1px solid var(--cp-border); }
+.metric { min-height: 88px; padding: 14px; background: var(--cp-surface); }
+.metric strong { display: block; font-size: 24px; font-weight: 650; }
+.metric span { color: var(--cp-text-muted); font-size: 12px; }
+.provenance-band { margin-bottom: 14px; padding: 14px 16px; border-left: 3px solid var(--cp-warning); background: var(--cp-surface-soft); }
+.provenance-band strong { display: block; margin-bottom: 4px; }
+.provenance-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--cp-border); border: 1px solid var(--cp-border); }
+.provenance-grid div { min-height: 72px; padding: 12px; background: var(--cp-surface); }
+.provenance-grid strong, .provenance-grid span { display: block; }
+.provenance-grid span { color: var(--cp-text-muted); font-size: 12px; }
+details { margin: 8px 0; }
+summary { cursor: pointer; font-weight: 600; }
+blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--cp-border-strong); color: var(--cp-text-muted); white-space: pre-wrap; }
+.event-list { margin: 0; padding-left: 22px; }
+.event-list li { padding: 3px 0; }
+dialog { width: min(640px, calc(100% - 32px)); padding: 0; color: var(--cp-text); background: var(--cp-surface); border: 1px solid var(--cp-border-strong); border-radius: 8px; box-shadow: var(--cp-shadow); }
+dialog::backdrop { background: var(--cp-overlay); }
+.dialog-body { padding: 20px; overflow-wrap: anywhere; }
+.dialog-actions { display: flex; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid var(--cp-border); }
+@media (max-width: 980px) {
+  .form-grid { grid-template-columns: 1fr 1fr; }
+  .form-grid .url-field { grid-column: 1 / -1; }
+  .workspace-grid { grid-template-columns: 220px minmax(0, 1fr); }
+  .metrics, .provenance-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 680px) {
+  header { align-items: flex-start; padding: 14px 16px; }
+  .header-actions { justify-content: flex-end; }
+  main { padding: 16px; }
+  .form-grid, .workspace-grid { display: block; }
+  .form-grid .field, .form-grid button { margin-bottom: 12px; }
+  .run-sidebar { padding: 20px 0; border-right: 0; border-bottom: 1px solid var(--cp-border); }
+  .run-detail { padding: 24px 0 40px; }
+  .run-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .action-strip, .run-heading { align-items: stretch; flex-direction: column; }
+  .action-strip button { width: 100%; }
+  .query-editor-grid { grid-template-columns: 1fr; }
+  .query-editor-grid .field-wide { grid-column: auto; }
+  .evidence-columns { grid-template-columns: 1fr; }
+  .recommendation-decision { flex-direction: column; }
+  .progress { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }
+}
+@media (max-width: 420px) {
+  .header-actions { width: 100%; justify-content: space-between; }
+  .run-list, .metrics, .provenance-grid { grid-template-columns: 1fr; }
+}
+body { background: var(--cp-bg); }
+header { padding: 12px max(24px, calc((100% - 1320px) / 2)); min-height: 68px; flex-wrap: wrap; background: var(--cp-panel-strong); }
+main { max-width: 1368px; padding-top: 24px; }
+h2 { font-size: 18px; }
+button, input, select, textarea { border-radius: 5px; }
+button { min-height: 40px; white-space: normal; font-size: 14px; font-weight: 600; border-color: var(--cp-border); }
+input, select, textarea { background: var(--cp-bg-elevated); }
+.field label { font-size: 12px; font-weight: 650; }
+.header-actions a { font-size: 13px; font-weight: 600; }
+.icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; flex: none; }
+button .icon { margin-right: 6px; }
+button.icon-only { width: 40px; min-width: 40px; height: 40px; padding: 8px; border-radius: 6px; }
+button.icon-only .icon { margin: 0; }
+.state.ready, .state.exported { color: var(--cp-success); background: var(--cp-success-soft); }
+.state.partial, .state.needs-review { color: var(--cp-warning); background: var(--cp-warning-soft); }
+.workspace-grid { background: var(--cp-surface); border-top: 1px solid var(--cp-border); }
+.run-sidebar { padding: 20px 12px; }
+.run-list button[aria-current="true"] span { color: var(--cp-text); }
+.run-detail { padding: 24px; }
+.run-heading h2 { margin-bottom: 4px; }
+.run-heading small { font-size: 11px; }
+.progress { padding: 12px 0; margin: 16px 0; gap: 4px; }
+.progress li { padding: 0; }
+.progress li::before, .progress li::after { display: none; }
+.progress button { width: 100%; min-height: 48px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; padding: 8px 4px; }
+.progress button[aria-pressed="true"] { border-bottom-color: var(--cp-accent); background: var(--cp-accent-soft); font-weight: 650; }
+.progress li[aria-current="step"] button { color: var(--cp-accent); font-weight: 650; }
+.progress li.interrupted button { border-top: 2px solid var(--cp-danger); }
+.step-number { display: inline-grid; place-items: center; min-width: 22px; min-height: 22px; margin-right: 5px; border: 1px solid var(--cp-border); border-radius: 50%; font-size: 12px; }
+.stage-panel { min-height: 260px; }
+.stage-panel > h2 { margin: 20px 0 8px; }
+.action-strip { border-radius: 5px; background: var(--cp-accent-soft); }
+.action-strip label { align-items: center; min-height: 36px; }
+.stage-notice { padding: 12px 16px; border-left: 3px solid var(--cp-accent); background: var(--cp-surface-soft); }
+.stage-notice.warning { border-left-color: var(--cp-warning); }
+#status { padding: 10px 14px; margin: 0 0 12px; border-left: 3px solid var(--cp-accent); background: var(--cp-surface); min-height: 44px; }
+#status:empty { background: transparent; border-left-color: transparent; }
+#status.error { border-left-color: var(--cp-danger); }
+.operation-list { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.operation-list li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--cp-border); }
+.operation-list span { color: var(--cp-text-muted); }
+.command-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+#toggle-runs { display: none; }
+.brief-band { padding: 20px; margin-bottom: 16px; background: var(--cp-surface); }
+.run-context { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
+.run-context dt { color: var(--cp-text-muted); }
+.run-context dd { margin: 0; overflow-wrap: anywhere; }
+.brand-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; grid-column: 1 / -1; }
+.brand-fields textarea { width: 100%; min-height: 72px; resize: vertical; }
+.brand-fields .brand-confirm { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+.assessment-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--cp-border); margin: 16px 0; gap: 4px; }
+.assessment-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; }
+.assessment-tabs button[aria-selected="true"] { border-bottom-color: var(--cp-accent); font-weight: 650; }
+.assessment-selectors { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin: 16px 0; }
+.assessment-source { padding: 16px 0; border-top: 1px solid var(--cp-border); }
+.assessment-source p, .assessment-answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+.assessment-facts { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--cp-text-muted); margin: 8px 0; }
+.assessment-facts strong { color: var(--cp-text); }
+mark { color: var(--cp-text); background: var(--cp-highlight); }
+@media (min-width: 681px) and (max-width: 1100px) {
+  .progress { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .progress button { display: grid; justify-items: center; gap: 4px; font-size: 12px; }
+  .step-number { margin: 0; }
+}
+@media (max-width: 680px) { .brand-fields, .assessment-selectors { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  header { padding: 12px 16px; }
+  .brand { width: 100%; }
+  .header-actions { width: 100%; justify-content: space-between; }
+  .run-detail { padding: 16px; }
+  .workspace-grid { display: flex; flex-direction: column; }
+  .run-sidebar { display: none; order: -1; }
+  .workspace-grid.show-runs .run-sidebar { display: block; }
+  #toggle-runs { display: inline-block; }
+  .progress { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .progress button { display: grid; justify-items: center; gap: 4px; font-size: 11px; }
+  .step-number { margin: 0; }
+  .brief-band { padding: 16px; }
+  .run-context { grid-template-columns: 1fr; gap: 4px; }
+  .run-context dd { margin-bottom: 12px; }
+}
+@media (forced-colors: active) {
+  .progress button[aria-pressed="true"] { outline: 2px solid; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="brand-grid" aria-hidden="true"><span></span><span></span><span></span><span></span></span><div><h1>GEO Optimiser</h1><small>Measurement console</small></div></div>
+  <div class="header-actions"><span id="policy-mode" class="mode">Not connected</span><a href="/chat?view=analysis">Evidence chat</a><select id="theme" aria-label="Color theme"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select><button id="disconnect" type="button" hidden>Disconnect</button></div>
+</header>
+<main>
+  <form id="connection">
+    <h2>Connect</h2>
+    <label for="token-file">Local API token file</label><input id="token-file" type="file">
+    <label for="token">Or enter local access token</label><div class="toolbar"><input id="token" type="password" autocomplete="off" required aria-label="Local access token"><button class="primary">Connect</button></div>
+  </form>
+  <div id="status" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="app" hidden>
+    <div class="command-bar"><button id="new-measurement" type="button">New measurement</button><button id="toggle-runs" type="button" aria-expanded="false" aria-controls="run-list">Runs</button></div>
+    <section id="brief-panel" class="brief-band" aria-labelledby="new-run-heading">
+      <h2 id="new-run-heading">New measurement</h2>
+      <form id="brief-form" class="form-grid">
+        <div class="field url-field"><label for="brief-url">Public URL</label><input id="brief-url" type="url" required maxlength="2048" value="https://example.com/mock-page"><small id="brief-policy">Allowed hosts load after connection.</small></div>
+        <div class="field"><label for="brief-audience">Audience</label><input id="brief-audience" required maxlength="1000" value="Research buyers"></div>
+        <div class="field"><label for="brief-goal">Goal</label><input id="brief-goal" required maxlength="1000" value="Compare trusted options"></div>
+        <div class="field"><label for="brief-locale">Locale</label><select id="brief-locale"></select></div>
+        <button class="primary" type="submit">Create</button>
+      </form>
+    </section>
+    <div class="workspace-grid">
+      <aside class="run-sidebar" aria-labelledby="runs-heading"><div class="toolbar"><h2 id="runs-heading">Runs</h2><button id="refresh-runs" type="button">Refresh</button></div><div id="run-list" class="run-list"></div></aside>
+      <article id="run-detail" class="run-detail"><div class="empty">Select a run or create a new measurement.</div></article>
+    </div>
+  </div>
+</main>
+<dialog id="evidence-dialog" aria-labelledby="evidence-heading"><div id="evidence-body" class="dialog-body"></div><div class="dialog-actions"><button id="close-evidence" type="button">Close</button></div></dialog>
+<dialog id="brand-dialog" aria-labelledby="brand-heading"><form id="brand-form"><div class="dialog-body"><h2 id="brand-heading">Brand definition</h2><p id="brand-version" class="muted"></p><div id="saved-brand-fields" class="brand-fields"></div></div><div class="dialog-actions toolbar"><button id="close-brand" type="button">Cancel</button><button class="primary" type="submit">Save brand definition</button></div></form></dialog>
+<script>
+(() => {
+  const element = id => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  const activeStates = new Set(["preparing", "queued", "evaluating", "recommending"]);
+  let token = "";
+  let policy = null;
+  let runs = [];
+  let current = null;
+  let jobs = [];
+  let artifact = null;
+  let busy = false;
+  let editingQueries = false;
+  let pollVersion = 0;
+  let monitorController = null;
+  let progressSnapshot = null;
+  let progressAvailable = true;
+  let viewVersion = 0;
+  let selectedStage = null;
+  let renderedRunId = null;
+  let renderedStage = null;
+  let assessmentData = null;
+  let assessmentKey = null;
+  let assessmentGeneration = 0;
+  let assessmentQuery = null;
+  let assessmentProfile = null;
+  let assessmentView = "grounding";
+  let strategyData = null;
+  let strategyKey = null;
+  let strategyGeneration = 0;
+  let strategyView = "grounding";
+  let brandTrigger = null;
+  let brandEditVersion = 0;
+  let brandEditRun = null;
+  let brandDirty = false;
+  const stages = ["Brief", "Prepare", "Approve", "Measure", "Recommendations", "Export"];
+  const iconSources = {
+    "refresh-cw": '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+    save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+    square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+    plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  };
+  let evidenceTrigger = null;
+
+  function decorateButton(button, name, iconOnly = false) {
+    if (!iconSources[name]) return;
+    const label = button.textContent;
+    const documentIcon = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconSources[name]}</svg>`, "image/svg+xml").documentElement;
+    const icon = document.importNode(documentIcon, true);
+    icon.classList.add("icon"); icon.setAttribute("aria-hidden", "true"); icon.setAttribute("focusable", "false");
+    button.setAttribute("aria-label", label); button.title = label;
+    if (iconOnly) { button.replaceChildren(icon); button.classList.add("icon-only"); }
+    else button.prepend(icon);
+  }
+
+  const status = (message, error = false) => {
+    element("status").textContent = message;
+    element("status").className = error ? "error" : "";
+  };
+  const textNode = (tag, text, className = "") => {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    node.className = className;
+    return node;
+  };
+  const buttonNode = (label, id, className = "") => {
+    const button = textNode("button", label, className);
+    button.type = "button";
+    button.id = id;
+    const icon = {"refresh-run": "refresh-cw", "export-run": "archive", "download-artifact": "download", "approve-run": "check", "edit-queries": "pencil", "save-queries": "save", "cancel-job": "square", "prepare-run": "play", "evaluate-run": "play"}[id];
+    if (icon) decorateButton(button, icon, id === "refresh-run");
+    return button;
+  };
+  const delay = (milliseconds, signal) => new Promise(resolve => {
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", finish); resolve(); };
+    const timer = setTimeout(finish, milliseconds);
+    if (signal?.aborted) finish(); else signal?.addEventListener("abort", finish, {once: true});
+  });
+
+  function setControls() {
+    for (const control of document.querySelectorAll("#app button, #app input, #app select, #app textarea")) control.disabled = busy || control.dataset.locked === "true";
+    element("disconnect").disabled = busy;
+    if (element("prepare-run")) element("prepare-run").disabled = busy || !element("prepare-confirm").checked;
+    if (element("evaluate-run")) element("evaluate-run").disabled = busy || !element("evaluate-confirm").checked;
+  }
+
+  async function request(path, {method = "GET", body, signal} = {}) {
+    const headers = {"Authorization": "Bearer " + token};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const response = await fetch(path, {
+      method,
+      headers,
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+      ...(body === undefined ? {} : {body: JSON.stringify(body)}),
+      cache: "no-store",
+      redirect: "error",
+      credentials: "omit",
+    });
+    if (!response.ok) {
+      let detail = `Local request failed (HTTP ${response.status}).`;
+      try { detail = (await response.json()).detail || detail; } catch {}
+      if (typeof detail !== "string") detail = "Check the submitted fields and try again.";
+      const error = new Error(detail); error.status = response.status;
+      const retryAfter = response.headers.get("Retry-After");
+      error.retryAfter = retryAfter ? (Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : 0;
+      throw error;
+    }
+    return response;
+  }
+  async function api(path, options) { return (await request(path, options)).json(); }
+
+  async function readProgress(runId, options) {
+    const path = `/api/v2/runs/${encodeURIComponent(runId)}`;
+    if (progressAvailable) {
+      try { return await api(`${path}/progress`, options); }
+      catch (error) {
+        if (error.status !== 404 || error.message !== "Not Found") throw error;
+        progressAvailable = false;
+      }
+    }
+    const run = await api(path, options);
+    const savedJobs = await api(`${path}/jobs`, options);
+    const job = savedJobs[0];
+    return {run_id: run.run_id, run_revision: run.revision, run_state: run.state,
+      job_id: job?.job_id, job_type: job?.job_type, job_state: job?.state,
+      queued_at: job?.created_at, last_activity_at: job?.updated_at || run.updated_at, operations: []};
+  }
+
+  async function action(work, pending = "Updating saved run...", success = "Saved.") {
+    if (busy) return;
+    stopMonitor();
+    busy = true; setControls(); status(pending);
+    try { await work(); status(success); }
+    catch (error) {
+      if (error.status === 401) { disconnect(); status("Access token not accepted by this server. Select its local API token file to reconnect.", true); }
+      else if (error.status === 409 || error.status >= 500 || ["TimeoutError", "TypeError"].includes(error.name)) {
+        let message = error.status === 409 ? error.message : "The request could not be confirmed.";
+        if (current && !editingQueries) {
+          try { await openRun(current.run_id); message += " Saved state refreshed. Review it before submitting again."; }
+          catch { message += " Saved status is unavailable. Refresh before submitting again."; }
+        } else message += " Refresh the saved run before submitting again; unsaved edits have been kept.";
+        status(message + " No automatic retry.", true);
+      }
+      else if (error.name !== "AbortError") status(error.message + " No automatic retry.", true);
+    }
+    finally {
+      busy = false; setControls();
+      if (!monitorController && token && current && activeStates.has(current.state)) void pollRun();
+    }
+  }
+
+  function stateLabel(value) { return value.replaceAll("-", " "); }
+  function stageCount(run) {
+    if (run.state === "exported") return 5;
+    if (run.measurement) return 4;
+    if (["failed", "cancelled", "needs-review"].includes(run.state)) return jobs[0]?.job_type === "evaluate" || run.approval ? 3 : 1;
+    if (["queued", "evaluating", "recommending"].includes(run.state)) return 3;
+    if (run.approval) return 3;
+    if (run.state === "awaiting-query-approval") return 2;
+    return 1;
+  }
+
+  function renderPolicy() {
+    element("policy-mode").textContent = `${policy.execution_mode} / ${policy.profiles.length} profiles`;
+    element("brief-policy").textContent = `Allowed ${policy.allowed_domains.length === 1 ? "host" : "hosts"}: ${policy.allowed_domains.join(", ")}`;
+    const locale = element("brief-locale"); locale.replaceChildren(new Option(policy.locale, policy.locale));
+  }
+
+  function brandFields(target, prefix, definition = null) {
+    target.replaceChildren();
+    for (const [field, label, value, multiline] of [
+      ["name", "Brand name", definition?.name || "", false],
+      ["domains", "Brand-owned domains (one per line)", (definition?.domains || []).join("\n"), true],
+      ["aliases", "Distinctive aliases (one per line)", (definition?.aliases || []).filter(alias => !alias.ambiguous).map(alias => alias.text).join("\n"), true],
+      ["ambiguous", "Common-word aliases (one per line)", (definition?.aliases || []).filter(alias => alias.ambiguous).map(alias => alias.text).join("\n"), true],
+    ]) {
+      const wrapper = document.createElement("div"); wrapper.className = "field";
+      const input = document.createElement(multiline ? "textarea" : "input"); input.id = `${prefix}-${field}`; input.value = value; input.maxLength = multiline ? 2540 : 120;
+      if (field === "name") input.required = true;
+      const labelNode = textNode("label", label); labelNode.htmlFor = input.id; wrapper.append(labelNode, input); target.append(wrapper);
+    }
+  }
+
+  function readBrand(prefix) {
+    const lines = field => element(`${prefix}-${field}`).value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    const aliases = [...lines("aliases").map(text => ({text, ambiguous: false})), ...lines("ambiguous").map(text => ({text, ambiguous: true}))];
+    const name = element(`${prefix}-name`).value.trim(); const domains = lines("domains");
+    if (!name) throw new Error("Enter a brand name.");
+    if (aliases.length > 10 || domains.length > 10 || aliases.some(alias => alias.text.length > 120)) throw new Error("Use at most ten aliases and ten domains; each alias may contain up to 120 characters.");
+    return {name, aliases, domains};
+  }
+
+  function editBrand() {
+    brandTrigger = document.activeElement; brandEditRun = current.run_id;
+    const record = assessmentData?.brand_definition;
+    brandEditVersion = record?.definition_version || 0;
+    brandFields(element("saved-brand-fields"), "saved-brand", record?.definition);
+    element("brand-version").textContent = `Assessment configuration${record ? ` / version ${record.definition_version}` : ""}. Approved queries and model inputs remain unchanged.`;
+    brandDirty = false; element("brand-dialog").showModal();
+  }
+
+  function highlighted(text, matches, field) {
+    const node = document.createElement("span");
+    const spans = matches.filter(match => match.field === field).sort((left, right) => left.start - right.start || right.end - left.end);
+    const characters = Array.from(text || ""); let position = 0;
+    for (const span of spans) {
+      if (span.start < position || span.start < 0 || span.end > characters.length) continue;
+      node.append(document.createTextNode(characters.slice(position, span.start).join("")), textNode("mark", characters.slice(span.start, span.end).join("")));
+      position = span.end;
+    }
+    node.append(document.createTextNode(characters.slice(position).join(""))); return node;
+  }
+
+  const metricRatio = metric => metric?.rate == null ? "N/A" : `${metric.numerator}/${metric.denominator}`;
+
+  function brandContext(target, record, editId) {
+    target.replaceChildren();
+    const preparing = current.state === "draft" || activeStates.has(current.state) && !current.inputs;
+    const description = record ? `${record.definition.name} / definition v${record.definition_version} / ${record.source === "page-analysis" ? "Inferred from page + model knowledge" : "User-defined"}`
+      : preparing ? "Brand setup follows page analysis." : "Brand not identified. Brand metrics remain N/A.";
+    target.append(textNode("p", description, "muted"));
+    if (record) {
+      const details = document.createElement("details"); details.append(textNode("summary", "Brand details"));
+      details.append(textNode("p", `Aliases: ${record.definition.aliases.map(alias => `${alias.text}${alias.ambiguous ? " (ambiguous)" : ""}`).join(", ") || "None"}`),
+        textNode("p", `Brand domains: ${record.definition.domains.join(", ") || "None"}`));
+      if (record.source === "page-analysis" && current.page_analysis?.brand) {
+        details.append(textNode("p", current.page_analysis.brand.rationale));
+        for (const reference of current.page_analysis.brand.evidence) details.append(textNode("blockquote", reference.quote));
+        details.append(textNode("p", "Model-generated setup; aliases and domain ownership are not independently verified.", "muted"));
+      }
+      target.append(details);
+    }
+    if (!preparing && assessmentData && !assessmentData.error) {
+      const edit = buttonNode(record ? "Edit brand definition" : "Set brand", editId); decorateButton(edit, "pencil");
+      edit.addEventListener("click", editBrand); target.append(edit);
+    }
+  }
+
+  function assessmentMetrics(target, report) {
+    const metrics = document.createElement("div"); metrics.className = "metrics";
+    for (const [value, label] of [
+      [metricRatio(report.grounding.brand_presence), "Web IQ packets with brand text"],
+      [metricRatio(report.answer.brand_presence), "Answers mentioning brand"],
+      [metricRatio(report.answer.source_citation_rate), "Supplied sources cited"],
+      [metricRatio(report.answer.brand_sources_cited), "Brand-bearing sources cited"],
+    ]) { const metric = document.createElement("div"); metric.className = "metric"; metric.append(textNode("strong", value), textNode("span", label)); metrics.append(metric); }
+    target.append(metrics);
+  }
+
+  function sourceBlock(source, trace = null) {
+    const block = document.createElement("section"); block.className = "assessment-source";
+    const heading = document.createElement("h3"); heading.append(highlighted(source.title || source.evidence_id, source.brand.matches, "title"));
+    const link = document.createElement("a"); link.textContent = source.url; link.href = source.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+    const facts = document.createElement("div"); facts.className = "assessment-facts";
+    facts.append(textNode("strong", `Position ${source.returned_position ?? "N/A"} / ${source.evidence_id}`),
+      textNode("span", `Brand text: ${source.brand.status}`), textNode("span", `Brand-owned host: ${source.brand_owned_host ? "yes" : "no"}`), textNode("span", `${source.target_relation} / ${source.provenance}`));
+    if (trace) facts.append(textNode("strong", trace.cited == null ? "Citation unknown" : trace.cited ? "Model-reported citation" : "Not cited"));
+    const passage = document.createElement("blockquote"); passage.append(highlighted(source.excerpt, source.brand.matches, "excerpt"));
+    block.append(heading, link, facts, passage);
+    if (trace) {
+      block.append(textNode("p", "Selection reason not recorded", "muted"));
+      if (!trace.shared_wording.length) block.append(textNode("p", trace.cited == null ? "Answer unavailable; shared wording is not assessable." : "No qualifying exact text overlap", "muted"));
+      for (const overlap of trace.shared_wording) block.append(textNode("p", `Shared wording${overlap.non_unique ? " (also shared with other sources)" : ""}: ${overlap.answer_quote}`));
+    }
+    const inspect = buttonNode("Inspect saved evidence", "");
+    inspect.addEventListener("click", () => showEvidence(source)); block.append(inspect); return block;
+  }
+
+  function renderAssessmentAreas() {
+    if (!current || !element("assessment-detail")) return;
+    const target = element("assessment-detail"); const summary = element("assessment-summary");
+    target.replaceChildren(); summary.replaceChildren();
+    const data = assessmentData; const report = data?.assessment;
+    const record = data?.brand_definition;
+    const exportButton = element("export-run");
+    if (exportButton) exportButton.dataset.locked = String(!data || Boolean(data.error && !data.legacyApi));
+    document.querySelectorAll(".saved-brand-context").forEach((node, index) => brandContext(node, record, `edit-brand-context-${index}`));
+    const heading = textNode("h2", "Grounding and answer assessment"); target.append(heading);
+    if (data?.error) {
+      target.append(textNode("p", data.error, "stage-notice warning"));
+      const retry = buttonNode("Reload assessment", "reload-assessment"); decorateButton(retry, "refresh-cw");
+      retry.addEventListener("click", () => { assessmentKey = null; void ensureAssessment(); }); target.append(retry);
+    } else if (!data) target.append(textNode("p", "Loading saved assessment...", "muted"));
+    else {
+      const context = document.createElement("div"); brandContext(context, record, "edit-brand"); target.append(context);
+      if (!report) target.append(textNode("p", data.status === "unavailable-no-saved-measurement" ? "No saved measurement is available for analysis." : "Detailed assessment awaits saved measurement results.", "stage-notice"));
+    }
+    const fallback = element("legacy-results");
+    if (fallback) { fallback.hidden = Boolean(report); if (report) fallback.replaceChildren(); }
+    setControls();
+    if (!current.measurement) return;
+    summary.append(textNode("h2", "Grounding and answer"));
+    const review = buttonNode("Review measurement", "review-measurement"); review.addEventListener("click", () => selectStage(3));
+    if (report) assessmentMetrics(summary, report);
+    else summary.append(textNode("p", data?.error || "Assessment pending. Saved measurement remains available.", "muted"));
+    summary.append(review);
+    if (!report) { setControls(); return; }
+    if (record) {
+      const download = buttonNode("Download assessment ZIP", "download-assessment"); decorateButton(download, "download");
+      download.addEventListener("click", () => action(downloadAssessment, "Retrieving assessment...", "Assessment download started.")); summary.append(download);
+    }
+    assessmentMetrics(target, report);
+    target.append(textNode("p", `Search completion: ${metricRatio(report.grounding.coverage)}. Answer completion: ${metricRatio(report.answer.coverage)}. Ambiguous-only packets: ${report.grounding.ambiguous_packets}; answers: ${report.answer.ambiguous_answers}.`, "muted"));
+    const selectors = document.createElement("div"); selectors.className = "assessment-selectors";
+    const querySelect = document.createElement("select"); querySelect.id = "assessment-query";
+    const profileSelect = document.createElement("select"); profileSelect.id = "assessment-profile";
+    for (const query of report.queries) querySelect.add(new Option(`${query.query_id}: ${query.chat_query}`, query.query_id));
+    for (const profile of current.inputs.profiles) profileSelect.add(new Option(profile.profile_id, profile.profile_id));
+    if (report.queries.some(query => query.query_id === assessmentQuery)) querySelect.value = assessmentQuery;
+    if (current.inputs.profiles.some(profile => profile.profile_id === assessmentProfile)) profileSelect.value = assessmentProfile;
+    assessmentQuery = querySelect.value; assessmentProfile = profileSelect.value;
+    for (const [select, label] of [[querySelect, "Query"], [profileSelect, "Answer profile"]]) { const wrapper = document.createElement("div"); wrapper.className = "field"; const name = textNode("label", label); name.htmlFor = select.id; wrapper.append(name, select); selectors.append(wrapper); }
+    target.append(selectors);
+    const tabs = document.createElement("div"); tabs.className = "assessment-tabs"; tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Evidence layers");
+    const content = document.createElement("div"); content.id = "assessment-view"; content.setAttribute("role", "tabpanel"); content.tabIndex = 0;
+    const draw = () => {
+      assessmentQuery = querySelect.value; assessmentProfile = profileSelect.value;
+      const query = report.queries.find(item => item.query_id === assessmentQuery);
+      const answer = report.answers.find(item => item.query_id === assessmentQuery && item.profile_id === assessmentProfile);
+      content.replaceChildren(); content.setAttribute("aria-labelledby", `assessment-tab-${assessmentView}`);
+      for (const button of tabs.children) { const selected = button.dataset.view === assessmentView; button.setAttribute("aria-selected", String(selected)); button.tabIndex = selected ? 0 : -1; }
+      content.append(textNode("h3", assessmentView === "grounding" ? "Web IQ grounding evidence" : assessmentView === "answer" ? "LLM answer and reported citations" : "Supplied evidence to final answer"));
+      content.append(textNode("p", assessmentView === "grounding" ? query.grounding_query : query.chat_query, "grounding"));
+      if (assessmentView === "grounding") {
+        content.append(textNode("p", `${query.status} / ${query.sources.length} sources returned / brand text: ${query.brand_status}`));
+        if (!query.sources.length) content.append(textNode("p", query.status === "completed" ? "Search completed with no sources." : "Retrieval unavailable; brand presence is unknown.", "muted"));
+        for (const source of query.sources) content.append(sourceBlock(source));
+      } else if (answer) {
+        content.append(textNode("p", `${answer.status} / brand text: ${answer.brand.status} / ${metricRatio(answer.source_citation_rate)} supplied sources cited / exact target cited: ${answer.exact_page_cited == null ? "unknown" : answer.exact_page_cited ? "yes" : "no"}`));
+        if (answer.unsupported_citation_ids.length) content.append(textNode("p", `Unsupported citation IDs: ${answer.unsupported_citation_ids.join(", ")}`, "stage-notice warning"));
+        if (assessmentView === "answer") {
+          const paragraph = document.createElement("p"); paragraph.className = "assessment-answer"; paragraph.append(highlighted(answer.answer, answer.brand.matches, "answer")); content.append(paragraph);
+          content.append(textNode("p", `Model-reported valid citations: ${answer.valid_citation_ids.join(", ") || "None"}`, "muted"));
+        } else {
+          const brandUse = answer.status !== "completed" || !answer.brand_source_count ? "N/A" : `${answer.brand_cited_count}/${answer.brand_source_count}`;
+          content.append(textNode("p", `${brandUse} brand-bearing sources cited. Uncited does not mean unused; citation is not proof of claim support.`, "stage-notice"));
+          for (const source of query.sources) content.append(sourceBlock(source, answer.sources.find(item => item.evidence_id === source.evidence_id)));
+        }
+      }
+    };
+    for (const [view, label] of [["grounding", "Grounding evidence"], ["answer", "Answer and citations"], ["trace", "Source trace"]]) {
+      const tab = buttonNode(label, `assessment-tab-${view}`); tab.dataset.view = view; tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", content.id);
+      tab.addEventListener("click", () => { assessmentView = view; draw(); });
+      tab.addEventListener("keydown", event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault(); const buttons = [...tabs.children]; const index = buttons.indexOf(tab);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next].click(); buttons[next].focus();
+      }); tabs.append(tab);
+    }
+    querySelect.addEventListener("change", draw); profileSelect.addEventListener("change", draw);
+    target.append(tabs, content); draw();
+    const limits = document.createElement("details"); limits.append(textNode("summary", "Assessment method and limits"));
+    for (const limitation of report.limitations) limits.append(textNode("p", limitation, "muted")); target.append(limits);
+    setControls();
+  }
+
+  async function ensureAssessment() {
+    if (!current || !token || activeStates.has(current.state)) return;
+    const key = `${current.run_id}:${current.revision}`;
+    if (assessmentKey === key) { renderAssessmentAreas(); return; }
+    assessmentKey = key; assessmentData = null; const generation = ++assessmentGeneration;
+    const runId = current.run_id; const revision = current.revision; renderAssessmentAreas();
+    try {
+      const data = await api(`/api/v2/runs/${encodeURIComponent(runId)}/evidence-assessment`);
+      if (generation !== assessmentGeneration || current?.run_id !== runId || current.revision !== revision || !token) return;
+      if (data.run_revision !== revision) throw new Error("Run changed. Refresh the saved run before assessing it.");
+      assessmentData = data;
+    } catch (error) {
+      if (generation !== assessmentGeneration || current?.run_id !== runId || current.revision !== revision || !token) return;
+      assessmentData = {legacyApi: error.status === 404 && error.message === "Not Found", error: error.status === 404 ? "Assessment is unavailable on this API. Restart the updated API to enable it." : error.message};
+    }
+    renderAssessmentAreas();
+  }
+
+  function renderRuns() {
+    const list = element("run-list"); list.replaceChildren();
+    if (!runs.length) { list.append(textNode("p", "No measurement runs.", "muted")); return; }
+    for (const run of runs) {
+      const button = document.createElement("button"); button.type = "button";
+      button.setAttribute("aria-current", String(current?.run_id === run.run_id));
+      button.append(textNode("strong", stateLabel(run.state)), textNode("span", run.brief?.url || run.run_id));
+      button.addEventListener("click", () => action(() => openRun(run.run_id)));
+      list.append(button);
+    }
+  }
+
+  function renderProgress(target, run) {
+    const progress = document.createElement("ol"); progress.className = "progress"; progress.setAttribute("aria-label", "Measurement progress");
+    const completed = stageCount(run);
+    const interrupted = ["failed", "cancelled", "needs-review", "partial"].includes(run.state);
+    for (const [index, label] of stages.entries()) {
+      const isInterrupted = interrupted && index === (run.measurement ? 3 : completed);
+      const available = index <= completed || Boolean(run.measurement && index === 5);
+      const item = textNode("li", "", isInterrupted ? "interrupted" : index < completed || run.state === "exported" ? "done" : "");
+      if (index === completed) item.setAttribute("aria-current", "step");
+      const button = buttonNode("", `stage-${index}`);
+      button.append(textNode("span", String(index + 1), "step-number"), document.createTextNode(label));
+      button.dataset.locked = String(!available);
+      button.setAttribute("aria-controls", `panel-${index}`);
+      button.setAttribute("aria-pressed", String(index === selectedStage));
+      button.setAttribute("aria-label", `${label}${isInterrupted ? ", needs attention" : !available ? ", not yet available" : ""}`);
+      button.title = !available ? "Complete the preceding stage first" : `Review ${label.toLowerCase()}`;
+      button.addEventListener("click", () => selectStage(index)); item.append(button);
+      progress.append(item);
+    }
+    target.append(progress);
+  }
+
+  function selectStage(index) {
+    if (editingQueries && index !== 2 && !confirm("Discard unsaved query edits?")) return;
+    if (editingQueries && index !== 2) { editingQueries = false; selectedStage = index; renderRun(); }
+    selectedStage = index;
+    for (const [position] of stages.entries()) {
+      if (element(`panel-${position}`)) element(`panel-${position}`).hidden = position !== index;
+      element(`stage-${position}`)?.setAttribute("aria-pressed", String(position === index));
+    }
+    element(`panel-heading-${index}`)?.focus({preventScroll: true});
+  }
+
+  function appendAction(target, label, buttonLabel, buttonId, checkboxId = null) {
+    const strip = document.createElement("div"); strip.className = "action-strip";
+    if (checkboxId) {
+      const wrapper = document.createElement("label");
+      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.id = checkboxId;
+      wrapper.append(checkbox, document.createTextNode(label)); strip.append(wrapper);
+    } else strip.append(textNode("span", label));
+    strip.append(buttonNode(buttonLabel, buttonId, "primary")); target.append(strip);
+  }
+
+  function renderQueries(target, run) {
+    if (!run.inputs) return;
+    const section = document.createElement("section"); section.className = "run-section"; section.append(textNode("h2", run.approval ? "Approved query packet" : "Query packet"));
+    const list = document.createElement("div"); list.className = "query-list";
+    for (const query of run.inputs.query_plan.queries) {
+      const block = document.createElement("div"); block.className = "query"; block.dataset.queryId = query.query_id;
+      block.append(textNode("span", `${query.query_id} / priority ${query.priority}`, "query-meta"));
+      if (editingQueries) {
+        const grid = document.createElement("div"); grid.className = "query-editor-grid";
+        const editor = (label, field, value, wide = false) => {
+          const wrapper = document.createElement("div"); wrapper.className = wide ? "field field-wide" : "field";
+          const input = document.createElement("textarea"); input.value = value; input.maxLength = 500; input.required = true; input.dataset.field = field; input.setAttribute("aria-label", `${query.query_id} ${label}`);
+          wrapper.append(textNode("label", label), input); return wrapper;
+        };
+        grid.append(
+          editor("Chat query", "chat_query", query.chat_query, true),
+          editor("Grounding query", "grounding_query", query.grounding_query, true),
+          editor("Intent", "intent", query.intent),
+          editor("Rationale", "rationale", query.rationale),
+        );
+        const branded = document.createElement("label"); branded.className = "branded-field";
+        const brandedBox = document.createElement("input"); brandedBox.type = "checkbox"; brandedBox.checked = query.branded; brandedBox.dataset.field = "branded"; brandedBox.setAttribute("aria-label", `${query.query_id} Branded query`);
+        branded.append(brandedBox, document.createTextNode("Branded query")); grid.append(branded); block.append(grid);
+      } else {
+        block.append(textNode("h3", query.chat_query), textNode("p", query.rationale), textNode("p", query.grounding_query, "grounding"));
+      }
+      const evidence = document.createElement("details"); evidence.append(textNode("summary", "Page basis"));
+      for (const quote of query.evidence) evidence.append(textNode("blockquote", `${quote.evidence_id}: ${quote.quote}`));
+      block.append(evidence); list.append(block);
+    }
+    section.append(list); target.append(section);
+  }
+
+  function renderMetrics(target, run) {
+    if (!run.scores) return;
+    const overall = run.scores.overall;
+    const retrieval = run.scores.retrieval;
+    const section = document.createElement("section"); section.className = "run-section"; section.append(textNode("h2", "Measurement"));
+    const metrics = document.createElement("div"); metrics.className = "metrics";
+    for (const [value, label] of [
+      [overall.score ?? "N/A", "Exact-page score"],
+      [`${overall.numerator}/${overall.denominator}`, "Cited answers"],
+      [`${Math.round(retrieval.coverage * 100)}%`, "Retrieval coverage"],
+      [run.measurement.results.filter(result => result.status === "error").length, "Errors"],
+    ]) {
+      const metric = document.createElement("div"); metric.className = "metric"; metric.append(textNode("strong", String(value)), textNode("span", label)); metrics.append(metric);
+    }
+    section.append(metrics); target.append(section);
+  }
+
+  function renderProvenance(target, run) {
+    if (!run.measurement) return;
+    const measurement = run.measurement;
+    const provenance = measurement.inputs.snapshot.provenance;
+    const description = provenance === "live"
+      ? "Live bounded capture. The score reflects this saved point-in-time evidence packet and simulated profile responses, not actual consumer-product ranking or causal impact."
+      : provenance === "recorded"
+        ? "Recorded replay. The score uses saved evidence and simulated answers, not current live retrieval or public product performance."
+        : "Controlled simulation. The page, retrieval packets, answers, and score are test data; they do not measure public product performance.";
+    const section = document.createElement("section"); section.className = "run-section"; section.append(textNode("h2", "Provenance and limits"));
+    const band = document.createElement("div"); band.className = "provenance-band"; band.append(textNode("strong", `${provenance} evidence`), textNode("span", description)); section.append(band);
+    const grid = document.createElement("div"); grid.className = "provenance-grid";
+    for (const [value, label] of [
+      [measurement.inputs.snapshot.captured_at || "Timestamp unavailable", "Page snapshot"],
+      [`${measurement.retrievals.length} saved packets`, `${provenance} retrieval`],
+      [`${measurement.results.length} simulated answers`, `${provenance} evidence packet`],
+    ]) {
+      const item = document.createElement("div"); item.append(textNode("strong", value), textNode("span", label)); grid.append(item);
+    }
+    section.append(grid);
+    const packets = document.createElement("details"); packets.append(textNode("summary", "Inspect retrieval packet provenance"));
+    for (const packet of measurement.retrievals) packets.append(textNode("p", `${packet.query_id} / ${packet.status} / ${packet.provenance} / ${packet.sources.length} saved sources${packet.retrieved_at ? ` / ${packet.retrieved_at}` : ""}`));
+    section.append(packets); target.append(section);
+  }
+
+  function renderResults(target, run) {
+    if (!run.measurement) return;
+    const section = document.createElement("section"); section.className = "run-section"; section.append(textNode("h2", "Simulated answers and evidence"));
+    const list = document.createElement("div"); list.className = "result-list";
+    for (const result of run.measurement.results) {
+      const block = document.createElement("div"); block.className = "result";
+      block.append(textNode("span", `${result.query_id} / ${result.profile_id} / ${result.status} / ${result.provenance} evidence`, "query-meta"), textNode("p", result.answer || result.error));
+      for (const source of result.sources) {
+        const citation = result.status !== "completed" ? "Citation unknown" : result.citation_ids.includes(source.evidence_id) ? "Model-reported citation" : "Not cited";
+        const detail = document.createElement("details"); detail.append(textNode("summary", `${citation} / ${source.evidence_id} / ${source.title || "Source"}`));
+        const sourceLink = document.createElement("a"); sourceLink.href = source.url; sourceLink.target = "_blank"; sourceLink.rel = "noopener noreferrer"; sourceLink.textContent = source.url;
+        const inspect = buttonNode("Inspect saved evidence", ""); inspect.dataset.evidenceId = source.evidence_id; inspect.addEventListener("click", () => showEvidence(source));
+        detail.append(sourceLink, textNode("blockquote", source.excerpt), inspect); block.append(detail);
+      }
+      list.append(block);
+    }
+    section.append(list); target.append(section);
+  }
+
+  function renderRecommendations(target, run) {
+    if (!run.recommendations) return;
+    const report = run.recommendations;
+    const provenance = run.measurement?.inputs.snapshot.provenance || "unknown";
+    const section = document.createElement("section"); section.className = "run-section"; section.append(textNode("h2", "Draft recommendation hypotheses"), textNode("p", `Generated from ${provenance} saved evidence. Priority and confidence are hypotheses, not measured impact.`, "query-meta"));
+    section.append(textNode("p", report.limitations, "muted"));
+    if (!report.tasks.length) {
+      section.append(textNode("p", report.reason || "The saved evidence did not support a draft recommendation."));
+      target.append(section); return;
+    }
+    const savedDecisions = new Map((run.recommendation_review?.decisions || []).map(item => [item.task_id, item.decision]));
+    for (const task of report.tasks) {
+      const block = document.createElement("article"); block.className = "recommendation"; block.dataset.recommendationId = task.task_id;
+      block.append(
+        textNode("span", `${task.task_id} / priority ${task.priority} / ${task.confidence} confidence`, "query-meta"),
+        textNode("h3", task.title),
+        textNode("p", task.proposed_change),
+        textNode("p", `Target: ${task.target_section}. Verification: ${task.verification}`, "muted"),
+      );
+      const evidence = document.createElement("details"); evidence.append(textNode("summary", "Evidence and rationale"), textNode("p", task.rationale));
+      const columns = document.createElement("div"); columns.className = "evidence-columns";
+      for (const [heading, references] of [["Page evidence", task.page_evidence], ["Comparison evidence", task.comparison_evidence]]) {
+        const group = document.createElement("div"); group.append(textNode("h4", heading));
+        for (const reference of references) group.append(textNode("blockquote", `${reference.evidence_id}: ${reference.quote}`));
+        columns.append(group);
+      }
+      evidence.append(columns); block.append(evidence);
+      const fieldset = document.createElement("fieldset"); fieldset.className = "recommendation-decision"; fieldset.append(textNode("legend", "Human decision"));
+      for (const [value, label] of [["accepted", "Accept for planning"], ["rejected", "Reject"]]) {
+        const option = document.createElement("label");
+        const radio = document.createElement("input"); radio.type = "radio"; radio.name = `recommendation-${task.task_id}`; radio.value = value;
+        radio.checked = savedDecisions.get(task.task_id) === value; radio.dataset.locked = String(Boolean(run.recommendation_review)); radio.disabled = Boolean(run.recommendation_review);
+        option.append(radio, document.createTextNode(label)); fieldset.append(option);
+      }
+      block.append(fieldset); section.append(block);
+    }
+    section.append(textNode("p", run.recommendation_review
+      ? "Review saved. Accepted tasks are planning inputs only; no editing or publishing permission was granted."
+      : "Choose one decision for every task. Acceptance creates a planning file in the export and never grants publishing permission.", "muted"));
+    target.append(section);
+  }
+
+  function renderContentStrategy() {
+    const target = element("strategy-detail"); const summary = element("strategy-summary");
+    if (!target || !summary) return;
+    target.replaceChildren(); summary.replaceChildren();
+    if (!current.measurement) { target.append(textNode("p", "Recommendations await saved measurement evidence.", "stage-notice")); return; }
+    const toolbar = document.createElement("div"); toolbar.className = "toolbar";
+    const next = buttonNode("Continue to export", "strategy-export", "primary");
+    next.addEventListener("click", () => selectStage(5)); toolbar.append(next);
+    target.append(textNode("h3", "Content changes to test"), textNode("p", "Based on saved evidence. No additional provider calls. Human verification is required before editing or publishing.", "muted"), toolbar);
+    summary.append(textNode("h2", "Content recommendations"));
+    const review = buttonNode("Review recommendations", "strategy-review"); review.addEventListener("click", () => selectStage(4)); summary.append(review);
+    const report = strategyData?.report;
+    if (!report) {
+      const message = strategyData?.error || "Analysing saved content patterns...";
+      target.append(textNode("p", message, "stage-notice")); summary.append(textNode("p", message, "muted"));
+      if (strategyData?.error) {
+        const retry = buttonNode("Reload recommendations", "strategy-reload"); decorateButton(retry, "refresh-cw");
+        retry.addEventListener("click", () => { strategyKey = null; void ensureContentStrategy(); }); target.append(retry);
+      }
+      setControls(); return;
+    }
+    for (const [container, suffix] of [[toolbar, "detail"], [summary, "summary"]]) {
+      const download = buttonNode("Download recommendations ZIP", `download-strategy-${suffix}`); decorateButton(download, "download");
+      download.addEventListener("click", () => action(downloadContentStrategy, "Retrieving recommendations...", "Recommendation download started.")); container.append(download);
+    }
+    target.append(textNode("p", `${report.provenance} evidence / ${report.retrieved_queries}/${report.query_count} searches complete / ${report.retrieved_sources} retrieved excerpts / ${report.completed_answers}/${report.expected_answers} answers complete.`, "query-meta"));
+    target.append(textNode("p", "Content types below are detected English wording cues, not verified full-page formats. One excerpt can match several types.", "muted"));
+    if (report.unsupported_citations) target.append(textNode("p", `${report.unsupported_citations} unsupported citation IDs excluded from source-selection counts.`, "stage-notice warning"));
+    const captured = document.createElement("details"); captured.append(textNode("summary", "Original page: captured evidence"), textNode("p", report.target_title), textNode("blockquote", report.target_excerpt)); target.append(captured);
+    const tabs = document.createElement("div"); tabs.className = "assessment-tabs"; tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Recommendation layers");
+    const content = document.createElement("div"); content.id = "strategy-view"; content.setAttribute("role", "tabpanel"); content.tabIndex = 0;
+    const draw = () => {
+      const grounding = strategyView === "grounding";
+      content.replaceChildren(); content.setAttribute("aria-labelledby", `strategy-tab-${strategyView}`);
+      for (const tab of tabs.children) { const selected = tab.dataset.view === strategyView; tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1; }
+      content.append(textNode("h3", grounding ? "What Web IQ returned" : "What the LLM cited and expressed"));
+      content.append(textNode("p", grounding ? "Returned patterns suggest content experiments, not why Web IQ selected a page."
+        : "These are observed selections, not proven model preferences. Citations do not prove claim support; uncited evidence may still influence the answer.", "muted"));
+      if (!grounding && !report.completed_answers) content.append(textNode("p", "No completed LLM answers. Answer-based recommendations are unavailable.", "stage-notice warning"));
+      const patterns = report.patterns.filter(pattern => pattern[`${strategyView}_change`]).sort((first, second) => grounding
+        ? second.query_count - first.query_count : (second.cited_appearances + second.answers.length) - (first.cited_appearances + first.answers.length));
+      if (!patterns.length) content.append(textNode("p", "No matching content cues in the available evidence for this layer. This does not establish that the content is absent.", "stage-notice"));
+      for (const pattern of patterns) {
+        const item = document.createElement("article"); item.className = "recommendation";
+        item.append(textNode("h4", pattern.label), textNode("p", grounding
+          ? `${pattern.sources.length}/${report.retrieved_sources} retrieved excerpts across ${pattern.query_count}/${report.retrieved_queries} completed queries.`
+          : `${pattern.cited_appearances}/${pattern.citation_opportunities} eligible source/answer pairs cited. Wording cue in ${pattern.answers.length}/${report.completed_answers} completed answers.`, "query-meta"));
+        item.append(textNode("strong", "Change to test on the original page"), textNode("p", pattern[`${strategyView}_change`]));
+        const details = document.createElement("details"); details.append(textNode("summary", "Compare page, sources and answer evidence"));
+        details.append(textNode("h4", "Original page"));
+        if (pattern.target_evidence) details.append(textNode("p", `Matching captured passage: ${pattern.target_evidence.evidence_id}`, "muted"), textNode("blockquote", pattern.target_evidence.quote));
+        else details.append(textNode("p", "Cue not seen in the capture. Inspect the full page before adding content.", "muted"));
+        for (const source of pattern.sources.filter(source => grounding || source.cited_by.length)) {
+          const query = current.inputs.query_plan.queries.find(query => query.query_id === source.query_id);
+          details.append(textNode("h4", `${source.query_id} / ${source.evidence_id}`), textNode("p", grounding ? query?.grounding_query || source.query_id : query?.chat_query || source.query_id));
+          const link = document.createElement("a"); link.href = source.url; link.textContent = source.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+          details.append(link, textNode("p", `${source.target_relation} / returned position ${source.returned_position} / cited by ${source.cited_by.join(", ") || "none"}`, "muted"), textNode("blockquote", source.quote));
+        }
+        if (!grounding) for (const answer of pattern.answers) details.append(textNode("h4", `Final answer / ${answer.query_id} / ${answer.profile_id}`), textNode("blockquote", answer.quote));
+        item.append(details); content.append(item);
+      }
+    };
+    for (const [view, label] of [["grounding", "Grounding recommendations"], ["answer", "LLM recommendations"]]) {
+      const tab = buttonNode(label, `strategy-tab-${view}`); tab.dataset.view = view; tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", content.id);
+      tab.addEventListener("click", () => { strategyView = view; draw(); });
+      tab.addEventListener("keydown", event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault(); const buttons = [...tabs.children];
+        const next = event.key === "Home" ? buttons[0] : event.key === "End" ? buttons[1] : buttons.find(button => button !== tab);
+        next.click(); next.focus();
+      }); tabs.append(tab);
+    }
+    target.append(tabs, content); draw();
+    target.append(textNode("h3", "Content strategy and verification"), textNode("p", report.verification));
+    const limits = document.createElement("details"); limits.append(textNode("summary", "Recommendation method and limits"));
+    for (const limit of report.limitations) limits.append(textNode("p", limit, "muted")); target.append(limits);
+    setControls();
+  }
+
+  async function ensureContentStrategy() {
+    if (!current?.measurement || !token || activeStates.has(current.state)) return;
+    const runId = current.run_id; const revision = current.revision; const key = `${runId}:${revision}`;
+    if (strategyKey === key) return;
+    strategyKey = key; strategyData = null; const generation = ++strategyGeneration; renderContentStrategy();
+    try {
+      const data = await api(`/api/v2/runs/${encodeURIComponent(runId)}/content-strategy`);
+      if (generation !== strategyGeneration || current?.run_id !== runId || current.revision !== revision || !token) return;
+      if (data.run_revision !== revision || !data.report) throw new Error("Saved recommendations are not ready. Refresh the run.");
+      strategyData = data;
+    } catch (error) {
+      if (generation !== strategyGeneration || current?.run_id !== runId || current.revision !== revision || !token) return;
+      strategyData = {error: error.status === 404 ? "Recommendations are unavailable on this API. Restart the updated API to enable them." : error.message};
+    }
+    renderContentStrategy();
+  }
+
+  async function downloadContentStrategy() {
+    const report = strategyData?.report;
+    if (!report || !current?.measurement) throw new Error("Load saved recommendations before downloading.");
+    const runId = current.run_id;
+    const response = await request(`/api/v2/runs/${encodeURIComponent(runId)}/content-strategy/download?measurement_hash=${report.measurement_hash}`);
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = `geo-content-strategy-${runId}.zip`; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function bindActions(run) {
+    element("prepare-run")?.addEventListener("click", () => action(async () => {
+      if (!element("prepare-confirm").checked) throw new Error("Confirm the bounded preparation calls.");
+      const response = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/prepare`, {method: "POST", body: {expected_revision: run.revision, idempotency_key: `prepare-${run.run_id}`, confirm_preparation_calls: true}});
+      current = response.run; jobs = [response.job, ...jobs]; renderRun(); void pollRun();
+    }, "Queuing preparation...", "Preparation queued. Waiting for worker activity."));
+    element("approve-run")?.addEventListener("click", () => action(async () => {
+      current = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/query-approval`, {method: "POST", body: {expected_revision: run.revision, input_hash: run.approval_hash}});
+      renderRun(); await loadRuns();
+    }, "Saving your query approval...", "Queries approved. Confirm the calls when you are ready to measure."));
+    element("edit-queries")?.addEventListener("click", () => { editingQueries = true; renderRun(); });
+    element("cancel-query-edit")?.addEventListener("click", () => { editingQueries = false; renderRun(); });
+    element("save-queries")?.addEventListener("click", () => action(async () => {
+      const queries = run.inputs.query_plan.queries.map(query => {
+        const block = document.querySelector(`[data-query-id="${query.query_id}"]`);
+        const value = field => block.querySelector(`[data-field="${field}"]`).value.trim();
+        const updated = {
+          ...query,
+          chat_query: value("chat_query"),
+          grounding_query: value("grounding_query"),
+          intent: value("intent"),
+          rationale: value("rationale"),
+          branded: block.querySelector('[data-field="branded"]').checked,
+        };
+        if (![updated.chat_query, updated.grounding_query, updated.intent, updated.rationale].every(Boolean)) throw new Error(`Complete every field for ${query.query_id}.`);
+        return updated;
+      });
+      current = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/queries`, {method: "PUT", body: {expected_revision: run.revision, queries}});
+      editingQueries = false; renderRun(); await loadRuns();
+    }, "Saving query packet...", "Query packet saved. Review and approve the updated queries."));
+    element("evaluate-run")?.addEventListener("click", () => action(async () => {
+      if (!element("evaluate-confirm").checked) throw new Error("Confirm the bounded measurement calls.");
+      const response = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/start`, {method: "POST", body: {expected_revision: run.revision, idempotency_key: `evaluate-${run.run_id}`, confirm_evaluation_calls: true, include_recommendations: false}});
+      current = response.run; jobs = [response.job, ...jobs]; renderRun(); void pollRun();
+    }, "Queuing measurement...", "Measurement queued. Following recorded activity."));
+    element("review-recommendations")?.addEventListener("click", () => action(async () => {
+      const decisions = run.recommendations.tasks.map(task => {
+        const selected = document.querySelector(`input[name="recommendation-${task.task_id}"]:checked`);
+        if (!selected) throw new Error(`Choose a decision for ${task.task_id}.`);
+        return {task_id: task.task_id, decision: selected.value};
+      });
+      current = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/recommendation-review`, {method: "POST", body: {expected_revision: run.revision, decisions}});
+      renderRun(); await loadRuns();
+    }));
+    element("cancel-job")?.addEventListener("click", () => action(async () => {
+      const job = jobs.find(item => ["queued", "leased"].includes(item.state));
+      if (!job) throw new Error("No active job is available to cancel.");
+      stopMonitor();
+      const response = await api(`/api/v2/jobs/${encodeURIComponent(job.job_id)}/cancel`, {method: "POST", body: {}});
+      current = response.run; jobs = jobs.map(item => item.job_id === response.job.job_id ? response.job : item); renderRun(); await loadRuns();
+    }, "Cancelling queued and future work...", "Job cancelled. In-flight calls may finish; consumed allowance is not refunded."));
+    element("export-run")?.addEventListener("click", () => action(async () => {
+      const record = assessmentData?.brand_definition;
+      const body = {expected_revision: run.revision, ...(record ? {definition_version: record.definition_version, definition_hash: record.definition_hash} : {})};
+      const response = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/exports`, {method: "POST", body});
+      current = response.run; artifact = response.artifact; renderRun(); await loadRuns();
+    }, "Creating ZIP export...", "Export ready. Download the saved ZIP."));
+    element("download-artifact")?.addEventListener("click", () => action(downloadArtifact, "Retrieving ZIP...", "Download started."));
+    element("refresh-run")?.addEventListener("click", () => action(() => openRun(run.run_id)));
+  }
+
+  function renderRun() {
+    const target = element("run-detail"); target.replaceChildren();
+    element("brief-panel").hidden = Boolean(current);
+    if (!current) { target.append(textNode("div", "Select a run or create a new measurement.", "empty")); renderRuns(); return; }
+    const activeStage = stageCount(current);
+    const previousStage = selectedStage;
+    const previousRunId = renderedRunId;
+    if (renderedRunId !== current.run_id || selectedStage === null || (activeStage !== renderedStage && selectedStage === renderedStage && !editingQueries)) selectedStage = activeStage;
+    renderedRunId = current.run_id; renderedStage = activeStage;
+    const heading = document.createElement("div"); heading.className = "run-heading";
+    const title = document.createElement("div"); title.append(textNode("h2", current.brief?.goal || "Measurement run"));
+    const source = document.createElement("a"); source.href = current.brief?.url || "#"; source.target = "_blank"; source.rel = "noopener noreferrer"; source.textContent = current.brief?.url || current.run_id; title.append(source, textNode("small", `Run ${current.run_id} / revision ${current.revision}`));
+    heading.append(title, textNode("span", stateLabel(current.state), `state ${current.state}`)); target.append(heading); renderProgress(target, current);
+
+    const panels = stages.map((label, index) => {
+      const panel = document.createElement("section"); panel.id = `panel-${index}`; panel.className = "stage-panel"; panel.hidden = index !== selectedStage;
+      const heading = textNode("h2", label); heading.id = `panel-heading-${index}`; heading.tabIndex = -1;
+      panel.setAttribute("aria-labelledby", heading.id); panel.append(heading); target.append(panel); return panel;
+    });
+    const context = document.createElement("dl"); context.className = "run-context";
+    for (const [label, value] of [["Public URL", current.brief?.url], ["Audience", current.brief?.audience], ["Goal", current.brief?.goal], ["Locale", current.brief?.locale]]) context.append(textNode("dt", label), textNode("dd", value || "Not supplied"));
+    panels[0].append(context);
+    for (const index of [0, 2]) panels[index].append(textNode("div", "", "saved-brand-context"));
+    if (current.inputs) panels[1].append(textNode("p", "Page captured, analysis saved and five query pairs prepared.", "stage-notice"));
+    if (current.approval) panels[2].append(textNode("p", "This exact query packet is approved.", "stage-notice"));
+    if (current.state === "awaiting-query-approval" && current.approval) panels[3].append(textNode("p", "Queries approved. Ready to measure.", "stage-notice"));
+    if (current.measurement) panels[3].append(textNode("p", "Saved measurement complete. Web IQ grounding and the LLM answer are assessed separately.", "stage-notice"));
+    if (["failed", "cancelled", "needs-review", "partial"].includes(current.state)) {
+      const message = current.state === "partial" ? "Some work did not complete. Review errors and coverage before using these results."
+        : current.state === "cancelled" ? "Cancelled. In-flight calls may finish; consumed allowance is not refunded."
+        : jobs[0]?.state === "failed" && jobs[0]?.error_code !== "lease-expired" ? failureMessage()
+        : current.state === "needs-review" ? "Work was interrupted and needs review. No provider calls will be replayed."
+        : "Measurement failed. Only saved evidence can be exported; no automatic retry.";
+      panels[activeStage].append(textNode("p", message, "stage-notice warning"));
+    }
+
+    const controls = document.createElement("section"); controls.className = "run-section";
+    let controlsStage = activeStage;
+    if (current.state === "draft") {
+      appendAction(controls, `Confirm ${policy.limits.preparation_calls} ${policy.execution_mode} preparation calls`, "Prepare query packet", "prepare-run", "prepare-confirm");
+    } else if (activeStates.has(current.state)) {
+      const activeJob = jobs.find(job => ["queued", "leased"].includes(job.state));
+      const workerStatus = activeJob?.state === "queued" ? "Queued for durable worker" : "Durable worker job in progress";
+      const strip = document.createElement("div"); strip.className = "action-strip";
+      const activity = textNode("span", workerStatus); activity.id = "worker-status";
+      activity.setAttribute("role", "status"); activity.setAttribute("aria-atomic", "true");
+      strip.append(activity, buttonNode("Refresh", "refresh-run"));
+      if (jobs.some(job => ["queued", "leased"].includes(job.state))) strip.append(buttonNode("Cancel job", "cancel-job", "danger")); controls.append(strip);
+      const progress = document.createElement("div"); progress.id = "operation-progress"; controls.append(progress);
+    } else if (current.state === "awaiting-query-approval" && !current.approval) {
+      const strip = document.createElement("div"); strip.className = "action-strip";
+      strip.append(textNode("span", editingQueries ? "Update all five query pairs before approval" : "The five query pairs below are the exact measurement input"));
+      const actions = document.createElement("div"); actions.className = "toolbar";
+      if (editingQueries) actions.append(buttonNode("Cancel", "cancel-query-edit"), buttonNode("Save query packet", "save-queries", "primary"));
+      else actions.append(buttonNode("Edit query packet", "edit-queries"), buttonNode("Approve exact queries", "approve-run", "primary"));
+      strip.append(actions); controls.append(strip);
+    } else if (current.state === "awaiting-query-approval" && current.approval) {
+      const strip = document.createElement("div"); strip.className = "action-strip";
+      const options = document.createElement("div");
+      const confirm = document.createElement("label"); const confirmBox = document.createElement("input"); confirmBox.type = "checkbox"; confirmBox.id = "evaluate-confirm"; confirm.append(confirmBox, document.createTextNode(`Confirm ${policy.limits.search_calls} searches + ${policy.limits.evaluator_calls} ${policy.execution_mode} evaluations`));
+      options.append(confirm, textNode("p", "Evidence-based recommendations follow measurement automatically.", "muted")); strip.append(options, buttonNode("Start measurement", "evaluate-run", "primary")); controls.append(strip);
+    } else if (["ready", "partial", "failed"].includes(current.state) && current.measurement) {
+      if (current.recommendations?.tasks.length && !current.recommendation_review) {
+        appendAction(controls, "Decide every draft task before creating planning files", "Save recommendation review", "review-recommendations");
+      } else {
+        controlsStage = 5;
+        appendAction(controls, "Freeze the saved measurement and recommendation report", "Create ZIP export", "export-run");
+      }
+    } else if (current.state === "exported" && artifact) {
+      appendAction(controls, `${Math.ceil(artifact.size / 1024)} KB / SHA-256 ${artifact.content_hash.slice(0, 12)}...`, "Download ZIP", "download-artifact");
+    } else if (["failed", "cancelled", "needs-review"].includes(current.state)) {
+      controls.append(buttonNode("Refresh status", "refresh-run"), textNode("p", "No new calls are scheduled. Start a new measurement only with the required authorisation.", "muted"));
+    }
+    if (controls.childNodes.length) panels[controlsStage].append(controls);
+    if (current.measurement && current.recommendations?.tasks.length && !current.recommendation_review) {
+      const review = buttonNode("Review draft decisions", "review-draft-decisions"); review.addEventListener("click", () => selectStage(4));
+      panels[5].append(textNode("p", "Review the saved model-generated draft tasks before creating the measurement export.", "stage-notice"), review);
+    }
+    if (!activeStates.has(current.state) && progressSnapshot?.job_id) {
+      const details = document.createElement("details"); details.append(textNode("summary", "Recorded operations"));
+      const progress = document.createElement("div"); progress.id = "operation-progress"; details.append(progress); panels[activeStage].append(details);
+    }
+    const assessmentDetail = document.createElement("section"); assessmentDetail.id = "assessment-detail"; assessmentDetail.className = "run-section"; panels[3].append(assessmentDetail);
+    const assessmentSummary = document.createElement("section"); assessmentSummary.id = "assessment-summary"; assessmentSummary.className = "run-section"; panels[5].append(assessmentSummary);
+    const strategyDetail = document.createElement("section"); strategyDetail.id = "strategy-detail"; strategyDetail.className = "run-section"; panels[4].append(strategyDetail);
+    const strategySummary = document.createElement("section"); strategySummary.id = "strategy-summary"; strategySummary.className = "run-section"; panels[5].append(strategySummary);
+    const legacyResults = document.createElement("div"); legacyResults.id = "legacy-results"; renderResults(legacyResults, current); panels[3].append(legacyResults);
+    renderQueries(panels[2], current); renderMetrics(panels[5], current); renderProvenance(panels[5], current); renderRecommendations(panels[4], current);
+    const events = document.createElement("details"); events.className = "run-section"; events.append(textNode("summary", "Audit events"));
+    const list = document.createElement("ol"); list.className = "event-list";
+    for (const event of current.events) list.append(textNode("li", `${event.event_type} / ${event.occurred_at}`)); events.append(list); target.append(events);
+    bindActions(current); renderRuns(); setControls(); renderOperationProgress();
+    renderAssessmentAreas(); void ensureAssessment();
+    renderContentStrategy(); void ensureContentStrategy();
+    if (previousStage !== selectedStage || previousRunId !== current.run_id) element(`panel-heading-${selectedStage}`).focus({preventScroll: true});
+  }
+
+  const operationNames = {
+    "webiq-browse": "Page capture", "page-analysis-model": "Page analysis and brand setup", "paired-query-plan": "Query packet",
+    "webiq-search": "Grounding / Web IQ searches", "profile-evaluator": "Answer / LLM evaluations", "recommendation-model": "Recommendation pass",
+  };
+  const failureReasons = {
+    "ProviderError": "The provider request or output validation failed. The detailed reason was not retained for this run.",
+    "provider-authentication-failed": "The provider rejected authentication or access permissions.",
+    "provider-rate-limited": "The provider returned HTTP 429 (rate limit or quota). This is separate from the app's call allowance.",
+    "provider-request-failed": "The provider rejected the request or returned a service error.",
+    "provider-connection-failed": "The provider connection failed or timed out.",
+    "model-output-limit": "The model reached the 2,000-token output limit before completing its response.",
+    "model-response-incomplete": "The model did not return a complete, usable response.",
+    "model-content-blocked": "The provider blocked the response under its content policy.",
+    "model-response-refused": "The model refused the request.",
+    "model-output-invalid": "The model response did not match the required output format.",
+    "query-plan-order-invalid": "The model did not return the five query pairs in the required priority order.",
+    "query-plan-evidence-invalid": "The query packet contained evidence that could not be verified against the captured page.",
+  };
+  function failureReason() {
+    return failureReasons[jobs[0]?.error_code] || "The detailed failure reason is unavailable. Review the saved job before starting another run.";
+  }
+  function failureMessage() {
+    const failed = progressSnapshot?.operations.find(item => item.failed);
+    const operation = operationNames[failed?.operation_type] || (jobs[0]?.job_type === "prepare" ? "Preparation" : "Measurement");
+    return `${operation} failed. ${failureReason()} No provider calls will be replayed.`;
+  }
+  function renderOperationProgress() {
+    const target = element("operation-progress");
+    if (!target || !progressSnapshot || progressSnapshot.run_id !== current?.run_id) return;
+    const snapshot = progressSnapshot;
+    const activity = snapshot.job_state === "queued" ? "Queued for durable worker"
+      : snapshot.current_operation ? `${operationNames[snapshot.current_operation] || "Operation"} in progress`
+      : "Durable worker job in progress";
+    const workerStatus = element("worker-status");
+    if (workerStatus && workerStatus.textContent !== activity) workerStatus.textContent = activity;
+    const signature = JSON.stringify([snapshot.job_state, snapshot.operations, snapshot.last_activity_at, jobs[0]?.error_code]);
+    if (target.dataset.signature === signature) return;
+    target.dataset.signature = signature; target.replaceChildren();
+    if (!progressAvailable) target.append(textNode("p", "Monitoring saved run status. Detailed operation progress becomes available after the API is restarted.", "muted"));
+    const list = document.createElement("ul"); list.className = "operation-list";
+    for (const item of snapshot.operations) {
+      const detail = `${item.completed}/${item.planned} recorded complete${item.optional ? " (optional)" : ""}${item.failed ? ` / ${item.failed} failed` : ""}${item.in_flight ? ` / ${item.in_flight} in progress` : ""}${item.unresolved ? ` / ${item.unresolved} unresolved` : ""}${item.not_attempted ? ` / ${item.not_attempted} not attempted` : ""}`;
+      const row = document.createElement("li"); row.append(textNode("strong", operationNames[item.operation_type] || "Operation"), textNode("span", detail)); list.append(row);
+      if (item.failed && snapshot.job_id === jobs[0]?.job_id && jobs[0]?.state === "failed") row.append(textNode("span", failureReason(), "muted"));
+    }
+    target.append(list);
+    if (snapshot.queued_at && snapshot.last_activity_at) target.append(textNode("p", `Queued ${new Date(snapshot.queued_at).toLocaleTimeString()} / Last recorded activity ${new Date(snapshot.last_activity_at).toLocaleTimeString()}`, "muted"));
+  }
+
+  function stopMonitor() {
+    pollVersion++; monitorController?.abort(); monitorController = null;
+  }
+
+  async function loadRuns() {
+    const view = viewVersion;
+    const next = await api("/api/v2/runs");
+    if (view !== viewVersion || !token) return;
+    runs = next; renderRuns();
+  }
+  async function openRun(runId) {
+    if (editingQueries && !confirm("Discard unsaved query edits?")) return;
+    stopMonitor();
+    const view = ++viewVersion;
+    assessmentGeneration++; assessmentData = null; assessmentKey = null;
+    strategyGeneration++; strategyData = null; strategyKey = null;
+    if (current?.run_id !== runId) { assessmentQuery = null; assessmentProfile = null; assessmentView = "grounding"; }
+    editingQueries = false;
+    selectedStage = null;
+    const next = await api(`/api/v2/runs/${encodeURIComponent(runId)}`);
+    const nextJobs = await api(`/api/v2/runs/${encodeURIComponent(runId)}/jobs`);
+    const nextProgress = await readProgress(runId);
+    if (view !== viewVersion) return;
+    current = next; jobs = nextJobs; progressSnapshot = nextProgress;
+    artifact = null;
+    if (current.state === "exported") {
+      const artifacts = await api(`/api/v2/runs/${encodeURIComponent(runId)}/artifacts`);
+      if (view !== viewVersion) return;
+      artifact = artifacts[0] || null;
+    }
+    sessionStorage.setItem("geo-measurement-run", runId);
+    const url = new URL(location.href); url.searchParams.set("run", runId); history.replaceState(null, "", url);
+    renderRun();
+    if (activeStates.has(current.state)) void pollRun();
+  }
+  async function pollRun() {
+    stopMonitor();
+    const version = pollVersion;
+    const controller = new AbortController(); monitorController = controller;
+    const runId = current?.run_id;
+    let interval = 1000;
+    let stale = false;
+    while (version === pollVersion && current?.run_id === runId && activeStates.has(current.state)) {
+      await delay(interval, controller.signal);
+      if (version !== pollVersion || !token) return;
+      if (document.hidden || !navigator.onLine || busy) continue;
+      try {
+        const snapshot = await readProgress(runId, {signal: controller.signal});
+        if (version !== pollVersion || current?.run_id !== runId) return;
+        const changed = snapshot.last_activity_at !== progressSnapshot?.last_activity_at || snapshot.job_state !== progressSnapshot?.job_state;
+        progressSnapshot = snapshot;
+        jobs = snapshot.job_id ? [{job_id: snapshot.job_id, job_type: snapshot.job_type, state: snapshot.job_state}] : [];
+        if (snapshot.run_revision !== current.revision || snapshot.run_state !== current.state) {
+          const next = await api(`/api/v2/runs/${encodeURIComponent(runId)}`, {signal: controller.signal});
+          if (version !== pollVersion || current?.run_id !== runId) return;
+          if (next.state === "exported") {
+            const artifacts = await api(`/api/v2/runs/${encodeURIComponent(runId)}/artifacts`, {signal: controller.signal});
+            if (version !== pollVersion) return;
+            artifact = artifacts[0] || null;
+          }
+          current = next; renderRun();
+          if (!activeStates.has(current.state)) status(current.state === "awaiting-query-approval" ? "Query packet ready for your approval." : "Run updated. Review the saved outcome.");
+        } else {
+          renderOperationProgress();
+        }
+        if (stale) { status("Connection restored. Following your saved run."); stale = false; }
+        interval = changed ? 1000 : Math.min(interval + 1000, 5000);
+      } catch (error) {
+        if (version !== pollVersion) return;
+        if (error.status === 401) { disconnect(); status("Access token not accepted by this server. Select its local API token file to reconnect.", true); return; }
+        status("Status unavailable. Your job may still be running. " + error.message, true);
+        stale = true;
+        if ([403, 404].includes(error.status)) return;
+        interval = Math.max(Math.min(interval * 2, 30000), error.retryAfter || 0);
+      }
+    }
+    if (version === pollVersion && token) {
+      try { await loadRuns(); } catch (error) { status(error.message, true); }
+    }
+  }
+  async function inspectEvidence(evidenceId) {
+    const evidence = await api(`/api/v2/runs/${encodeURIComponent(current.run_id)}/evidence/${encodeURIComponent(evidenceId)}`);
+    showEvidence(evidence);
+  }
+  function showEvidence(evidence) {
+    evidenceTrigger = document.activeElement;
+    const body = element("evidence-body"); const heading = textNode("h2", evidence.title || evidence.evidence_id); heading.id = "evidence-heading"; body.replaceChildren(heading);
+    const link = document.createElement("a"); link.href = evidence.url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = evidence.url;
+    body.append(link, textNode("blockquote", evidence.excerpt), textNode("p", `Provenance: ${evidence.provenance} / returned position: ${evidence.returned_position ?? "not supplied"}`, "muted"));
+    element("evidence-dialog").showModal();
+  }
+  async function downloadAssessment() {
+    const report = assessmentData?.assessment;
+    if (!report || !report.definition_version) throw new Error("Confirm a brand definition before downloading the assessment.");
+    const response = await request(`/api/v2/runs/${encodeURIComponent(report.run_id)}/evidence-assessment/download?definition_version=${report.definition_version}&measurement_hash=${report.measurement_hash}`);
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = `geo-assessment-${report.run_id}-v${report.definition_version}.zip`; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+  async function downloadArtifact() {
+    if (!current || !artifact) throw new Error("No exported artifact is available.");
+    const response = await request(`/api/v2/runs/${encodeURIComponent(current.run_id)}/artifacts/${encodeURIComponent(artifact.artifact_id)}`);
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = `geo-${current.run_id}.zip`; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function connect() {
+    progressAvailable = true;
+    policy = await api("/api/v2/policy");
+    renderPolicy(); element("connection").hidden = true; element("app").hidden = false; element("disconnect").hidden = false; element("token").value = "";
+    await loadRuns();
+    const requested = new URLSearchParams(location.search).get("run") || sessionStorage.getItem("geo-measurement-run");
+    if (requested && runs.some(run => run.run_id === requested)) await openRun(requested);
+    else renderRun();
+  }
+  function disconnect() {
+    assessmentGeneration++; assessmentData = null; assessmentKey = null;
+    strategyGeneration++; strategyData = null; strategyKey = null;
+    stopMonitor(); viewVersion++; token = ""; policy = null; runs = []; current = null; jobs = []; artifact = null; progressSnapshot = null;
+    element("app").hidden = true; element("disconnect").hidden = true; element("connection").hidden = false; element("policy-mode").textContent = "Not connected"; status("");
+  }
+
+  element("connection").addEventListener("submit", event => { event.preventDefault(); token = element("token").value.trim(); action(connect); });
+  element("token-file").addEventListener("change", () => action(async () => {
+    const file = element("token-file").files[0]; if (!file || file.size > 4096) throw new Error("Select the local API token file.");
+    token = (await file.text()).trim(); element("token-file").value = "";
+    try { await connect(); } catch (error) { token = ""; throw error; }
+  }));
+  element("disconnect").addEventListener("click", disconnect);
+  element("app").addEventListener("change", setControls);
+  element("new-measurement").addEventListener("click", () => {
+    if (editingQueries && !confirm("Discard unsaved query edits?")) return;
+    stopMonitor(); viewVersion++; current = null; jobs = []; artifact = null; progressSnapshot = null; editingQueries = false; selectedStage = null;
+    assessmentGeneration++; assessmentData = null; assessmentKey = null; assessmentQuery = null; assessmentProfile = null;
+    strategyGeneration++; strategyData = null; strategyKey = null; strategyView = "grounding";
+    sessionStorage.removeItem("geo-measurement-run");
+    const url = new URL(location.href); url.searchParams.delete("run"); history.replaceState(null, "", url);
+    renderRun(); element("brief-url").focus(); status("Enter the brief for a new measurement.");
+  });
+  element("toggle-runs").addEventListener("click", () => {
+    const open = document.querySelector(".workspace-grid").classList.toggle("show-runs");
+    element("toggle-runs").setAttribute("aria-expanded", String(open));
+  });
+  element("refresh-runs").addEventListener("click", () => action(async () => { await loadRuns(); if (current) await openRun(current.run_id); }));
+  element("brief-form").addEventListener("submit", event => {
+    event.preventDefault(); action(async () => {
+      const url = element("brief-url").value.trim();
+      const host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+      const allowed = policy.allowed_domains.some(domain => host === domain.toLowerCase() || host.endsWith(`.${domain.toLowerCase()}`));
+      if (!allowed) throw new Error(`This policy allows: ${policy.allowed_domains.join(", ")}. Use the default URL for the mock demo.`);
+      current = await api("/api/v2/briefs", {method: "POST", body: {url, audience: element("brief-audience").value.trim(), goal: element("brief-goal").value.trim(), locale: element("brief-locale").value}});
+      assessmentGeneration++; assessmentData = null; assessmentKey = null;
+      strategyGeneration++; strategyData = null; strategyKey = null;
+      stopMonitor(); jobs = []; artifact = null; progressSnapshot = null; selectedStage = null;
+      const savedUrl = new URL(location.href); savedUrl.searchParams.set("run", current.run_id); history.replaceState(null, "", savedUrl);
+      sessionStorage.setItem("geo-measurement-run", current.run_id); await loadRuns(); renderRun();
+    });
+  });
+  element("close-evidence").addEventListener("click", () => element("evidence-dialog").close());
+  element("brand-form").addEventListener("input", () => { brandDirty = true; });
+  element("brand-form").addEventListener("submit", event => {
+    event.preventDefault(); action(async () => {
+      if (current?.run_id !== brandEditRun) throw new Error("Selected run changed. Reopen the brand definition.");
+      const triggerId = brandTrigger?.id;
+      await api(`/api/v2/runs/${encodeURIComponent(brandEditRun)}/brand-definition`, {method: "POST", body: {definition: readBrand("saved-brand"), expected_definition_version: brandEditVersion}});
+      brandDirty = false; element("brand-dialog").close(); assessmentKey = null; await ensureAssessment();
+      element(triggerId)?.focus();
+    }, "Saving brand definition...", "Brand definition saved. No measurement calls were made.");
+  });
+  element("close-brand").addEventListener("click", () => { if (!brandDirty || confirm("Discard unsaved brand changes?")) element("brand-dialog").close(); });
+  element("brand-dialog").addEventListener("cancel", event => { if (brandDirty && !confirm("Discard unsaved brand changes?")) event.preventDefault(); });
+  element("brand-dialog").addEventListener("close", () => { if (brandTrigger?.isConnected) brandTrigger.focus(); });
+  element("evidence-dialog").addEventListener("close", () => { if (evidenceTrigger?.isConnected) evidenceTrigger.focus(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopMonitor();
+    else if (token && current && activeStates.has(current.state)) void pollRun();
+  });
+  window.addEventListener("online", () => { if (token && current && activeStates.has(current.state)) void pollRun(); });
+  window.addEventListener("offline", () => { stopMonitor(); if (token) status("Offline. Saved work may still be running; monitoring will resume when you reconnect.", true); });
+  const selectedTheme = params.get("scoutTheme") || "auto"; element("theme").value = selectedTheme;
+  element("theme").addEventListener("change", () => {
+    const value = element("theme").value;
+    const theme = value === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : value;
+    document.documentElement.setAttribute("data-theme", theme);
+    const url = new URL(location.href); if (value === "auto") url.searchParams.delete("scoutTheme"); else url.searchParams.set("scoutTheme", value); history.replaceState(null, "", url);
+  });
+  for (const [id, name, iconOnly] of [["new-measurement", "plus", false], ["refresh-runs", "refresh-cw", true], ["close-evidence", "x", true]]) decorateButton(element(id), name, iconOnly);
+  setControls();
+})();
+</script>
+<!--
+Embedded icons: lucide-static v0.468.0, ISC License.
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+-->
+</body>
+</html>

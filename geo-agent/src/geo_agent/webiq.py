@@ -2,6 +2,7 @@ import ipaddress
 import json
 import socket
 from collections.abc import Callable
+from enum import StrEnum
 from urllib.parse import urlsplit
 
 import httpx
@@ -14,8 +15,25 @@ BROWSE_ENDPOINT = "https://api.microsoft.ai/v3/browse"
 SEARCH_ENDPOINT = "https://api.microsoft.ai/v3/search/web"
 
 
+class ProviderFailure(StrEnum):
+    UNKNOWN = "ProviderError"
+    AUTH = "provider-authentication-failed"
+    RATE_LIMIT = "provider-rate-limited"
+    REQUEST = "provider-request-failed"
+    CONNECTION = "provider-connection-failed"
+    OUTPUT_LIMIT = "model-output-limit"
+    INCOMPLETE = "model-response-incomplete"
+    BLOCKED = "model-content-blocked"
+    REFUSED = "model-response-refused"
+    SCHEMA = "model-output-invalid"
+    PLAN_ORDER = "query-plan-order-invalid"
+    PLAN_EVIDENCE = "query-plan-evidence-invalid"
+
+
 class ProviderError(ValueError):
-    pass
+    def __init__(self, message: str, *, code: ProviderFailure = ProviderFailure.UNKNOWN):
+        super().__init__(message)
+        self.code = ProviderFailure(code)
 
 
 def public_url(value: str, resolve: bool = True) -> str:

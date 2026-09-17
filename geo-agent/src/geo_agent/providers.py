@@ -22,13 +22,19 @@ EVALUATION_GUARD = (
     "(a concise string, at most 250 words) and citation_ids (an array of strings). No markdown "
     "fences, reasoning, extra fields or text outside the JSON object."
 )
+COPILOT_GAP_CLOSING_INSTRUCTIONS = (
+    "Use a compact, task-oriented answer. Identify the buyer criteria represented in the supplied "
+    "evidence, call out any material criterion the packet cannot answer as an evidence gap, and close "
+    "supported gaps with a concrete next step. Do not infer missing product capabilities or content "
+    "absence from an evidence gap."
+)
 
 
 def simulation_instructions(style: Literal["chatgpt-style", "claude-backed", "copilot-style"]) -> str:
     styles = {
         "chatgpt-style": "Use a direct, conversational answer with brief practical comparisons.",
         "claude-backed": "Use a careful explanatory answer, making uncertainty explicit.",
-        "copilot-style": "Use a compact task-oriented answer with clear practical next steps.",
+        "copilot-style": COPILOT_GAP_CLOSING_INSTRUCTIONS,
     }
     if style not in styles:
         raise ProviderError("Unsupported simulation style")

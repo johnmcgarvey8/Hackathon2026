@@ -13,7 +13,7 @@ from geo_agent.foundry import Foundry
 from geo_agent.recommendations import (
     LIMITATIONS, METHOD_HASH, PROMPT_VERSION, RECOMMENDATION_PROMPT,
     RecommendationProposal, RecommendationReport, RecommendationService,
-    build_recommendation_context, validate_recommendations,
+    build_content_strategy, build_recommendation_context, validate_recommendations,
 )
 from geo_agent.webiq import ProviderError
 
@@ -83,6 +83,46 @@ def test_selection_prioritises_cited_lower_source_and_preserves_same_domain_dist
     assert selected[0]["match_kind"] == "same-domain-other-page"
     assert selected[1]["reasons"] == ["higher-returned-position"]
     assert context["queries"][0]["exact_target_returned_position"] == 2
+
+
+def test_content_strategy_separates_grounding_citations_and_answer_wording(monkeypatch):
+    saved_packet = packet("q-1", (source("guide", 1, excerpt="How to install the product. Features include exports."),
+                                  source("pricing", 2, excerpt="Pricing and free trial conditions.")))
+    result = outcome(saved_packet, ("guide", "guide", "invented")).model_copy(update={"answer": "Compare the available alternatives."})
+    saved = measurement((saved_packet,), (result,), content="Local places. How to install the product.")
+    original = saved.model_dump(mode="json")
+    monkeypatch.setattr(Foundry, "_parse", lambda *args: pytest.fail("Content strategy must not call a model"))
+    report = build_content_strategy(saved)
+    patterns = {item.pattern_id: item for item in report.patterns}
+    guide = patterns["instructions"]
+    assert len(guide.sources) == 1 and guide.cited_appearances == guide.citation_opportunities == 1
+    assert guide.answers == () and guide.answer_change is not None
+    assert guide.target_evidence.quote in saved.inputs.snapshot.content
+    assert guide.grounding_change.startswith("Refine the existing material")
+    assert patterns["commercial"].answer_change is None
+    assert patterns["commercial"].grounding_change.startswith("Check the full page first")
+    assert patterns["comparison"].sources == () and len(patterns["comparison"].answers) == 1
+    assert patterns["comparison"].grounding_change is None
+    assert report.unsupported_citations == 1
+    assert report.retrieved_queries == report.completed_answers == 1
+    assert report.expected_answers == 5 and report.retrieved_sources == 2
+    assert report.measurement_hash == digest(original)
+    assert saved.model_dump(mode="json") == original
+    assert build_content_strategy(saved) == report
+
+
+def test_content_strategy_scopes_reused_source_ids_and_partial_coverage():
+    first = packet("q-1", (source("shared", 1, TARGET, "How to install."),))
+    second = packet("q-2", (source("shared", 1, "https://target.example/other", "How to configure."),))
+    saved = measurement((first, second, packet("q-3", status="error")),
+                        (outcome(first, ("shared",)), outcome(second)))
+    pattern = build_content_strategy(saved).patterns[0]
+    assert pattern.query_count == 2 and pattern.citation_opportunities == 2 and pattern.cited_appearances == 1
+    assert pattern.sources[0].target_relation == "exact-page"
+    assert pattern.sources[1].target_relation == "same-domain-other-page" and pattern.sources[1].cited_by == ()
+    assert pattern.sources[0].quote in first.sources[0].excerpt
+    empty = build_content_strategy(measurement((packet("q-1", status="error"),), ()))
+    assert empty.patterns == () and empty.retrieved_queries == empty.completed_answers == 0
 
 
 def test_absent_target_bounds_deduplication_and_json_payload():

@@ -1,5 +1,6 @@
 """Evidence-bound draft hypotheses; callers own persistent budgets and human approval."""
 
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -286,3 +287,146 @@ class RecommendationService:
             })
         except (ValueError, TypeError):
             raise ProviderError("Recommendations failed draft, evidence or metadata validation") from None
+
+
+CONTENT_RULES = (
+    ("explanation", "Definitions and explanations", r"\b(?:is an?|refers to|defined as|means that)\b",
+     "a short, accurate definition followed by who the offering is for and what it does"),
+    ("instructions", "How-to and implementation", r"\b(?:how to|step [1-9]|getting started|set up|configure|install|enable)\b",
+     "a task-focused how-to with prerequisites, numbered steps and a verifiable outcome"),
+    ("comparison", "Comparisons and alternatives", r"\b(?:versus|vs\.?|compare|comparison|alternatives?|pros and cons)\b",
+     "a comparison using consistent criteria, documented trade-offs and verified product facts"),
+    ("proof", "Research and quantified evidence", r"\b(?:case stud(?:y|ies)|benchmarks?|research|survey|measured|statistics)\b|\b\d+(?:\.\d+)?\s?%",
+     "first-party evidence with a named source, date, method and limitations; do not reuse another organisation's results as your own"),
+    ("capabilities", "Features and integrations", r"\b(?:features?|supports?|integrat(?:e|es|ion|ions)|capabilit(?:y|ies))\b",
+     "specific capabilities, supported integrations and constraints backed by current documentation"),
+    ("commercial", "Pricing and access", r"\b(?:pricing|prices?|free|costs?|subscription|trial)\b",
+     "verified pricing or access conditions, eligibility, limitations and a last-checked date"),
+)
+STRATEGY_LIMITATIONS = (
+    "Content types are non-exclusive English wording cues in saved excerpts, not verified full-page formats or a semantic model assessment.",
+    "Returned sources describe these query packets only. Frequency and returned position do not establish ranking causes.",
+    "Citations and final-answer wording are observable selections, not the LLM's hidden preferences or reasons. Uncited sources may still influence an answer; citations do not prove claim support.",
+    "A cue not found in the captured page is not proof that content is absent from the full page or website. Verify existing content before editing.",
+    "Suggestions are content experiments, not guaranteed gains. Verify target facts, write original content and obtain human approval before publishing.",
+)
+
+
+class ContentSourceEvidence(Contract):
+    query_id: str
+    evidence_id: str
+    url: str
+    quote: str = Field(min_length=1, max_length=500)
+    returned_position: int
+    target_relation: Literal["exact-page", "same-domain-other-page", "other-page"]
+    cited_by: tuple[str, ...]
+
+
+class ContentAnswerEvidence(Contract):
+    query_id: str
+    profile_id: str
+    quote: str = Field(min_length=1, max_length=500)
+
+
+class ContentPattern(Contract):
+    pattern_id: str
+    label: str
+    sources: tuple[ContentSourceEvidence, ...]
+    answers: tuple[ContentAnswerEvidence, ...]
+    target_evidence: EvidenceQuote | None
+    query_count: int
+    citation_opportunities: int
+    cited_appearances: int
+    grounding_change: str | None
+    answer_change: str | None
+
+
+class ContentStrategyReport(Contract):
+    schema_version: Literal["geo-content-strategy/v1"] = "geo-content-strategy/v1"
+    method_version: Literal["english-excerpt-cues/v1"] = "english-excerpt-cues/v1"
+    measurement_hash: str
+    target_url: str
+    target_title: str
+    target_excerpt: str
+    provenance: str
+    query_count: int
+    retrieved_queries: int
+    retrieved_sources: int
+    expected_answers: int
+    completed_answers: int
+    unsupported_citations: int
+    patterns: tuple[ContentPattern, ...]
+    limitations: tuple[str, ...] = STRATEGY_LIMITATIONS
+    verification: str = (
+        "Prioritise patterns seen across multiple relevant queries. Verify the full page and target facts, "
+        "then test one original content change. Re-run the same approved queries and profiles in a separately "
+        "authorised measurement; compare retrieval coverage, brand presence, citations and answer wording. "
+        "Repeat observations before inferring a durable improvement."
+    )
+
+
+def _content_quote(text: str, expression: str) -> str | None:
+    match = re.search(expression, text, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    start = max(0, match.start() - 100)
+    return text[start:start + 400]
+
+
+def build_content_strategy(measurement: MeasurementResults) -> ContentStrategyReport:
+    measurement = _validated_measurement(measurement)
+    target = measurement.inputs.snapshot
+    packets = {packet.query_id: packet for packet in measurement.retrievals if packet.status == "completed"}
+    completed = [result for result in measurement.results if result.status == "completed"]
+    answers_by_query = {
+        query.query_id: [result for result in completed if result.query_id == query.query_id]
+        for query in measurement.inputs.query_plan.queries
+    }
+    unsupported = sum(len(set(result.citation_ids) - {
+        source.evidence_id for source in packets[result.query_id].sources
+    }) for result in completed if result.query_id in packets)
+    patterns = []
+    for pattern_id, label, expression, suggestion in CONTENT_RULES:
+        sources = []
+        for query in sorted(measurement.inputs.query_plan.queries, key=lambda item: item.priority):
+            packet = packets.get(query.query_id)
+            for source in sorted(packet.sources if packet else (), key=lambda item: item.returned_position):
+                quote = _content_quote(source.excerpt, expression)
+                if quote is None:
+                    continue
+                exact = comparable_url(source.url) == comparable_url(target.url)
+                same_host = urlsplit(str(source.url)).hostname == urlsplit(str(target.url)).hostname
+                sources.append(ContentSourceEvidence(
+                    query_id=query.query_id, evidence_id=source.evidence_id, url=str(source.url), quote=quote,
+                    returned_position=source.returned_position,
+                    target_relation="exact-page" if exact else "same-domain-other-page" if same_host else "other-page",
+                    cited_by=tuple(result.profile_id for result in answers_by_query[query.query_id]
+                                   if source.evidence_id in result.citation_ids),
+                ))
+        answers = tuple(ContentAnswerEvidence(query_id=result.query_id, profile_id=result.profile_id, quote=quote)
+                        for result in completed if (quote := _content_quote(result.answer, expression)) is not None)
+        if not sources and not answers:
+            continue
+        target_evidence = next((EvidenceQuote(evidence_id=f"page-{offset // 1000 + 1}", quote=quote)
+                                for offset in range(0, len(target.content), 1000)
+                                if (quote := _content_quote(target.content[offset:offset + 1000], expression)) is not None), None)
+        change = ("Refine the existing material into " if target_evidence else
+                  "Check the full page first; if missing, add ") + suggestion + "."
+        cited = sum(len(source.cited_by) for source in sources)
+        patterns.append(ContentPattern(
+            pattern_id=pattern_id, label=label, sources=tuple(sources), answers=answers,
+            target_evidence=target_evidence, query_count=len({source.query_id for source in sources}),
+            citation_opportunities=sum(len(answers_by_query[source.query_id]) for source in sources),
+            cited_appearances=cited, grounding_change=change if sources else None,
+            answer_change=(change + " Make each relevant section self-contained, with a direct answer to the paired buyer question. "
+                           "A citation to a source does not establish which of its details supported the answer.")
+                          if answers or cited else None,
+        ))
+    return ContentStrategyReport(
+        measurement_hash=digest(measurement.model_dump(mode="json")), target_url=str(target.url),
+        target_title=target.title, target_excerpt=target.content[:500], provenance=target.provenance.value,
+        query_count=len(measurement.inputs.query_plan.queries), retrieved_queries=len(packets),
+        retrieved_sources=sum(len(packet.sources) for packet in packets.values()),
+        expected_answers=len(measurement.inputs.query_plan.queries) * len(measurement.inputs.profiles),
+        completed_answers=len(completed), unsupported_citations=unsupported, patterns=tuple(patterns),
+    )

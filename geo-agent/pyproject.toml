@@ -18,6 +18,8 @@ dependencies = [
     "anthropic==0.125.0",
     "agent-framework-core==1.17.0",
     "agent-framework-openai==1.14.2",
+    "SQLAlchemy==2.0.52",
+    "alembic==1.19.2",
 ]
 
 [project.optional-dependencies]
@@ -28,4 +30,4 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.setuptools.package-data]
-geo_agent = ["chat.html"]
+geo_agent = ["chat.html", "measurement.html"]

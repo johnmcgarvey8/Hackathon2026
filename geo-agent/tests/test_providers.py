@@ -8,8 +8,9 @@ import pytest
 
 from geo_agent.contracts import Provenance, QueryPair, SimulationProfile, Source
 from geo_agent.providers import (
-    ClaudeMessagesEvaluator, EVALUATION_GUARD, OpenAIResponsesEvaluator, create_evaluator,
-    simulation_instructions, validate_simulation_profile,
+    COPILOT_GAP_CLOSING_INSTRUCTIONS, ClaudeMessagesEvaluator, EVALUATION_GUARD,
+    OpenAIResponsesEvaluator, create_evaluator, simulation_instructions,
+    validate_simulation_profile,
 )
 from geo_agent.webiq import ProviderError
 from test_foundry import response_payload
@@ -168,6 +169,15 @@ def test_direct_adapters_reject_wrong_provider_and_expose_read_only_profile():
         evaluator.profile = simulation_profile("copilot-style")
     with pytest.raises(ProviderError):
         simulation_instructions("unknown-style")
+
+
+def test_copilot_profile_closes_only_evidence_supported_gaps():
+    copilot = simulation_instructions("copilot-style")
+    assert COPILOT_GAP_CLOSING_INSTRUCTIONS in copilot
+    assert "Do not infer missing product capabilities or content absence" in copilot
+    assert copilot.endswith(EVALUATION_GUARD)
+    assert COPILOT_GAP_CLOSING_INSTRUCTIONS not in simulation_instructions("chatgpt-style")
+    assert COPILOT_GAP_CLOSING_INSTRUCTIONS not in simulation_instructions("claude-backed")
 
 
 @pytest.mark.parametrize("profile_id", ["chatgpt-style", "claude-backed"])
