@@ -21,6 +21,7 @@
           "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
           "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
           "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
+          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-policy.json",
           "GEO_PORT": "8090",
           "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
         }

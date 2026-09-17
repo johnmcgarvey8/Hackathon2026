@@ -13,6 +13,132 @@ from geo_agent.workflow import Conflict, Coordinator, RunStore
 TARGET = HttpUrl("https://example.org/product")
 
 
+def test_brand_matching_separates_ambiguous_text_and_owned_domains():
+    from geo_agent.evidence_assessment import BrandAlias, BrandDefinition, brand_matches, owns_host
+
+    definition = BrandDefinition(name="Microsoft Clarity", aliases=(BrandAlias(text="Clarity", ambiguous=True),),
+                                 domains=("clarity.microsoft.com",))
+    assert brand_matches({"excerpt": "Improve clarity today"}, definition)["status"] == "ambiguous"
+    assert brand_matches({"title": "MICROSOFT CLARITY", "excerpt": "Clarity tools"}, definition)["status"] == "matched"
+    assert brand_matches({"excerpt": "Clarity tools"}, definition, brand_owned=True)["status"] == "matched"
+    assert brand_matches({"excerpt": "clarityful"}, definition)["status"] == "absent"
+    assert owns_host("https://docs.clarity.microsoft.com/", definition)
+    assert not owns_host("https://clarity.microsoft.com.evil.org/", definition)
+    assert not owns_host("https://microsoft.com/", definition)
+    assert brand_matches({"excerpt": "Clarity"}, None)["status"] == "unconfigured"
+
+
+def test_evidence_assessment_keeps_grounding_answers_and_citations_independent():
+    from geo_agent.contracts import digest
+    from geo_agent.evidence_assessment import BrandDefinition, BrandDefinitionRecord, build_evidence_assessment
+
+    measurement = measurement_fixture()
+    sources = (measurement.retrievals[0].sources[0].model_copy(update={"excerpt": "Microsoft Clarity records sessions."}),
+               measurement.retrievals[0].sources[1])
+    retrievals = (measurement.retrievals[0].model_copy(update={"sources": sources}), *measurement.retrievals[1:])
+    results = tuple(item.model_copy(update={"sources": sources, "citation_ids": (sources[1].evidence_id, "invented"),
+                                           "answer": "Microsoft Clarity is a product."})
+                    if item.query_id == "q-1" else item for item in measurement.results)
+    measurement = measurement.model_copy(update={"retrievals": retrievals, "results": results})
+    before = digest(measurement.model_dump(mode="json"))
+    scores = measurement_scores(measurement)
+    record = BrandDefinitionRecord(run_id="test", definition_version=1, definition=BrandDefinition(name="Microsoft Clarity"))
+    report = build_evidence_assessment(measurement, record, run_id="test", run_revision=1)
+    assert report.grounding["brand_presence"]["numerator"] == 1
+    assert report.grounding["brand_presence"]["denominator"] == 5
+    assert report.answer["brand_presence"]["numerator"] == 3
+    assert report.answer["brand_source_conversion"]["numerator"] == 0
+    assert report.answer["brand_source_conversion"]["denominator"] == 3
+    assert report.answers[0]["sources"][0]["cited"] is False
+    assert report.answers[0]["sources"][1]["cited"] is True
+    assert report.answers[0]["unsupported_citation_ids"] == ["invented"]
+    assert report.answers[0]["citation_status"] == "some"
+    assert report.measurement_hash == before == digest(measurement.model_dump(mode="json"))
+    assert measurement_scores(measurement) == scores
+    assert report == build_evidence_assessment(measurement, record, run_id="test", run_revision=1)
+
+
+def test_evidence_assessment_unknown_and_empty_are_not_all_sources_cited():
+    from geo_agent.evidence_assessment import BrandDefinition, BrandDefinitionRecord, build_evidence_assessment
+
+    measurement = measurement_fixture(failed_retrievals=("q-1",), missing_retrievals=("q-2",),
+                                      source_urls={"q-3": ()})
+    record = BrandDefinitionRecord(run_id="test", definition_version=1, definition=BrandDefinition(name="Clarity"))
+    report = build_evidence_assessment(measurement, record, run_id="test", run_revision=1)
+    assert report.grounding["brand_presence"]["denominator"] == 3
+    assert report.queries[0]["brand_status"] == "unknown"
+    assert report.answers[0]["citation_status"] == "unknown"
+    assert report.answers[6]["citation_status"] == "not-assessable"
+    assert report.answers[6]["source_citation_rate"]["rate"] is None
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("CAFÉ", "matched"), ("Cafe\u0301", "matched"), ("Cafeteria", "absent"),
+])
+def test_brand_unicode_highlights_preserve_original_text(text, expected):
+    from geo_agent.evidence_assessment import BrandDefinition, brand_matches
+
+    finding = brand_matches({"excerpt": text}, BrandDefinition(name="Caf\u00e9"))
+    assert finding["status"] == expected
+    if expected == "matched":
+        match = finding["matches"][0]
+        assert match["quote"] == text[match["start"]:match["end"]] == text
+
+
+@pytest.mark.parametrize("domain", ["https://clarity.microsoft.com", "*.microsoft.com", "clarity.microsoft.com/path",
+                                   "clarity.microsoft.com:443", "a..org", "-a.org", "a-.org", "localhost"])
+def test_brand_domains_reject_ambiguous_or_unsafe_configuration(domain):
+    from geo_agent.evidence_assessment import BrandDefinition
+
+    with pytest.raises(ValueError):
+        BrandDefinition(name="Microsoft Clarity", domains=(domain,))
+
+
+@pytest.mark.parametrize("profile_count", [1, 2, 3])
+def test_assessment_packet_ids_wording_and_profile_denominators(profile_count):
+    from geo_agent.evidence_assessment import BrandDefinition, BrandDefinitionRecord, build_evidence_assessment
+
+    measurement = measurement_fixture()
+    profiles = measurement.inputs.profiles[:profile_count]
+    shared = "This is a retained passage with at least six matching words"
+    packets = tuple(packet.model_copy(update={"sources": tuple(source.model_copy(update={
+        "evidence_id": f"source-{index}", "excerpt": shared, "title": "Microsoft Clarity" if index == 0 else "Third party",
+    }) for index, source in enumerate(packet.sources))}) for packet in measurement.retrievals)
+    answers = tuple(answer.model_copy(update={
+        "sources": next(packet.sources for packet in packets if packet.query_id == answer.query_id),
+        "answer": shared, "citation_ids": ("source-1", "source-1", "q-2-source-1"),
+    }) for answer in measurement.results if answer.profile_id in {profile.profile_id for profile in profiles})
+    measurement = MeasurementResults(inputs=measurement.inputs.model_copy(update={"profiles": profiles}),
+                                     retrievals=packets, results=answers)
+    record = BrandDefinitionRecord(run_id="test", definition_version=1, definition=BrandDefinition(name="Microsoft Clarity"))
+    report = build_evidence_assessment(measurement, record, run_id="test", run_revision=1)
+    assert report.grounding["source_count"] == 10
+    assert report.answer["brand_presence"]["numerator"] == 0
+    assert report.answer["source_citation_rate"]["numerator"] == 5 * profile_count
+    assert report.answer["source_citation_rate"]["denominator"] == 10 * profile_count
+    assert report.answers[0]["valid_citation_ids"] == ["source-1"]
+    assert report.answers[0]["unsupported_citation_ids"] == ["q-2-source-1"]
+    assert all(source["shared_wording"][0]["non_unique"] for source in report.answers[0]["sources"])
+    assert report.answers[0]["sources"][0]["cited"] is False
+    assert all(len(answer["sources"]) == 2 for answer in report.answers)
+
+
+def test_answer_ambiguity_is_not_resolved_by_supplied_brand_packet():
+    from geo_agent.evidence_assessment import BrandAlias, BrandDefinition, BrandDefinitionRecord, build_evidence_assessment
+
+    measurement = measurement_fixture()
+    results = tuple(answer.model_copy(update={"answer": "Improve clarity in the final answer."}) for answer in measurement.results)
+    measurement = measurement.model_copy(update={"results": results})
+    record = BrandDefinitionRecord(run_id="test", definition_version=1, definition=BrandDefinition(
+        name="Microsoft Clarity", aliases=(BrandAlias(text="Clarity", ambiguous=True),), domains=("clarity.microsoft.com",)))
+    report = build_evidence_assessment(measurement, record, run_id="test", run_revision=1)
+    assert report.answer["ambiguous_answers"] == 15
+    assert report.answer["brand_presence"]["numerator"] == 0
+    unconfigured = build_evidence_assessment(measurement, run_id="test", run_revision=1)
+    assert unconfigured.answer["brand_presence"]["rate"] is None
+    assert unconfigured.answer["source_citation_rate"] == report.answer["source_citation_rate"]
+
+
 def result(query="q-1", profile="baseline", cited=True, url=TARGET):
     return EvaluationResult(
         query_id=query, profile_id=profile, provenance="synthetic", status="completed",

@@ -8,13 +8,18 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field
 
 from geo_agent.artifacts import render_bundle, score_report
+from geo_agent.artifact_storage import LocalArtifactStorage
 from geo_agent.chat_protocol import conversation_router
 from geo_agent.contracts import Brief, Contract, Provenance, Query, Run, RunInputs, State
 from geo_agent.conversation import ChatRequest, ConversationAgent
 from geo_agent.evaluation import match_citations
 from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.live import BudgetedLiveWorkflow, LiveWorkflow
+from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.measurement_api import OperatorPrincipal, create_measurement_router
+from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
+from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict, Coordinator, NotFound, RunStore
 
@@ -40,7 +45,9 @@ class LiveBriefRequest(Brief):
 
 
 def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | BudgetedLiveWorkflow | None = None,
-               chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None) -> FastAPI:
+               chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
+               measurement_policy: MeasurementExecutionPolicy | None = None,
+               measurement_auto_worker: bool = False) -> FastAPI:
     if not api_tokens or any(len(token) < 32 or not owner for token, owner in api_tokens.items()):
         raise ValueError("Configure at least one 32-character token mapped to an owner")
     tokens = dict(api_tokens)
@@ -58,12 +65,39 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     owner_dependency = Depends(authenticate)
 
+    if measurement_policy is not None:
+        measurement_repository = SQLiteMeasurementRepository(database)
+        mock_runtime = MockMeasurementRuntime(measurement_repository, measurement_policy) if measurement_auto_worker else None
+
+        def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
+            return OperatorPrincipal(
+                tenant_id="local-development",
+                object_id=owner,
+                roles=(measurement_policy.owner_role,),
+            )
+
+        app.include_router(create_measurement_router(
+            measurement_repository,
+            measurement_policy,
+            authenticate_operator,
+            LocalArtifactStorage(database.parent / "measurement-artifacts"),
+            mock_runtime.drain if mock_runtime is not None else None,
+        ))
+
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     def browser_chat() -> HTMLResponse:
         return HTMLResponse(Path(__file__).with_name("chat.html").read_text(encoding="utf-8"), headers={
             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        })
+
+    @app.get("/measurements", response_class=HTMLResponse, include_in_schema=False)
+    def browser_measurements() -> HTMLResponse:
+        return HTMLResponse(Path(__file__).with_name("measurement.html").read_text(encoding="utf-8"), headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
         })
 
     def chat_service(owner: str) -> ConversationAgent:

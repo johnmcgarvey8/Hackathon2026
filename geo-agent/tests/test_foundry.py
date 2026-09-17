@@ -6,7 +6,7 @@ import pytest
 
 from geo_agent.contracts import Brief, PageSnapshot, Query, Source
 from geo_agent.foundry import Foundry, azure_cli_token, model_base_url
-from geo_agent.webiq import ProviderError
+from geo_agent.webiq import ProviderError, ProviderFailure
 
 
 ENDPOINT = "https://test.services.ai.azure.com/openai/v1/responses"
@@ -52,16 +52,19 @@ def test_endpoint_normalisation():
     assert model_base_url(ENDPOINT) == "https://test.services.ai.azure.com/openai/v1/"
 
 
-def test_error_is_redacted_and_not_retried():
+@pytest.mark.parametrize("status,code", [(403, ProviderFailure.AUTH), (429, ProviderFailure.RATE_LIMIT),
+                                        (500, ProviderFailure.REQUEST)])
+def test_error_is_redacted_and_not_retried(status, code):
     calls = []
     def handler(request):
         calls.append(request)
-        return httpx.Response(403, json={"error": {"message": "dummy-sensitive-error"}})
+        return httpx.Response(status, json={"error": {"message": "dummy-sensitive-error"}})
     provider = Foundry(ENDPOINT, "test", token_provider=lambda: "dummy-token", transport=httpx.MockTransport(handler))
-    with pytest.raises(ProviderError, match="HTTP 403") as caught:
+    with pytest.raises(ProviderError, match=f"HTTP {status}") as caught:
         provider.evaluate(Query(query_id="q-1", text="Question", intent="Plan"), "en-GB", ())
     assert len(calls) == 1
     assert "sensitive" not in str(caught.value)
+    assert caught.value.code == code
 
 
 def test_cli_failure_never_prints_tokens(monkeypatch, capsys):
@@ -156,8 +159,34 @@ def test_paired_planner_rejects_invalid_plans(problem):
         return httpx.Response(200, json=response_payload(proposal))
 
     provider = Foundry(ENDPOINT, "test", token_provider=lambda: "dummy", transport=httpx.MockTransport(handler))
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         provider.propose_pairs(*planning_inputs())
+    assert len(calls) == 1
+    expected = (ProviderFailure.PLAN_ORDER if problem == "order" else
+                ProviderFailure.PLAN_EVIDENCE if problem in {"quote", "passage"} else ProviderFailure.SCHEMA)
+    assert caught.value.code == expected
+
+
+@pytest.mark.parametrize("reason,code", [("max_output_tokens", ProviderFailure.OUTPUT_LIMIT),
+                                        ("content_filter", ProviderFailure.BLOCKED)])
+@pytest.mark.parametrize("truncated", [False, True])
+def test_incomplete_query_packet_retains_safe_reason(reason, code, truncated):
+    payload = response_payload(paired_proposal())
+    payload.update(status="incomplete", incomplete_details={"reason": reason})
+    if truncated:
+        payload["output"][0]["content"][0]["text"] = '{"queries": ['
+    else:
+        payload["output"] = []
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=payload)
+
+    provider = Foundry(ENDPOINT, "test", token_provider=lambda: "dummy", transport=httpx.MockTransport(handler))
+    with pytest.raises(ProviderError) as caught:
+        provider.propose_pairs(*planning_inputs())
+    assert caught.value.code == code
     assert len(calls) == 1
 
 
@@ -169,3 +198,44 @@ def test_paired_planner_rejects_invalid_snapshot_before_authentication(problem):
     provider = Foundry(ENDPOINT, "test", token_provider=lambda: pytest.fail("Must not authenticate"))
     with pytest.raises(ProviderError):
         provider.propose_pairs(brief, snapshot)
+
+
+@pytest.mark.parametrize("brand_case", ["supported", "missing", "invented-quote", "unanchored-name"])
+def test_preparation_infers_brand_in_existing_analysis_call(brand_case):
+    from test_page_analysis import report_for
+
+    snapshot = PageSnapshot(url="https://clarity.microsoft.com/", title="Clarity",
+                            content="Clarity provides session recordings.", provenance="live")
+    report = report_for(snapshot.content).model_dump()
+    report["brand"] = None if brand_case == "missing" else {
+        "definition": {"name": "Microsoft Clarity", "aliases": [{"text": "Clarity", "ambiguous": True}],
+                       "domains": ["clarity.microsoft.com", "microsoft.com", "unrelated.example"]},
+        "evidence": [{"passage_id": "page-1", "quote": snapshot.content}],
+        "rationale": "The page names Clarity; model knowledge suggests the Microsoft Clarity product name.",
+    }
+    if brand_case == "invented-quote":
+        report["brand"]["evidence"][0]["quote"] = "Invented Clarity quote"
+    elif brand_case == "unanchored-name":
+        report["brand"]["definition"].update(name="Another brand", aliases=[])
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        body = json.loads(request.content)
+        assert body["text"]["format"]["name"] == "PreparationAnalysis"
+        assert body["max_output_tokens"] == 2000
+        assert body["store"] is False and "tools" not in body
+        assert "model knowledge" in body["instructions"] and "untrusted" in body["instructions"]
+        assert json.loads(body["input"])["untrusted_passages"][0]["text"] == snapshot.content
+        return httpx.Response(200, json=response_payload(report))
+
+    provider = Foundry(ENDPOINT, "test", token_provider=lambda: "dummy", transport=httpx.MockTransport(handler))
+    analysis, metadata = provider.analyse_preparation(snapshot, [{"passage_id": "page-1", "text": snapshot.content}])
+    assert len(calls) == 1
+    assert metadata["model"] == "model-version-test"
+    if brand_case == "supported":
+        assert analysis.brand.definition.name == "Microsoft Clarity"
+        assert analysis.brand.definition.aliases[0].ambiguous is True
+        assert analysis.brand.definition.domains == ("clarity.microsoft.com",)
+    else:
+        assert analysis.brand is None

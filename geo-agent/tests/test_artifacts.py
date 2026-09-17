@@ -18,6 +18,7 @@ from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.foundry import Foundry
 from geo_agent.providers import create_evaluator, simulation_instructions
 from geo_agent.recommendations import RecommendationReport, RecommendationService, validate_recommendations
+from geo_agent.measurement_workflow import OwnerIdentity, RecommendationDecision, RecommendationReview
 from geo_agent.webiq import BROWSE_ENDPOINT, SEARCH_ENDPOINT, ProviderError, WebIQ, public_url
 from test_foundry import response_payload
 from test_providers import claude_payload
@@ -36,8 +37,7 @@ def test_branded_queries_are_reported_separately():
     assert report["by_query_type"]["unbranded"]["denominator"] == 4
 
 
-@pytest.fixture
-def measurement():
+def measurement_result():
     legacy = synthetic_inputs()
     captured = datetime(2026, 9, 15, tzinfo=timezone.utc)
     snapshot = legacy.snapshot.model_copy(update={"captured_at": captured})
@@ -71,6 +71,11 @@ def measurement():
     return MeasurementResults(inputs=inputs, retrievals=packets, results=results)
 
 
+@pytest.fixture
+def measurement():
+    return measurement_result()
+
+
 def recommendation_report(measurement):
     return validate_recommendations(measurement, {"reason": "", "tasks": [{
         "task_id": "rec-1", "priority": 1, "query_id": "q-1", "title": "Review buyer guidance",
@@ -87,7 +92,10 @@ def test_measurement_bundle_recomputes_scores_and_validates_recommendations(meas
     bundle = render_measurement_bundle(measurement, recommendations)
     assert bundle == render_measurement_bundle(measurement, recommendations)
     with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
-        assert archive.namelist() == sorted(("manifest.json", "manifest.md", "measurement.json", "scores.json", "recommendations.json"))
+        assert archive.namelist() == sorted((
+            "manifest.json", "manifest.md", "measurement.json", "recommendation-review.json",
+            "scores.json", "recommendations.json",
+        ))
         assert all(item.date_time == (1980, 1, 1, 0, 0, 0) for item in archive.infolist())
         restored = MeasurementResults.model_validate_json(archive.read("measurement.json"))
         report = RecommendationReport.model_validate_json(archive.read("recommendations.json"))
@@ -104,6 +112,32 @@ def test_measurement_bundle_recomputes_scores_and_validates_recommendations(meas
         assert manifest["publish_permission"] is False and manifest["requires_human_approval"] is True
         assert "owner" not in manifest and "approval" not in manifest
         assert b"not proof of human approval" in archive.read("manifest.md")
+
+
+def test_measurement_bundle_exports_only_accepted_tasks_as_sanitized_markdown(measurement):
+    recommendations = recommendation_report(measurement)
+    review = RecommendationReview(
+        approval_hash=measurement.inputs.approval_hash,
+        measurement_hash=digest(measurement.model_dump(mode="json")),
+        recommendation_hash=digest(recommendations.model_dump(mode="json")),
+        actor=OwnerIdentity(tenant_id="private-tenant", object_id="private-reviewer"),
+        decisions=(RecommendationDecision(task_id="rec-1", decision="accepted"),),
+        reviewed_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
+    )
+
+    bundle = render_measurement_bundle(measurement, recommendations, review)
+    assert bundle == render_measurement_bundle(measurement, recommendations, review)
+    with zipfile.ZipFile(io.BytesIO(bundle)) as archive:
+        assert "recommendations/rec-1.md" in archive.namelist()
+        task = archive.read("recommendations/rec-1.md").decode()
+        assert "accepted for human implementation planning" in task
+        assert "Publishing permission: **none**" in task
+        review_payload = json.loads(archive.read("recommendation-review.json"))
+        assert review_payload["decisions"] == [{"task_id": "rec-1", "decision": "accepted"}]
+        assert "actor" not in review_payload
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["recommendation_review_status"] == "reviewed"
+        assert manifest["files"] == sorted(archive.namelist())
 
 
 def test_measurement_bundle_rejects_stale_recommendations_and_forged_sources(measurement):

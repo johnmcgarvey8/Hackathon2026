@@ -1,0 +1,33 @@
+{
+  "policy_id": "local-mock-measurement-v1",
+  "execution_mode": "mock",
+  "owner_role": "Geo.Operator",
+  "allowed_domains": ["example.com", "clarity.microsoft.com"],
+  "locale": "en-GB",
+  "profiles": [
+    {
+      "profile_id": "chatgpt-style",
+      "provider": "openai-responses",
+      "deployment": "local-synthetic-chatgpt",
+      "endpoint": "https://chatgpt.fixture.invalid/openai/v1/",
+      "prompt_version": "local-synthetic/v1",
+      "instructions": "Synthetic local profile. Do not invoke a provider."
+    },
+    {
+      "profile_id": "claude-backed",
+      "provider": "anthropic-messages",
+      "deployment": "local-synthetic-claude",
+      "endpoint": "https://claude.fixture.invalid/",
+      "prompt_version": "local-synthetic/v1",
+      "instructions": "Synthetic local profile. Do not invoke a provider."
+    },
+    {
+      "profile_id": "copilot-style",
+      "provider": "openai-responses",
+      "deployment": "local-synthetic-copilot",
+      "endpoint": "https://copilot.fixture.invalid/openai/v1/",
+      "prompt_version": "local-synthetic/v1",
+      "instructions": "Synthetic local profile. Do not invoke a provider."
+    }
+  ]
+}

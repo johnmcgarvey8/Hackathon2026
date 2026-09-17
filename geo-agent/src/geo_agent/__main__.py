@@ -10,6 +10,7 @@ from geo_agent.budget import BudgetGrant, apply_grant
 from geo_agent.conversation import ChatPolicy, ConversationAgent
 from geo_agent.foundry import Foundry
 from geo_agent.live import LivePolicy, configured_live_workflow
+from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
@@ -35,7 +36,7 @@ def main() -> None:
             token = secrets.token_urlsafe(32)
             with os.fdopen(descriptor, "w", encoding="ascii") as token_file:
                 token_file.write(token)
-        print("Local API token: geo-agent/.data/local-api-token (value not logged)")
+        print(f"Local API token: {token_path.resolve()} (value not logged)")
     database = data_dir / "runs.sqlite3"
     policy_file = os.environ.get("GEO_LIVE_POLICY")
     grant_file = os.environ.get("GEO_BUDGET_GRANT")
@@ -67,7 +68,21 @@ def main() -> None:
         analysis = PageAnalysisService(RunStore(database), analysis_policy,
                                        WebIQ(os.environ.get("WEBIQ_API_KEY", "")),
                                        Foundry(endpoint, os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "")))
-    app = create_app(database, {token: "local-developer"}, live=live, chat=chat, analysis=analysis)
+    measurement_policy = None
+    measurement_policy_file = os.environ.get("GEO_MEASUREMENT_POLICY")
+    if measurement_policy_file:
+        measurement_policy = MeasurementExecutionPolicy.model_validate_json(
+            Path(measurement_policy_file).read_text(encoding="utf-8")
+        )
+    app = create_app(
+        database,
+        {token: "local-developer"},
+        live=live,
+        chat=chat,
+        analysis=analysis,
+        measurement_policy=measurement_policy,
+        measurement_auto_worker=measurement_policy is not None and measurement_policy.execution_mode == "mock",
+    )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))
 
 
