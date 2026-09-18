@@ -453,7 +453,6 @@
             </div>
             <div class="composer-dock">
               ${renderComposer()}
-              <p class="conversation-disclaimer">Synthetic demo. Review AI suggestions before using them.</p>
             </div>
           </section>
       </section>`;
@@ -529,9 +528,10 @@
   }
 
   function renderComposer() {
+    const current = project();
     const config = {
       goal: { placeholder: "Describe the GEO outcome you want to improve...", label: "Enter a GEO goal" },
-      scope: { placeholder: "Enter a domain or page URL, for example contoso.example/products/trail-shoe", label: "Enter a domain or URL" },
+      scope: { placeholder: `Enter ${current.domain} or a page URL on this domain`, label: `Enter a ${current.name} domain or URL` },
       running: { placeholder: "Ask for progress or explain the brand context...", label: "Ask about this run" },
       results: { placeholder: "Ask about evidence, brand guidelines, or next actions...", label: "Discuss the results" }
     }[state.chat.stage];
@@ -1178,11 +1178,16 @@
         showInputError(error, "Enter a valid domain or an http/https page URL.");
         return;
       }
+      const current = project();
+      if (!scopeMatchesProject(parsed, current)) {
+        showInputError(error, `This is the ${current.name} project. Enter ${current.domain} or a page URL on that domain.`);
+        return;
+      }
       state.chat.scope = parsed.value;
       state.chat.draft = "";
       state.chat.scopeType = parsed.type;
       state.chat.messages.push({ speaker: "user", text: value });
-      state.chat.messages.push({ speaker: "agent", text: `I will analyse ${parsed.value} as a ${parsed.type.toLowerCase()} scope. Before starting, I have assembled the available grounding, analytics, brand knowledge, and CMS context for review.` });
+      state.chat.messages.push({ speaker: "agent", text: `I will analyse ${parsed.value} as a ${parsed.type.toLowerCase()} scope for ${current.name}. Before starting, I have assembled this project's grounding, analytics, brand knowledge, and CMS context for review.` });
       state.chat.stage = "confirm";
       render();
     }
@@ -1369,7 +1374,7 @@
     if (action === "start-analysis" || action === "start-sample-run") {
       if (action === "start-sample-run" && !state.chat.goal) {
         state.chat.goal = project().activeGoal;
-        state.chat.scope = project().domain;
+        state.chat.scope = `https://${project().domain}`;
         state.chat.scopeType = "Domain";
       }
       startRun();
@@ -1568,10 +1573,11 @@
   }
 
   function setGoal(goal) {
+    const current = project();
     state.chat.draft = "";
     state.chat.goal = goal;
     state.chat.messages.push({ speaker: "user", text: goal });
-    state.chat.messages.push({ speaker: "agent", text: "Understood. Which domain or specific page URL should I analyse for this goal?" });
+    state.chat.messages.push({ speaker: "agent", text: `Understood. Enter ${current.domain} or a specific page URL on that domain so the analysis stays within the ${current.name} project.` });
     state.chat.stage = "scope";
     render();
   }
@@ -1581,15 +1587,29 @@
     if (/^https?:\/\/[a-z0-9.-]+(?::\d+)?(?:\/.*)?$/i.test(trimmed)) {
       try {
         const url = new URL(trimmed);
-        return { value: url.href.replace(/\/$/, ""), type: url.pathname && url.pathname !== "/" ? "Page URL" : "Domain" };
+        return {
+          value: url.href.replace(/\/$/, ""),
+          type: url.pathname && url.pathname !== "/" ? "Page URL" : "Domain",
+          hostname: url.hostname.toLowerCase()
+        };
       } catch {
         return null;
       }
     }
     if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?$/i.test(trimmed)) {
-      return { value: `https://${trimmed.replace(/\/$/, "")}`, type: trimmed.includes("/") ? "Page URL" : "Domain" };
+      const url = new URL(`https://${trimmed}`);
+      return {
+        value: url.href.replace(/\/$/, ""),
+        type: url.pathname && url.pathname !== "/" ? "Page URL" : "Domain",
+        hostname: url.hostname.toLowerCase()
+      };
     }
     return null;
+  }
+
+  function scopeMatchesProject(parsed, current) {
+    const projectDomain = current.domain.toLowerCase();
+    return parsed.hostname === projectDomain || parsed.hostname.endsWith(`.${projectDomain}`);
   }
 
   function showInputError(element, message) {
