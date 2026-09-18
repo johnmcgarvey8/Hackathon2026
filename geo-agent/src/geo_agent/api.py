@@ -20,6 +20,10 @@ from geo_agent.measurement_api import OperatorPrincipal, create_measurement_rout
 from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
 from geo_agent.persistence import SQLiteMeasurementRepository
+from geo_agent.project_api import create_project_router
+from geo_agent.project_chat import MockProjectAgent, ProjectChatService, UnavailableProjectAgent
+from geo_agent.project_chat_api import create_project_chat_router
+from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict, Coordinator, NotFound, RunStore
 
@@ -47,7 +51,8 @@ class LiveBriefRequest(Brief):
 def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | BudgetedLiveWorkflow | None = None,
                chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
                measurement_policy: MeasurementExecutionPolicy | None = None,
-               measurement_auto_worker: bool = False) -> FastAPI:
+               measurement_auto_worker: bool = False,
+               project_foundry: ProjectFoundrySettings | None = None) -> FastAPI:
     if not api_tokens or any(len(token) < 32 or not owner for token, owner in api_tokens.items()):
         raise ValueError("Configure at least one 32-character token mapped to an owner")
     tokens = dict(api_tokens)
@@ -65,16 +70,17 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     owner_dependency = Depends(authenticate)
 
-    if measurement_policy is not None:
-        measurement_repository = SQLiteMeasurementRepository(database)
-        mock_runtime = MockMeasurementRuntime(measurement_repository, measurement_policy) if measurement_auto_worker else None
+    measurement_repository = SQLiteMeasurementRepository(database)
 
-        def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
-            return OperatorPrincipal(
-                tenant_id="local-development",
-                object_id=owner,
-                roles=(measurement_policy.owner_role,),
-            )
+    def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
+        return OperatorPrincipal(
+            tenant_id="local-development",
+            object_id=owner,
+            roles=("Geo.Operator",),
+        )
+
+    if measurement_policy is not None:
+        mock_runtime = MockMeasurementRuntime(measurement_repository, measurement_policy) if measurement_auto_worker else None
 
         app.include_router(create_measurement_router(
             measurement_repository,
@@ -83,6 +89,23 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
             LocalArtifactStorage(database.parent / "measurement-artifacts"),
             mock_runtime.drain if mock_runtime is not None else None,
         ))
+    app.include_router(create_project_router(
+        measurement_repository,
+        measurement_policy,
+        authenticate_operator,
+    ))
+    project_agent = (
+        HostedProjectAgent(measurement_repository, project_foundry)
+        if project_foundry is not None
+        else MockProjectAgent(measurement_repository)
+        if measurement_policy is not None and measurement_policy.execution_mode == "mock"
+        else UnavailableProjectAgent()
+    )
+    app.include_router(create_project_chat_router(
+        ProjectChatService(measurement_repository, project_agent),
+        measurement_policy,
+        authenticate_operator,
+    ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     def browser_chat() -> HTMLResponse:

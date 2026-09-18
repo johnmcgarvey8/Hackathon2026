@@ -76,28 +76,40 @@ class LocalArtifactStorage:
             raise ValueError("Artifact storage key escapes the configured root") from error
         return path
 
+    @staticmethod
+    def _io_path(path: Path) -> Path:
+        if os.name != "nt":
+            return path
+        value = str(path)
+        if value.startswith("\\\\?\\"):
+            return path
+        if value.startswith("\\\\"):
+            return Path(f"\\\\?\\UNC\\{value[2:]}")
+        return Path(f"\\\\?\\{value}")
+
     def put(self, storage_key: str, content: bytes) -> None:
         if not content:
             raise ValueError("Artifact content cannot be empty")
         target = self._path(storage_key)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            if target.read_bytes() != content:
+        io_target = self._io_path(target)
+        io_target.parent.mkdir(parents=True, exist_ok=True)
+        if io_target.exists():
+            if io_target.read_bytes() != content:
                 raise Conflict("Artifact storage key is already bound to different content")
             return
-        temporary = target.with_name(f".{target.name}.{identifier()}.tmp")
+        temporary = self._io_path(target.parent / f".tmp-{identifier()}")
         try:
             with temporary.open("xb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, target)
+            os.replace(temporary, io_target)
         finally:
             temporary.unlink(missing_ok=True)
 
     def get(self, storage_key: str) -> bytes:
         try:
-            return self._path(storage_key).read_bytes()
+            return self._io_path(self._path(storage_key)).read_bytes()
         except FileNotFoundError as error:
             raise NotFound("Artifact content not found") from error
 
@@ -143,7 +155,7 @@ class ArtifactService:
             content_hash=content_hash,
             media_type=self.media_type,
             size=len(content),
-            storage_key=f"{owner.key}/{run.run_id}/{content_hash}.zip",
+            storage_key=f"{run.run_id}/{content_hash}.zip",
         )
         self.storage.put(artifact.storage_key, content)
         return self.repository.persist_export(artifact, owner, revision)

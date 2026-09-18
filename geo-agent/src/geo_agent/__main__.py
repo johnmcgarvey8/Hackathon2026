@@ -12,6 +12,7 @@ from geo_agent.foundry import Foundry
 from geo_agent.live import LivePolicy, configured_live_workflow
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
+from geo_agent.project_foundry import ProjectFoundrySettings
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
 
@@ -82,6 +83,7 @@ def main() -> None:
         analysis=analysis,
         measurement_policy=measurement_policy,
         measurement_auto_worker=measurement_policy is not None and measurement_policy.execution_mode == "mock",
+        project_foundry=ProjectFoundrySettings.from_environment(os.environ),
     )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))
 

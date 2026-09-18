@@ -148,6 +148,7 @@ class MeasurementRepository(Protocol):
         inputs: MeasurementInputs | None = None,
         brief: Brief | None = None,
         brand_definition: BrandDefinition | None = None,
+        project_id: str | None = None,
     ) -> MeasurementRun: ...
 
     def get_brand_definition(self, run_id: str, owner: OwnerIdentity,

@@ -36,10 +36,23 @@ from geo_agent.measurement_workflow import (
     Mutation,
     OwnerIdentity,
 )
+from geo_agent.projects import Project, ProjectCreate, ProjectUpdate
 from geo_agent.workflow import Conflict, NotFound
 
 
 metadata = MetaData()
+
+projects = Table(
+    "projects",
+    metadata,
+    Column("project_id", String(64), primary_key=True),
+    Column("owner_key", String(64), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Index("ix_projects_owner_updated", "owner_key", "updated_at"),
+)
 
 measurement_runs = Table(
     "measurement_runs",
@@ -49,6 +62,39 @@ measurement_runs = Table(
     Column("revision", Integer, nullable=False),
     Column("payload", Text, nullable=False),
     Index("ix_measurement_runs_owner_updated", "owner_key", "run_id"),
+)
+
+project_runs = Table(
+    "project_runs",
+    metadata,
+    Column("project_id", String(64), ForeignKey("projects.project_id"), primary_key=True),
+    Column("run_id", String(64), ForeignKey("measurement_runs.run_id"), primary_key=True),
+    Column("owner_key", String(64), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    UniqueConstraint("run_id", name="uq_project_runs_run"),
+    Index("ix_project_runs_project", "project_id", "created_at"),
+)
+
+project_conversations = Table(
+    "project_conversations",
+    metadata,
+    Column("conversation_id", String(64), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("run_id", String(64), ForeignKey("measurement_runs.run_id")),
+    Column("owner_key", String(64), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Index("ix_project_conversations_project_updated", "project_id", "owner_key", "updated_at"),
+)
+
+project_agent_budgets = Table(
+    "project_agent_budgets",
+    metadata,
+    Column("owner_key", String(64), primary_key=True),
+    Column("request_limit", Integer, nullable=False),
+    Column("used", Integer, nullable=False),
 )
 
 run_brand_definitions = Table(
@@ -201,12 +247,227 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
     def _event(event_type: str, sequence: int = 1) -> MeasurementEvent:
         return MeasurementEvent(sequence=sequence, event_type=event_type)
 
+    @staticmethod
+    def _read_project(connection: Connection, project_id: str, owner: OwnerIdentity) -> Project:
+        payload = connection.execute(
+            select(projects.c.payload).where(
+                projects.c.project_id == project_id,
+                projects.c.owner_key == owner.key,
+            )
+        ).scalar_one_or_none()
+        if payload is None:
+            raise NotFound("Project not found")
+        return Project.model_validate_json(payload)
+
+    def create_project(self, owner: OwnerIdentity, request: ProjectCreate) -> Project:
+        project = Project(owner=owner, **request.model_dump())
+        try:
+            with self.engine.begin() as connection:
+                existing = connection.execute(
+                    select(projects.c.project_id).where(
+                        projects.c.owner_key == owner.key,
+                    )
+                ).scalars()
+                for project_id in existing:
+                    current = self._read_project(connection, project_id, owner)
+                    if set(project.domains) & set(current.domains):
+                        raise Conflict("A project already uses one of these domains")
+                connection.execute(insert(projects).values(
+                    project_id=project.project_id,
+                    owner_key=owner.key,
+                    revision=project.revision,
+                    payload=project.model_dump_json(),
+                    created_at=project.created_at.isoformat(),
+                    updated_at=project.updated_at.isoformat(),
+                ))
+            return project
+        except IntegrityError:
+            raise Conflict("Project could not be created") from None
+
+    def get_project(self, project_id: str, owner: OwnerIdentity) -> Project:
+        with self.engine.connect() as connection:
+            return self._read_project(connection, project_id, owner)
+
+    def list_projects(self, owner: OwnerIdentity) -> tuple[Project, ...]:
+        with self.engine.connect() as connection:
+            payloads = connection.execute(
+                select(projects.c.payload).where(projects.c.owner_key == owner.key)
+            ).scalars()
+            records = sorted(
+                (Project.model_validate_json(payload) for payload in payloads),
+                key=lambda project: (project.archived, project.name.casefold(), project.project_id),
+            )
+            return tuple(records)
+
+    def update_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        request: ProjectUpdate,
+    ) -> Project:
+        with self.engine.begin() as connection:
+            current = self._read_project(connection, project_id, owner)
+            if current.revision != request.expected_revision:
+                raise Conflict("Stale project revision; reload the project")
+            changes = request.model_dump(exclude={"expected_revision"}, exclude_unset=True)
+            candidate_values = {
+                **current.model_dump(),
+                **changes,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            }
+            candidate_request = ProjectCreate.model_validate({
+                key: candidate_values[key]
+                for key in (
+                    "name",
+                    "primary_domain",
+                    "additional_domains",
+                    "default_locale",
+                    "active_goal",
+                    "colour",
+                    "foundry",
+                )
+            })
+            candidate = Project.model_validate({
+                **candidate_values,
+                **candidate_request.model_dump(),
+            })
+            other_ids = connection.execute(
+                select(projects.c.project_id).where(
+                    projects.c.owner_key == owner.key,
+                    projects.c.project_id != project_id,
+                )
+            ).scalars()
+            for other_id in other_ids:
+                other = self._read_project(connection, other_id, owner)
+                if set(candidate.domains) & set(other.domains):
+                    raise Conflict("A project already uses one of these domains")
+            result = connection.execute(
+                update(projects).where(
+                    projects.c.project_id == project_id,
+                    projects.c.owner_key == owner.key,
+                    projects.c.revision == current.revision,
+                ).values(
+                    revision=candidate.revision,
+                    payload=candidate.model_dump_json(),
+                    updated_at=candidate.updated_at.isoformat(),
+                )
+            )
+            if result.rowcount != 1:
+                raise Conflict("Project changed concurrently; reload the project")
+            return candidate
+
+    def archive_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        expected_revision: int,
+    ) -> Project:
+        current = self.get_project(project_id, owner)
+        if current.archived:
+            return current
+        request = ProjectUpdate(expected_revision=expected_revision)
+        with self.engine.begin() as connection:
+            current = self._read_project(connection, project_id, owner)
+            if current.revision != request.expected_revision:
+                raise Conflict("Stale project revision; reload the project")
+            archived = current.model_copy(update={
+                "archived": True,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            })
+            connection.execute(update(projects).where(
+                projects.c.project_id == project_id,
+                projects.c.owner_key == owner.key,
+                projects.c.revision == current.revision,
+            ).values(
+                revision=archived.revision,
+                payload=archived.model_dump_json(),
+                updated_at=archived.updated_at.isoformat(),
+            ))
+            return archived
+
+    def bind_run_to_project(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        try:
+            with self.engine.begin() as connection:
+                self._read_project(connection, project_id, owner)
+                self._read(connection, run_id, owner)
+                existing = connection.execute(
+                    select(project_runs.c.project_id).where(project_runs.c.run_id == run_id)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    if existing != project_id:
+                        raise Conflict("Measurement run already belongs to another project")
+                    return
+                connection.execute(insert(project_runs).values(
+                    project_id=project_id,
+                    run_id=run_id,
+                    owner_key=owner.key,
+                    created_at=utc_now().isoformat(),
+                ))
+        except IntegrityError:
+            raise Conflict("Measurement run could not be assigned to the project") from None
+
+    def list_project_runs(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        limit: int | None = 50,
+    ) -> tuple[MeasurementRun, ...]:
+        if limit is not None and not 1 <= limit <= 100:
+            raise Conflict("Run list limit must be between 1 and 100")
+        with self.engine.connect() as connection:
+            self._read_project(connection, project_id, owner)
+            payloads = connection.execute(
+                select(measurement_runs.c.payload)
+                .select_from(project_runs.join(
+                    measurement_runs,
+                    project_runs.c.run_id == measurement_runs.c.run_id,
+                ))
+                .where(
+                    project_runs.c.project_id == project_id,
+                    project_runs.c.owner_key == owner.key,
+                    measurement_runs.c.owner_key == owner.key,
+                )
+            ).scalars()
+            runs = sorted(
+                (MeasurementRun.model_validate_json(payload) for payload in payloads),
+                key=lambda run: (run.updated_at, run.run_id),
+                reverse=True,
+            )
+            return tuple(runs if limit is None else runs[:limit])
+
+    def get_project_run(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> MeasurementRun:
+        with self.engine.connect() as connection:
+            self._read_project(connection, project_id, owner)
+            mapped = connection.execute(
+                select(project_runs.c.run_id).where(
+                    project_runs.c.project_id == project_id,
+                    project_runs.c.run_id == run_id,
+                    project_runs.c.owner_key == owner.key,
+                )
+            ).scalar_one_or_none()
+            if mapped is None:
+                raise NotFound("Measurement run not found in project")
+            return self._read(connection, run_id, owner)
+
     def create(
         self,
         owner: OwnerIdentity,
         inputs: MeasurementInputs | None = None,
         brief: Brief | None = None,
         brand_definition: BrandDefinition | None = None,
+        project_id: str | None = None,
     ) -> MeasurementRun:
         created_event = self._event("awaiting-query-approval" if inputs else "draft")
         run = MeasurementRun(
@@ -217,6 +478,8 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             events=(created_event,),
         )
         with self.engine.begin() as connection:
+            if project_id is not None:
+                self._read_project(connection, project_id, owner)
             connection.execute(insert(measurement_runs).values(
                 run_id=run.run_id,
                 owner_key=owner.key,
@@ -227,6 +490,13 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             if brand_definition is not None:
                 self._insert_brand_definition(connection, owner, BrandDefinitionRecord(
                     run_id=run.run_id, definition_version=1, definition=brand_definition))
+            if project_id is not None:
+                connection.execute(insert(project_runs).values(
+                    project_id=project_id,
+                    run_id=run.run_id,
+                    owner_key=owner.key,
+                    created_at=run.created_at.isoformat(),
+                ))
         return run
 
     @staticmethod
