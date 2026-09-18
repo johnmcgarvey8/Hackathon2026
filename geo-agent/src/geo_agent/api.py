@@ -1,4 +1,6 @@
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +18,12 @@ from geo_agent.evaluation import match_citations
 from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.live import BudgetedLiveWorkflow, LiveWorkflow
 from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.agent_access import AgentPrincipal
 from geo_agent.measurement_api import OperatorPrincipal, create_measurement_router
+from geo_agent.artifact_storage import ArtifactService
+from geo_agent.mcp_server import create_streamable_http_app
+from geo_agent.measurement_service import MeasurementApplicationService
+from geo_agent.measurement_views import CursorCodec
 from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
 from geo_agent.persistence import SQLiteMeasurementRepository
@@ -47,13 +54,86 @@ class LiveBriefRequest(Brief):
 def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | BudgetedLiveWorkflow | None = None,
                chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
                measurement_policy: MeasurementExecutionPolicy | None = None,
-               measurement_auto_worker: bool = False) -> FastAPI:
+               measurement_auto_worker: bool = False,
+               measurement_mcp_principals: dict[str, AgentPrincipal] | None = None,
+               mcp_cursor_secret: bytes | None = None,
+               human_base_url: str = "http://127.0.0.1:8088",
+               default_mcp_agent_principal_id: str | None = None,
+               allow_live_mcp: bool = False) -> FastAPI:
     if not api_tokens or any(len(token) < 32 or not owner for token, owner in api_tokens.items()):
         raise ValueError("Configure at least one 32-character token mapped to an owner")
+    if measurement_mcp_principals and set(api_tokens).intersection(measurement_mcp_principals):
+        raise ValueError("Human and MCP agent credentials must be distinct")
+    if measurement_mcp_principals and measurement_policy is None:
+        raise ValueError("MCP agent access requires a measurement policy")
+    if (
+        measurement_mcp_principals
+        and measurement_policy is not None
+        and measurement_policy.execution_mode == "live"
+        and not allow_live_mcp
+    ):
+        raise ValueError("Live MCP access requires explicit GEO_MCP_ALLOW_LIVE=true")
     tokens = dict(api_tokens)
     store = RunStore(database)
     coordinator = Coordinator(store)
-    app = FastAPI(title="GEO Agent Backend", version="0.3.0", description="Approval-gated GEO evaluation and read-only conversational evidence assistant. Provider calls require explicit local policies. No publishing integration.")
+    measurement_repository = None
+    measurement_application = None
+    mock_runtime = None
+    mcp_server = None
+    mcp_asgi = None
+    default_agent_principal_id = default_mcp_agent_principal_id
+    if measurement_policy is not None:
+        measurement_repository = SQLiteMeasurementRepository(database)
+        mock_runtime = (
+            MockMeasurementRuntime(measurement_repository, measurement_policy)
+            if measurement_auto_worker
+            else None
+        )
+        artifact_storage = LocalArtifactStorage(database.parent / "measurement-artifacts")
+        measurement_application = MeasurementApplicationService(
+            measurement_repository,
+            measurement_policy,
+            ArtifactService(measurement_repository, artifact_storage),
+            CursorCodec(mcp_cursor_secret or secrets.token_bytes(32)),
+            human_base_url=human_base_url,
+            pending_job_notifier=mock_runtime.drain if mock_runtime is not None else None,
+        )
+        if measurement_mcp_principals:
+            mcp_server, mcp_asgi = create_streamable_http_app(
+                measurement_application,
+                measurement_mcp_principals,
+            )
+            principal_ids = {
+                principal.principal_id
+                for principal in measurement_mcp_principals.values()
+            }
+            default_agent_principal_id = (
+                next(iter(principal_ids))
+                if len(principal_ids) == 1
+                else default_agent_principal_id
+            )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            if mcp_server is None:
+                yield
+            else:
+                async with mcp_server.session_manager.run():
+                    yield
+        finally:
+            if measurement_repository is not None:
+                measurement_repository.close()
+
+    app = FastAPI(
+        title="GEO Agent Backend",
+        version="0.4.0",
+        description=(
+            "Approval-gated GEO evaluation and read-only conversational evidence assistant. "
+            "Provider calls require explicit local policies. No publishing integration."
+        ),
+        lifespan=lifespan,
+    )
     bearer = HTTPBearer(auto_error=False)
 
     def authenticate(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> str:
@@ -65,10 +145,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     owner_dependency = Depends(authenticate)
 
-    if measurement_policy is not None:
-        measurement_repository = SQLiteMeasurementRepository(database)
-        mock_runtime = MockMeasurementRuntime(measurement_repository, measurement_policy) if measurement_auto_worker else None
-
+    if measurement_policy is not None and measurement_repository is not None and measurement_application is not None:
         def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
             return OperatorPrincipal(
                 tenant_id="local-development",
@@ -80,8 +157,10 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
             measurement_repository,
             measurement_policy,
             authenticate_operator,
-            LocalArtifactStorage(database.parent / "measurement-artifacts"),
+            measurement_application.artifacts.storage,
             mock_runtime.drain if mock_runtime is not None else None,
+            service=measurement_application,
+            default_agent_principal_id=default_agent_principal_id,
         ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
@@ -271,5 +350,8 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
             "Content-Disposition": f'attachment; filename="geo-{run.run_id}.zip"',
             "Cache-Control": "no-store",
         })
+
+    if mcp_asgi is not None:
+        app.mount("/", mcp_asgi)
 
     return app

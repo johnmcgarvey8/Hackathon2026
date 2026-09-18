@@ -6,8 +6,17 @@ from typing import Any, Protocol, TypeVar
 from pydantic import BaseModel, Field
 
 from geo_agent.contracts import Contract, digest, identifier, utc_now
-from geo_agent.measurement_workflow import MeasurementRun, OwnerIdentity
+from geo_agent.measurement_workflow import MeasurementRun, MeasurementRunSummary, OwnerIdentity
 from geo_agent.webiq import ProviderError
+from geo_agent.workflow import Conflict
+
+
+class ExecutionControlError(Conflict):
+    pass
+
+
+class LeaseLost(ExecutionControlError):
+    pass
 
 
 class JobType(StrEnum):
@@ -30,7 +39,10 @@ class OperationClaimState(StrEnum):
 
 
 class WorkflowJob(Contract):
-    schema_version: str = Field(default="geo-workflow-job/v1", pattern=r"^geo-workflow-job/v1$")
+    schema_version: str = Field(
+        default="geo-workflow-job/v2",
+        pattern=r"^geo-workflow-job/v[12]$",
+    )
     job_id: str = Field(default_factory=identifier)
     run_id: str
     owner: OwnerIdentity
@@ -39,8 +51,14 @@ class WorkflowJob(Contract):
     idempotency_key: str = Field(min_length=1, max_length=200)
     request: dict[str, Any]
     request_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    execution_principal_id: str | None = Field(default=None, max_length=200)
+    execution_authorization_id: str | None = Field(default=None, max_length=64)
+    policy_id: str | None = Field(default=None, max_length=100)
+    policy_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    operation_ceiling: int | None = Field(default=None, ge=1, le=100)
     state: JobState = JobState.QUEUED
     lease_holder: str | None = Field(default=None, max_length=200)
+    lease_token: str | None = Field(default=None, max_length=64)
     lease_expires_at: datetime | None = None
     error_code: str | None = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=utc_now)
@@ -54,13 +72,18 @@ class WorkflowJob(Contract):
         job_type: JobType,
         idempotency_key: str,
         request: object,
+        *,
+        execution_principal_id: str | None = None,
+        execution_authorization_id: str | None = None,
+        policy_id: str | None = None,
+        policy_hash: str | None = None,
+        operation_ceiling: int | None = None,
     ) -> "WorkflowJob":
         request_payload = request.model_dump(mode="json") if isinstance(request, BaseModel) else request
         if not isinstance(request_payload, dict):
             raise ValueError("A workflow job request must be an object")
         request_hash = digest({
             "run_id": run.run_id,
-            "run_revision": run.revision,
             "job_type": job_type.value,
             "request": request_payload,
         })
@@ -72,6 +95,11 @@ class WorkflowJob(Contract):
             idempotency_key=idempotency_key,
             request=request_payload,
             request_hash=request_hash,
+            execution_principal_id=execution_principal_id,
+            execution_authorization_id=execution_authorization_id,
+            policy_id=policy_id,
+            policy_hash=policy_hash,
+            operation_ceiling=operation_ceiling,
         )
 
 
@@ -84,6 +112,7 @@ class OperationClaim(Contract):
     operation_type: str = Field(pattern=r"^[a-z0-9-]+$")
     state: OperationClaimState = OperationClaimState.CLAIMED
     provider_metadata: dict[str, str | int | bool | None] = Field(default_factory=dict)
+    output: Any = None
     error_code: str | None = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -116,7 +145,10 @@ class RunProgress(Contract):
 
     @classmethod
     def from_records(
-        cls, run: MeasurementRun, job: WorkflowJob | None, claims: tuple[OperationClaim, ...],
+        cls,
+        run: MeasurementRun | MeasurementRunSummary,
+        job: WorkflowJob | None,
+        claims: tuple[OperationClaim, ...],
     ) -> "RunProgress":
         if job is None:
             return cls(run_id=run.run_id, run_revision=run.revision, run_state=run.state,
@@ -124,8 +156,20 @@ class RunProgress(Contract):
         if job.job_type == JobType.PREPARE:
             planned = {"webiq-browse": 1, "page-analysis-model": 1, "paired-query-plan": 1}
         else:
-            query_count = len(run.inputs.query_plan.queries) if run.inputs else 0
-            profile_count = len(run.inputs.profiles) if run.inputs else 0
+            if isinstance(run, MeasurementRun):
+                query_count = len(run.inputs.query_plan.queries) if run.inputs else 0
+                profile_count = len(run.inputs.profiles) if run.inputs else 0
+            elif job.operation_ceiling is not None:
+                query_count = 5
+                recommendation_count = 1 if job.request.get("include_recommendations") else 0
+                profile_count = max(
+                    0,
+                    (job.operation_ceiling - query_count - recommendation_count)
+                    // query_count,
+                )
+            else:
+                query_count = 0
+                profile_count = 0
             planned = {"webiq-search": query_count, "profile-evaluator": query_count * profile_count}
             if job.request.get("include_recommendations"):
                 planned["recommendation-model"] = 1
@@ -164,15 +208,46 @@ class JobRepository(Protocol):
         job_type: JobType,
         idempotency_key: str,
         request: object,
+        *,
+        execution_principal_id: str | None = None,
+        execution_authorization_id: str | None = None,
+        policy_id: str | None = None,
+        policy_hash: str | None = None,
+        operation_ceiling: int | None = None,
     ) -> tuple[WorkflowJob, MeasurementRun]: ...
 
     def get_job(self, job_id: str, owner: OwnerIdentity) -> WorkflowJob: ...
 
-    def list_run_jobs(self, run_id: str, owner: OwnerIdentity) -> tuple[WorkflowJob, ...]: ...
+    def list_run_jobs(
+        self,
+        run_id: str,
+        owner: OwnerIdentity,
+        limit: int = 50,
+    ) -> tuple[WorkflowJob, ...]: ...
 
-    def get_run_progress(self, run_id: str, owner: OwnerIdentity) -> RunProgress: ...
+    def get_run_progress(
+        self,
+        run_id: str,
+        owner: OwnerIdentity,
+        job_id: str | None = None,
+    ) -> RunProgress: ...
 
-    def lease_one_job(self, worker_id: str, lease_seconds: int) -> WorkflowJob | None: ...
+    def lease_one_job(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        policy_id: str | None = None,
+        policy_hash: str | None = None,
+        owner_key: str | None = None,
+    ) -> WorkflowJob | None: ...
+
+    def renew_job_lease(
+        self,
+        job_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> WorkflowJob: ...
 
     def claim_operation(
         self,
@@ -180,6 +255,7 @@ class JobRepository(Protocol):
         worker_id: str,
         operation_key: str,
         operation_type: str,
+        lease_token: str | None = None,
     ) -> OperationClaim: ...
 
     def record_operation(
@@ -189,6 +265,8 @@ class JobRepository(Protocol):
         state: OperationClaimState,
         provider_metadata: dict[str, str | int | bool | None] | None = None,
         error_code: str | None = None,
+        output: Any = None,
+        lease_token: str | None = None,
     ) -> OperationClaim: ...
 
     def complete_job(
@@ -196,6 +274,7 @@ class JobRepository(Protocol):
         job_id: str,
         worker_id: str,
         operation: Callable[[MeasurementRun], MeasurementRun],
+        lease_token: str | None = None,
     ) -> tuple[WorkflowJob, MeasurementRun]: ...
 
     def fail_job(
@@ -203,6 +282,7 @@ class JobRepository(Protocol):
         job_id: str,
         worker_id: str,
         error_code: str,
+        lease_token: str | None = None,
     ) -> tuple[WorkflowJob, MeasurementRun]: ...
 
     def cancel_job(self, job_id: str, owner: OwnerIdentity) -> tuple[WorkflowJob, MeasurementRun]: ...
@@ -222,8 +302,26 @@ class JobService:
         job_type: JobType,
         idempotency_key: str,
         request: object,
+        *,
+        execution_principal_id: str | None = None,
+        execution_authorization_id: str | None = None,
+        policy_id: str | None = None,
+        policy_hash: str | None = None,
+        operation_ceiling: int | None = None,
     ) -> tuple[WorkflowJob, MeasurementRun]:
-        return self.repository.enqueue_job(run_id, owner, revision, job_type, idempotency_key, request)
+        return self.repository.enqueue_job(
+            run_id,
+            owner,
+            revision,
+            job_type,
+            idempotency_key,
+            request,
+            execution_principal_id=execution_principal_id,
+            execution_authorization_id=execution_authorization_id,
+            policy_id=policy_id,
+            policy_hash=policy_hash,
+            operation_ceiling=operation_ceiling,
+        )
 
     def cancel(self, job_id: str, owner: OwnerIdentity) -> tuple[WorkflowJob, MeasurementRun]:
         return self.repository.cancel_job(job_id, owner)
@@ -249,6 +347,7 @@ class ClaimedOperationRunner:
             self.worker_id,
             operation_key,
             operation_type,
+            self.job.lease_token,
         )
         try:
             result, provider_metadata = operation()
@@ -258,6 +357,7 @@ class ClaimedOperationRunner:
                 self.worker_id,
                 OperationClaimState.FAILED,
                 error_code=error.code.value if isinstance(error, ProviderError) else type(error).__name__,
+                lease_token=self.job.lease_token,
             )
             raise
         self.repository.record_operation(
@@ -265,5 +365,7 @@ class ClaimedOperationRunner:
             self.worker_id,
             OperationClaimState.COMPLETED,
             provider_metadata=provider_metadata,
+            output=result,
+            lease_token=self.job.lease_token,
         )
         return result

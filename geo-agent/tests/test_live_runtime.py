@@ -236,6 +236,9 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         JobType.PREPARE,
         "prepare-live-runtime",
         PreparationRequest(brief=brief, confirm_preparation_calls=True),
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        operation_ceiling=3,
     )
 
     runtime.run_once()
@@ -255,6 +258,9 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         JobType.EVALUATE,
         "evaluate-live-runtime",
         EvaluationRequest(confirm_evaluation_calls=True),
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        operation_ceiling=5 + 5 * len(execution_policy.profiles),
     )
 
     runtime.run_once()

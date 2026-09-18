@@ -115,9 +115,9 @@ def test_mock_preparation_runs_exactly_three_claimed_operations(tmp_path, manual
             "SELECT operation_key, state FROM operation_claims ORDER BY created_at"
         ).fetchall()
     assert claims == [
-        ("prepare-1:browse", "completed"),
-        ("prepare-1:page-analysis", "completed"),
-        ("prepare-1:query-plan", "completed"),
+        (f"{job.job_id}:browse", "completed"),
+        (f"{job.job_id}:page-analysis", "completed"),
+        (f"{job.job_id}:query-plan", "completed"),
     ]
 
 

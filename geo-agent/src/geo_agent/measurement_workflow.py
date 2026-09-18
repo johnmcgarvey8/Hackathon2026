@@ -138,6 +138,38 @@ class MeasurementRun(Contract):
         return self
 
 
+class MeasurementRunSummary(Contract):
+    run_id: str
+    revision: int = Field(ge=1)
+    state: MeasurementState
+    brief_url: str | None = None
+    profile_ids: tuple[str, ...] = ()
+    approval_status: Literal["not-ready", "pending", "approved"]
+    has_measurement: bool
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_run(cls, run: MeasurementRun) -> "MeasurementRunSummary":
+        return cls(
+            run_id=run.run_id,
+            revision=run.revision,
+            state=run.state,
+            brief_url=str(run.brief.url) if run.brief is not None else None,
+            profile_ids=tuple(profile.profile_id for profile in run.inputs.profiles) if run.inputs else (),
+            approval_status=(
+                "approved"
+                if run.approval is not None
+                else "pending"
+                if run.inputs is not None
+                else "not-ready"
+            ),
+            has_measurement=run.measurement is not None,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+        )
+
+
 Mutation = Callable[[MeasurementRun], MeasurementRun]
 
 
@@ -150,6 +182,14 @@ class MeasurementRepository(Protocol):
         brand_definition: BrandDefinition | None = None,
     ) -> MeasurementRun: ...
 
+    def create_idempotent(
+        self,
+        owner: OwnerIdentity,
+        brief: Brief,
+        brand_definition: BrandDefinition | None,
+        idempotency_key: str,
+    ) -> MeasurementRun: ...
+
     def get_brand_definition(self, run_id: str, owner: OwnerIdentity,
                              version: int | None = None) -> BrandDefinitionRecord | None: ...
 
@@ -159,6 +199,16 @@ class MeasurementRepository(Protocol):
     def get(self, run_id: str, owner: OwnerIdentity) -> MeasurementRun: ...
 
     def list_runs(self, owner: OwnerIdentity, limit: int = 50) -> tuple[MeasurementRun, ...]: ...
+
+    def list_run_summaries(
+        self,
+        owner: OwnerIdentity,
+        limit: int,
+        *,
+        state: MeasurementState | None = None,
+        before_updated_at: datetime | None = None,
+        before_run_id: str | None = None,
+    ) -> tuple[MeasurementRunSummary, ...]: ...
 
     def mutate(self, run_id: str, owner: OwnerIdentity, revision: int, operation: Mutation) -> MeasurementRun: ...
 

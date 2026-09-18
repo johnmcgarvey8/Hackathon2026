@@ -4,7 +4,7 @@ The local GEO agent analyses public page URLs and holds multi-turn conversations
 
 ## V2 Backend Milestone
 
-The recommended release is a shared website for hackathon colleagues, backed by this FastAPI service and Foundry model inference. MCP remains a possible later wrapper. The local website exposes the durable workflow at `/measurements` in mock mode or under an explicitly approved live policy and grant; it remains a single-user development surface rather than a deployed shared application.
+The recommended release path now supports both the human website and an MCP agent interface over the same application service. The local website exposes the durable workflow at `/measurements`; agents use stdio or loopback Streamable HTTP. Remote hosting remains gated on production identity, PostgreSQL, durable artifact storage and a separately approved live canary.
 
 | Component | Implemented and offline-tested |
 | --- | --- |
@@ -17,6 +17,9 @@ The recommended release is a shared website for hackathon colleagues, backed by 
 | [Durable runtime](src/geo_agent/persistence.py) | SQLAlchemy-backed runs, events, approvals, jobs, operation claims, v2 budget consumption and artifact metadata. The mock and live workers share the same claim-before-call path. |
 | [Live worker](src/geo_agent/measurement_worker.py) | Separate queue worker with immutable owner/policy-bound grants, proportional capacity for one or more complete runs, failed-call charging and graceful shutdown. Startup validation makes no provider call. |
 | [Measurement console](src/geo_agent/measurement.html) | Owner-scoped run recovery, explicit preparation and evaluation confirmations, exact-query approval, visible provenance and limitations, one- or three-profile results, retained evidence, human recommendation decisions, cancellation and authenticated ZIP download. The bearer token remains in browser memory. |
+| [MCP server](src/geo_agent/mcp_server.py) | Twenty bounded tools over stdio and Streamable HTTP. Submission returns durable job IDs; discovery and reads start no provider work. |
+| [Shared application service](src/geo_agent/measurement_service.py) | REST and MCP submission paths share policy, state, authorization, result and export operations. Compact signed cursors prevent full-history model payloads. |
+| [Agent authority](src/geo_agent/agent_access.py) | Agent identity is supplied outside tool arguments. Human-issued stage authorizations bind owner, principal, run revision, input hash, policy, operation ceiling and expiry. |
 
 All profiles are controlled evidence-packet simulations, not measurements of the consumer Copilot, Claude or ChatGPT services. The same ordered search packet must be used for each profile's answer to a query. Target-page text is not added to evaluator input; only returned search evidence can earn citation credit. A Claude label requires the Anthropic adapter, not a GPT persona. Actual deployments, access and underlying model identities still require live preflight.
 
@@ -35,9 +38,9 @@ measurement = MeasurementResults.model_validate_json(Path("measurement.json").re
 scores = measurement_scores(measurement)
 ```
 
-The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, and interrupted or ambiguous claims are not automatically replayed. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
+The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, validated outputs are checkpointed with their claims, and interrupted or ambiguous calls are not automatically replayed. Renewable fenced leases prevent late workers from committing after cancellation or lease loss. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
 
-Verification: **506 tests passed**, with two existing Starlette/AnyIO dependency deprecation warnings. The [live runtime test](tests/test_live_runtime.py) uses SDK mock transports and the durable budget ledger to exercise one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 charged operations with no external traffic. Focused tests also prove proportional multi-run allowances, same-owner multi-URL use, atomic exhaustion, immutable grant binding, owner isolation, failed-call charging, complete human recommendation decisions, sanitized accepted-task exports and the Copilot-style evidence-gap guard. The browser checks cover the six-stage UI against both intercepted responses and the durable mock worker, including explicit provenance, automatic content recommendations, legacy draft review, desktop/mobile layout, reload recovery, safe rendering and ZIP integrity.
+Verification: **526 tests passed**, with one existing Starlette/AnyIO dependency deprecation warning. The [MCP tests](tests/test_mcp_server.py) exercise all twenty tools, real stdio and Streamable HTTP clients, separate agent identity, human-issued execution authorization, terminal replay, job-scoped progress, bounded maximal query packets and immutable export reads. The [live runtime test](tests/test_live_runtime.py) uses SDK mock transports and the durable budget ledger to exercise one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 charged operations with no external traffic. Focused tests also prove proportional multi-run allowances, one-active/20-global/4-owner admission, renewable fenced leases, checkpoint survival, migration recovery, owner isolation, failed-call charging, complete human recommendation decisions, sanitized accepted-task exports and the Copilot-style evidence-gap guard. The browser checks cover the six-stage UI and both agent-authorization handoffs, including accessibility, reload recovery, safe rendering and ZIP integrity.
 
 ### Grounding and Answer Assessment
 
@@ -220,6 +223,52 @@ The live conversation `0d393b56-065a-4162-ae8f-01e027fd83f0` used `get_run_statu
 
 The transport counts every attempted model HTTP request before sending it. SQLite enforces the original allowance plus immutable approved top-ups across restarts and concurrent conversations; each turn allows at most three model requests and six tool calls. Failed turns are retained, not silently replayed. A crash can leave a turn running and requires manual investigation. No automatic recovery or retries are enabled. Twelve turns per conversation and 4,000 characters per user message bound local history; start a new conversation when the turn limit is reached. This milestone explains existing evidence; it does not yet create briefs through chat, edit queries, generate validated recommendation tasks or offer a connected marketer dashboard.
 
+## MCP Agent Flow
+
+The MCP interface covers the six human stages without turning a provider workflow into one long tool call:
+
+The completed local implementation and the remaining remote/live release work are documented in the [MCP next-gates developer plan](../geo-agent-mcp-next-gates-plan.md). A [Word companion](../geo-agent-mcp-next-gates-plan.docx) is included for stakeholder review.
+
+1. The agent calls `geo_create_run`.
+2. A human opens the returned `/measurements?run=...` link and selects **Authorise agent preparation**.
+3. The agent refreshes `geo_get_run`, reads the issued authorization ID, and calls `geo_prepare_run`.
+4. A separately running worker prepares the page and five query pairs. The agent inspects them with `geo_get_preparation` and `geo_get_query_plan`.
+5. The human approves the exact query hash and selects **Authorise agent measurement**.
+6. The agent calls `geo_start_measurement`, polls `geo_get_progress`, and reads bounded results, evidence, assessment and deterministic recommendations.
+7. The agent creates immutable main or companion exports and reads allowlisted text entries. ZIP bytes and storage paths never enter model context.
+
+Exact-query approval and legacy recommendation acceptance remain human-only REST/UI actions. An MCP confirmation, boolean argument or model message cannot create either decision. Agent stage authorizations expire, are consumed atomically, and are bound to one owner, principal, run revision, policy and operation ceiling.
+
+The catalogue contains 20 tools across discovery, run creation, preparation, queries, brand configuration, measurement, progress/results, evidence/assessment, recommendations, cancellation and exports. Default responses are capped at 16 KiB, progress at 8 KiB and explicit details at 64 KiB. Lists use signed owner-bound continuations. Admission permits one active job, 20 globally queued jobs and four queued jobs per owner.
+
+### Local stdio
+
+Copy [examples/vscode-mcp.json](examples/vscode-mcp.json) into your chosen VS Code MCP configuration location or merge its `geo-agent` server entry. Do not place bearer tokens in the JSON. Start the separate synthetic worker against the same data directory:
+
+```powershell
+$env:GEO_DATA_DIR = (Resolve-Path '.\geo-agent\.data').Path
+$env:GEO_MEASUREMENT_POLICY = (Resolve-Path '.\geo-agent\measurement-policy.json').Path
+& '.\geo-agent\.venv\Scripts\python.exe' -m geo_agent.mock_measurement_worker
+```
+
+The stdio server command is `python -m geo_agent.mcp_server`. Import, initialization and tool discovery do not start a worker or acquire provider credentials.
+
+### Loopback Streamable HTTP
+
+Set a dedicated `GEO_MCP_AGENT_TOKEN` of at least 32 characters, distinct from `GEO_API_TOKEN`, before starting `python -m geo_agent`. The MCP endpoint is `http://127.0.0.1:8088/mcp`. Agent bearer tokens work only on the MCP mount and are rejected by human-only query approval, recommendation review and execution-authorization routes.
+
+This is a local transport proof, not an internet deployment template. Foundry Agent Service requires a remote HTTPS endpoint. Do not expose this loopback bearer configuration publicly. MCP refuses a live execution policy unless `GEO_MCP_ALLOW_LIVE=true` is also set deliberately. That switch is not remote approval: a remote release still requires OAuth/Entra resource validation, HTTPS/Origin policy, PostgreSQL migrations, durable shared artifacts, hosted credentials and remote performance/isolation validation.
+
+### Performance proof
+
+Run the reproducible local Gate C harness:
+
+```powershell
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\measure_mcp_performance.py'
+```
+
+It creates temporary data only, loads 1,000 full three-profile saved runs, holds one job active, opens five clients per transport and measures 200 calls over real stdio and loopback Streamable HTTP. It fails if warm p95 exceeds two seconds, a default response exceeds 16 KiB, or the tool catalogue exceeds 32 KiB. Local results do not certify a remote topology or live provider completion time.
+
 ## Run Locally
 
 From the workspace root, using Python 3.11 or later:
@@ -231,9 +280,9 @@ python -m venv geo-agent/.venv
 & './geo-agent/.venv/Scripts/python.exe' -m geo_agent
 ```
 
-Use the configured Python interpreter if `python` resolves to a different installation. Direct dependencies are pinned to versions exercised on Windows ARM64 with Python 3.13, including Agent Framework core 1.17.0 and OpenAI integration 1.14.2. The agent-local virtual environment is configured; a transitive dependency lock remains outstanding. [Agent Framework source](https://github.com/microsoft/agent-framework/tree/main/python).
+Use the configured Python interpreter if `python` resolves to a different installation. Direct dependencies are pinned to versions exercised on Windows with Python 3.13, including MCP 2.2.0, Agent Framework core 1.17.0 and OpenAI integration 1.14.2. The agent-local virtual environment is configured; a transitive dependency lock remains outstanding. [Agent Framework source](https://github.com/microsoft/agent-framework/tree/main/python).
 
-Open http://127.0.0.1:8088/docs. The server binds only to loopback. On first launch it generates a local API token in `.data/local-api-token`, excluded from Git. Open that file locally and enter its value in the documentation's **Authorize** control. It is a local development credential, not a Foundry or Web IQ key. Do not share the token or expose this server publicly. The local data directory relies on your user account's filesystem permissions; Entra authentication and deployment hardening are not implemented.
+Open http://127.0.0.1:8088/docs. The server binds only to loopback. On first launch it generates a local human API token in `.data/local-api-token`, excluded from Git. Open that file locally and enter its value in the documentation's **Authorize** control. It is a local development credential, not a Foundry or Web IQ key. Do not share it or reuse it as `GEO_MCP_AGENT_TOKEN`. The local data directory relies on your user account's filesystem permissions; remote Entra authentication and deployment hardening remain a separate release gate.
 
 Press F5 with **GEO: Local Synthetic Backend** selected to debug the API. This is not yet an Agent Inspector endpoint. Stop the running server first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing environment variables take precedence. Restart the server after changing settings. See [.env.example](.env.example) for the configuration template.
 

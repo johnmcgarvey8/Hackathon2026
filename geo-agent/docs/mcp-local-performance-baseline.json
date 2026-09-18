@@ -1,0 +1,31 @@
+{
+  "active_jobs": 1,
+  "database_bytes": 25018368,
+  "measured_at": "2026-09-18",
+  "saved_runs": 1000,
+  "schema_version": "geo-mcp-performance/v1",
+  "setup_seconds": 0.7198569000029238,
+  "simultaneous_clients": 5,
+  "stdio": {
+    "catalogue_bytes": 17970,
+    "clients": 5,
+    "max_payload_bytes": 4972,
+    "max_seconds": 0.12612190000072587,
+    "p95_seconds": 0.015108300009160303,
+    "requests": 200
+  },
+  "streamable_http": {
+    "catalogue_bytes": 17970,
+    "clients": 5,
+    "max_payload_bytes": 4982,
+    "max_seconds": 0.09998169999744277,
+    "p95_seconds": 0.0823067000019364,
+    "requests": 200
+  },
+  "targets": {
+    "catalogue_bytes": 32768,
+    "default_payload_bytes": 16384,
+    "progress_payload_bytes": 8192,
+    "warm_p95_seconds": 2
+  }
+}
