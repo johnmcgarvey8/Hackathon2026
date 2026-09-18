@@ -53,6 +53,14 @@ class EvaluationHandler:
     def __call__(self, job: WorkflowJob, operations: ClaimedOperationRunner) -> Mutation:
         if job.job_type != JobType.EVALUATE:
             raise Conflict("Evaluation handler requires an evaluation job")
+        if (
+            job.policy_id is not None
+            and (
+                job.policy_id != self.policy.policy_id
+                or job.policy_hash != self.policy.policy_hash
+            )
+        ):
+            raise Conflict("Evaluation job does not match the worker execution policy")
         request = EvaluationRequest.model_validate(job.request)
         run = self.repository.get(job.run_id, job.owner)
         if run.state != MeasurementState.EVALUATING or run.inputs is None or run.approval is None:
@@ -72,7 +80,7 @@ class EvaluationHandler:
             grounding_query = pair.as_query(grounding=True)
             try:
                 retrieval = operations.call(
-                    f"{job.idempotency_key}:search:{pair.query_id}",
+                    f"{job.job_id}:search:{pair.query_id}",
                     "webiq-search",
                     lambda pair=pair, query=grounding_query: self._search_call(
                         pair,
@@ -81,6 +89,8 @@ class EvaluationHandler:
                         run.inputs.snapshot.provenance,
                     ),
                 )
+            except Conflict:
+                raise
             except Exception:
                 retrieval = RetrievalResult(
                     query_id=pair.query_id,
@@ -103,7 +113,7 @@ class EvaluationHandler:
                 evaluator = self.evaluators[profile.profile_id]
                 try:
                     result = operations.call(
-                        f"{job.idempotency_key}:evaluate:{pair.query_id}:{profile.profile_id}",
+                        f"{job.job_id}:evaluate:{pair.query_id}:{profile.profile_id}",
                         "profile-evaluator",
                         lambda pair=pair, evaluator=evaluator, sources=retrieval.sources: self._evaluate_call(
                             evaluator,
@@ -113,6 +123,8 @@ class EvaluationHandler:
                             run.inputs.snapshot.provenance,
                         ),
                     )
+                except Conflict:
+                    raise
                 except Exception:
                     result = self._error_result(
                         pair.query_id,
@@ -140,10 +152,12 @@ class EvaluationHandler:
         if request.include_recommendations and self.recommendations is not None and completed:
             try:
                 report = operations.call(
-                    f"{job.idempotency_key}:recommend",
+                    f"{job.job_id}:recommend",
                     "recommendation-model",
                     lambda: self._recommendation_call(measurement),
                 )
+            except Conflict:
+                raise
             except Exception:
                 state = MeasurementState.PARTIAL
                 report = None

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geo-agent"
-version = "0.1.0"
-description = "Approval-gated GEO agent backend"
+version = "0.2.0"
+description = "Approval-gated GEO workflow with REST, UI, and MCP interfaces"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic==2.13.5",
@@ -20,10 +20,17 @@ dependencies = [
     "agent-framework-openai==1.14.2",
     "SQLAlchemy==2.0.52",
     "alembic==1.19.2",
+    "mcp==2.2.0",
 ]
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1", "httpx==0.28.1", "debugpy==1.8.21"]
+
+[project.scripts]
+geo-agent = "geo_agent.__main__:main"
+geo-agent-mcp = "geo_agent.mcp_server:main"
+geo-agent-mock-worker = "geo_agent.mock_measurement_worker:main"
+geo-agent-live-worker = "geo_agent.measurement_worker:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

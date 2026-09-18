@@ -55,7 +55,11 @@ class LiveMeasurementRuntime:
                 evaluators,
                 RecommendationService(preparation),
             ),
-        })
+        },
+            policy_id=policy.policy_id,
+            policy_hash=policy.policy_hash,
+            owner_key=budget_grant.owner.key,
+        )
         self.repository = repository
 
     def run_once(self):

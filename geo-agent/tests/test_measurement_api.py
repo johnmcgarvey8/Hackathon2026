@@ -161,6 +161,57 @@ def test_v2_approval_and_start_require_exact_revision_hash_and_confirmation(tmp_
         assert queued.json()["job"]["job_type"] == "evaluate"
 
 
+def test_agent_execution_authorization_is_human_only_and_hash_bound(tmp_path):
+    database = tmp_path / "agent-authorization.sqlite3"
+    execution_policy = policy()
+    repository = SQLiteMeasurementRepository(database)
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    created = repository.create(owner, prepared)
+    app = create_app(
+        database,
+        {ALICE_TOKEN: "alice", BOB_TOKEN: "bob"},
+        measurement_policy=execution_policy,
+        default_mcp_agent_principal_id="local-agent",
+    )
+
+    with TestClient(app, headers={"Authorization": "Bearer " + ALICE_TOKEN}) as client:
+        route = f"/api/v2/runs/{created.run_id}"
+        approved = client.post(f"{route}/query-approval", json={
+            "expected_revision": created.revision,
+            "input_hash": prepared.approval_hash,
+        }).json()
+        request = {
+            "expected_revision": approved["revision"],
+            "agent_principal_id": "local-agent",
+            "stage": "evaluate",
+            "input_hash": prepared.approval_hash,
+            "lifetime_seconds": 900,
+        }
+        issued = client.post(
+            f"{route}/agent-execution-authorizations",
+            json=request,
+        )
+        assert issued.status_code == 201
+        assert issued.json()["stage"] == "evaluate"
+        assert issued.json()["operation_ceiling"] == 10
+        assert "owner" not in issued.json()
+        assert client.post(
+            f"{route}/agent-execution-authorizations",
+            json={**request, "input_hash": "0" * 64},
+        ).status_code == 409
+        assert client.post(
+            f"{route}/agent-execution-authorizations",
+            headers={"Authorization": "Bearer " + BOB_TOKEN},
+            json=request,
+        ).status_code == 404
+        assert client.post(
+            f"{route}/agent-execution-authorizations",
+            headers={"Authorization": "Bearer " + "m" * 40},
+            json=request,
+        ).status_code == 401
+
+
 def test_v2_query_revision_rebinds_approval_hash_and_preserves_server_inputs(tmp_path):
     database = tmp_path / "revised-v2.sqlite3"
     execution_policy = policy()

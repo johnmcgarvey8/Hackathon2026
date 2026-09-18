@@ -50,6 +50,14 @@ class PreparationHandler:
     def __call__(self, job: WorkflowJob, operations: ClaimedOperationRunner) -> Mutation:
         if job.job_type != JobType.PREPARE:
             raise Conflict("Preparation handler requires a preparation job")
+        if (
+            job.policy_id is not None
+            and (
+                job.policy_id != self.policy.policy_id
+                or job.policy_hash != self.policy.policy_hash
+            )
+        ):
+            raise Conflict("Preparation job does not match the worker execution policy")
         request = PreparationRequest.model_validate(job.request)
         self.policy.validate_brief(request.brief)
 
@@ -61,7 +69,7 @@ class PreparationHandler:
             }
 
         snapshot = operations.call(
-            f"{job.idempotency_key}:browse",
+            f"{job.job_id}:browse",
             "webiq-browse",
             browse_call,
         )
@@ -78,7 +86,7 @@ class PreparationHandler:
         ]
 
         page_analysis = operations.call(
-            f"{job.idempotency_key}:page-analysis",
+            f"{job.job_id}:page-analysis",
             "page-analysis-model",
             lambda: self._analyse(snapshot, passages),
         )
@@ -127,7 +135,7 @@ class PreparationHandler:
             return plan, captured
 
         plan = operations.call(
-            f"{job.idempotency_key}:query-plan",
+            f"{job.job_id}:query-plan",
             "paired-query-plan",
             plan_call,
         )

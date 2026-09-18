@@ -1030,6 +1030,35 @@ mark { color: var(--cp-text); background: var(--cp-highlight); }
   }
 
   function bindActions(run) {
+    element("authorize-agent-prepare")?.addEventListener("click", () => action(async () => {
+      const principalId = policy.agent_execution?.default_principal_id;
+      if (!principalId) throw new Error("No local MCP agent principal is configured.");
+      const authorization = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/agent-execution-authorizations`, {
+        method: "POST",
+        body: {
+          expected_revision: run.revision,
+          agent_principal_id: principalId,
+          stage: "prepare",
+          lifetime_seconds: 900,
+        },
+      });
+      status(`Agent preparation authorised until ${authorization.expires_at}. The agent can discover it by refreshing the run.`);
+    }, "Authorising agent preparation...", "Agent preparation authorised."));
+    element("authorize-agent-evaluate")?.addEventListener("click", () => action(async () => {
+      const principalId = policy.agent_execution?.default_principal_id;
+      if (!principalId) throw new Error("No local MCP agent principal is configured.");
+      const authorization = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/agent-execution-authorizations`, {
+        method: "POST",
+        body: {
+          expected_revision: run.revision,
+          agent_principal_id: principalId,
+          stage: "evaluate",
+          input_hash: run.approval_hash,
+          lifetime_seconds: 900,
+        },
+      });
+      status(`Agent measurement authorised until ${authorization.expires_at}. The agent can discover it by refreshing the run.`);
+    }, "Authorising agent measurement...", "Agent measurement authorised."));
     element("prepare-run")?.addEventListener("click", () => action(async () => {
       if (!element("prepare-confirm").checked) throw new Error("Confirm the bounded preparation calls.");
       const response = await api(`/api/v2/runs/${encodeURIComponent(run.run_id)}/prepare`, {method: "POST", body: {expected_revision: run.revision, idempotency_key: `prepare-${run.run_id}`, confirm_preparation_calls: true}});
@@ -1130,6 +1159,14 @@ mark { color: var(--cp-text); background: var(--cp-highlight); }
     let controlsStage = activeStage;
     if (current.state === "draft") {
       appendAction(controls, `Confirm ${policy.limits.preparation_calls} ${policy.execution_mode} preparation calls`, "Prepare query packet", "prepare-run", "prepare-confirm");
+      if (policy.agent_execution?.default_principal_id) {
+        const strip = document.createElement("div"); strip.className = "action-strip";
+        strip.append(
+          textNode("span", `Let ${policy.agent_execution.default_principal_id} queue this preparation within 15 minutes`),
+          buttonNode("Authorise agent preparation", "authorize-agent-prepare"),
+        );
+        controls.append(strip);
+      }
     } else if (activeStates.has(current.state)) {
       const activeJob = jobs.find(job => ["queued", "leased"].includes(job.state));
       const workerStatus = activeJob?.state === "queued" ? "Queued for durable worker" : "Durable worker job in progress";
@@ -1151,6 +1188,14 @@ mark { color: var(--cp-text); background: var(--cp-highlight); }
       const options = document.createElement("div");
       const confirm = document.createElement("label"); const confirmBox = document.createElement("input"); confirmBox.type = "checkbox"; confirmBox.id = "evaluate-confirm"; confirm.append(confirmBox, document.createTextNode(`Confirm ${policy.limits.search_calls} searches + ${policy.limits.evaluator_calls} ${policy.execution_mode} evaluations`));
       options.append(confirm, textNode("p", "Evidence-based recommendations follow measurement automatically.", "muted")); strip.append(options, buttonNode("Start measurement", "evaluate-run", "primary")); controls.append(strip);
+      if (policy.agent_execution?.default_principal_id) {
+        const agentStrip = document.createElement("div"); agentStrip.className = "action-strip";
+        agentStrip.append(
+          textNode("span", `Let ${policy.agent_execution.default_principal_id} queue this approved measurement within 15 minutes`),
+          buttonNode("Authorise agent measurement", "authorize-agent-evaluate"),
+        );
+        controls.append(agentStrip);
+      }
     } else if (["ready", "partial", "failed"].includes(current.state) && current.measurement) {
       if (current.recommendations?.tasks.length && !current.recommendation_review) {
         appendAction(controls, "Decide every draft task before creating planning files", "Save recommendation review", "review-recommendations");

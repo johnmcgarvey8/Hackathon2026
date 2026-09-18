@@ -11,6 +11,9 @@ from geo_agent.conversation import ChatPolicy, ConversationAgent
 from geo_agent.foundry import Foundry
 from geo_agent.live import LivePolicy, configured_live_workflow
 from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.agent_access import AgentPrincipal
+from geo_agent.mcp_server import _persistent_secret
+from geo_agent.measurement_workflow import OwnerIdentity
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
@@ -74,6 +77,19 @@ def main() -> None:
         measurement_policy = MeasurementExecutionPolicy.model_validate_json(
             Path(measurement_policy_file).read_text(encoding="utf-8")
         )
+    mcp_agent_token = os.environ.get("GEO_MCP_AGENT_TOKEN", "").strip()
+    mcp_principals = None
+    mcp_principal_id = os.environ.get("GEO_MCP_PRINCIPAL_ID", "local-agent")
+    if mcp_agent_token:
+        mcp_principals = {
+            mcp_agent_token: AgentPrincipal(
+                principal_id=mcp_principal_id,
+                owner=OwnerIdentity(
+                    tenant_id=os.environ.get("GEO_MCP_TENANT_ID", "local-development"),
+                    object_id=os.environ.get("GEO_MCP_OWNER", "local-developer"),
+                ),
+            )
+        }
     app = create_app(
         database,
         {token: "local-developer"},
@@ -82,6 +98,14 @@ def main() -> None:
         analysis=analysis,
         measurement_policy=measurement_policy,
         measurement_auto_worker=measurement_policy is not None and measurement_policy.execution_mode == "mock",
+        measurement_mcp_principals=mcp_principals,
+        mcp_cursor_secret=_persistent_secret(data_dir / "mcp-cursor-key") if mcp_principals else None,
+        human_base_url=os.environ.get(
+            "GEO_HUMAN_BASE_URL",
+            f"http://127.0.0.1:{os.environ.get('GEO_PORT', '8088')}",
+        ),
+        default_mcp_agent_principal_id=mcp_principal_id,
+        allow_live_mcp=os.environ.get("GEO_MCP_ALLOW_LIVE", "").casefold() == "true",
     )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))
 

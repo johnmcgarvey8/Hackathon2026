@@ -1,12 +1,21 @@
 from datetime import timedelta
+import time
 
 import pytest
 
 from geo_agent.contracts import utc_now
-from geo_agent.jobs import ClaimedOperationRunner, JobService, JobState, JobType, OperationClaimState
+from geo_agent.jobs import (
+    ClaimedOperationRunner,
+    JobService,
+    JobState,
+    JobType,
+    LeaseLost,
+    OperationClaimState,
+)
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
     MeasurementEvent,
+    MeasurementRun,
     MeasurementState,
     OwnerIdentity,
 )
@@ -90,8 +99,23 @@ def test_brand_migration_preserves_existing_records(tmp_path, owner):
     config.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(config, "0002_measurement_budget")
     repository = SQLAlchemyMeasurementRepository(database_url)
-    run = approved_run(repository, owner)
-    before = repository.get(run.run_id, owner).model_dump_json()
+    run = MeasurementRun(
+        owner=owner,
+        inputs=inputs(),
+        brief=inputs().brief,
+        state=MeasurementState.AWAITING_APPROVAL,
+        events=(MeasurementEvent(sequence=1, event_type="awaiting-query-approval"),),
+    )
+    with repository.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO measurement_runs (run_id, owner_key, revision, payload) VALUES (?, ?, ?, ?)",
+            (run.run_id, owner.key, run.revision, run.model_dump_json()),
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO run_events (run_id, sequence, payload) VALUES (?, ?, ?)",
+            (run.run_id, 1, run.events[0].model_dump_json()),
+        )
+    before = run.model_dump_json()
     assert "run_brand_definitions" not in inspect(repository.engine).get_table_names()
     command.upgrade(config, "head")
     assert repository.get(run.run_id, owner).model_dump_json() == before
@@ -120,6 +144,49 @@ def test_enqueue_is_transactional_and_idempotent(repository, owner):
         service.enqueue(
             run.run_id, owner, queued.revision, JobType.EVALUATE, "evaluate-1", {"mode": "live"}
         )
+
+
+def test_enqueue_replay_survives_terminal_run_revision(repository, owner):
+    draft = repository.create(owner)
+    request = {"url": "fixture"}
+    job, _ = JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "prepare-terminal-replay",
+        request,
+    )
+
+    def handler(_job, _operations):
+        prepared = inputs()
+        return lambda run: run.model_copy(update={
+            "inputs": prepared,
+            "brief": prepared.brief,
+            "state": MeasurementState.AWAITING_APPROVAL,
+            "events": (*run.events, MeasurementEvent(
+                sequence=len(run.events) + 1,
+                event_type="awaiting-query-approval",
+            )),
+        })
+
+    completed_job, completed_run = Worker(
+        repository,
+        "worker-a",
+        {JobType.PREPARE: handler},
+    ).run_once()
+    replayed_job, replayed_run = JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "prepare-terminal-replay",
+        request,
+    )
+
+    assert replayed_job == completed_job
+    assert replayed_job.job_id == job.job_id
+    assert replayed_run == completed_run
 
 
 def test_enqueue_rejects_stale_or_unapproved_run(repository, owner):
@@ -158,6 +225,67 @@ def test_only_one_worker_can_lease_and_claim_once(repository, owner):
         )
 
 
+def test_worker_renews_lease_during_slow_handler(repository, owner):
+    draft = repository.create(owner)
+    JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "slow-renewed-job",
+        {},
+    )
+
+    def handler(_job, _operations):
+        time.sleep(3.2)
+        prepared = inputs()
+        return lambda run: run.model_copy(update={
+            "inputs": prepared,
+            "brief": prepared.brief,
+            "state": MeasurementState.AWAITING_APPROVAL,
+            "events": (*run.events, MeasurementEvent(
+                sequence=len(run.events) + 1,
+                event_type="awaiting-query-approval",
+            )),
+        })
+
+    result = Worker(
+        repository,
+        "worker-a",
+        {JobType.PREPARE: handler},
+        lease_seconds=3,
+        heartbeat_seconds=0.25,
+    ).run_once()
+
+    assert result is not None
+    job, run = result
+    assert job.state == JobState.COMPLETED
+    assert run.state == MeasurementState.AWAITING_APPROVAL
+
+
+def test_cancelled_job_rejects_stale_fencing_token(repository, owner):
+    run = approved_run(repository, owner)
+    job, _ = JobService(repository).enqueue(
+        run.run_id,
+        owner,
+        run.revision,
+        JobType.EVALUATE,
+        "cancel-fenced-job",
+        {},
+    )
+    leased = repository.lease_one_job("worker-a")
+    assert leased is not None and leased.lease_token is not None
+    repository.cancel_job(job.job_id, owner)
+
+    with pytest.raises(LeaseLost):
+        repository.complete_job(
+            job.job_id,
+            "worker-a",
+            lambda current: current,
+            leased.lease_token,
+        )
+
+
 def test_expired_lease_is_not_replayed_and_marks_run_needs_review(repository, owner):
     run = approved_run(repository, owner)
     job, _ = JobService(repository).enqueue(
@@ -173,6 +301,37 @@ def test_expired_lease_is_not_replayed_and_marks_run_needs_review(repository, ow
     assert recovered[0].error_code == "lease-expired"
     assert repository.get(run.run_id, owner).state == MeasurementState.NEEDS_REVIEW
     assert repository.lease_one_job("worker-b", now=now + timedelta(seconds=11)) is None
+
+
+def test_recovery_is_fenced_against_a_changed_lease_token(repository, owner, monkeypatch):
+    run = approved_run(repository, owner)
+    job, _ = JobService(repository).enqueue(
+        run.run_id,
+        owner,
+        run.revision,
+        JobType.EVALUATE,
+        "fenced-recovery",
+        {},
+    )
+    now = utc_now()
+    leased = repository.lease_one_job("worker-a", lease_seconds=10, now=now)
+    original = repository._job_from_row
+
+    def stale_job(row):
+        restored = original(row)
+        if restored.job_id == job.job_id:
+            return restored.model_copy(update={"lease_token": "stale-fencing-token"})
+        return restored
+
+    monkeypatch.setattr(repository, "_job_from_row", stale_job)
+    recovered = repository.recover_interrupted(now + timedelta(seconds=11))
+
+    assert recovered == ()
+    monkeypatch.setattr(repository, "_job_from_row", original)
+    current = repository.get_job(job.job_id, owner)
+    assert current.state == JobState.LEASED
+    assert current.lease_token == leased.lease_token
+    assert repository.get(run.run_id, owner).state == MeasurementState.EVALUATING
 
 
 def test_cancellation_is_owner_scoped_and_updates_run(repository, owner):
@@ -229,6 +388,57 @@ def test_worker_claims_before_dispatch_and_completes_atomically(repository, owne
     assert completed_job.state == JobState.COMPLETED
     assert completed_run.revision == queued.revision + 1
     assert completed_run.state == MeasurementState.AWAITING_APPROVAL
+    checkpoints = repository.list_operation_checkpoints(completed_run.run_id, owner)
+    assert len(checkpoints) == 1
+    assert checkpoints[0].output["schema_version"] == "geo-inputs/v2"
+
+
+def test_queue_admission_enforces_owner_and_global_limits(repository):
+    owners = [
+        OwnerIdentity(tenant_id="tenant-a", object_id=f"user-{index}")
+        for index in range(6)
+    ]
+    for index in range(4):
+        draft = repository.create(owners[0])
+        JobService(repository).enqueue(
+            draft.run_id,
+            owners[0],
+            draft.revision,
+            JobType.PREPARE,
+            f"queue-{owners[0].object_id}-{index}",
+            {},
+        )
+    owner_overflow = repository.create(owners[0])
+    with pytest.raises(Conflict, match="at most 4"):
+        JobService(repository).enqueue(
+            owner_overflow.run_id,
+            owners[0],
+            owner_overflow.revision,
+            JobType.PREPARE,
+            "owner-queue-overflow",
+            {},
+        )
+    for owner in owners[1:5]:
+        for index in range(4):
+            draft = repository.create(owner)
+            JobService(repository).enqueue(
+                draft.run_id,
+                owner,
+                draft.revision,
+                JobType.PREPARE,
+                f"queue-{owner.object_id}-{index}",
+                {},
+            )
+    global_overflow = repository.create(owners[5])
+    with pytest.raises(Conflict, match="at most 20"):
+        JobService(repository).enqueue(
+            global_overflow.run_id,
+            owners[5],
+            global_overflow.revision,
+            JobType.PREPARE,
+            "global-queue-overflow",
+            {},
+        )
 
 
 def test_progress_updates_without_run_revision_and_is_owner_scoped(repository, owner):
