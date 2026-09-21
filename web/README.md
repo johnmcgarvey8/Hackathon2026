@@ -61,7 +61,7 @@ All measurement traffic uses project-scoped BFF routes. The active Project suppl
 
 Chat-first measurements use the authenticated user request as the instruction to create the run, prepare it, approve the exact generated query hash, and start evaluation. The application owns those mutations; the hosted Foundry agent receives no measurement tools. The secondary manual workflow retains separate preparation and evaluation confirmations, revision-bound query editing, and exact-hash approval. The Control Plane and its run detail route are strictly read-only. They load saved progress, results, ancillary assessments, jobs, events, and existing artifacts. Existing GET-only downloads are available, but the Control Plane never creates exports or exposes prepare, approve, start, review, recovery, or cancellation actions.
 
-Run results keep Query plan, WebIQ evidence, Model answers, Citation performance, Brand presence, Recommendations, and Limitations separate. Model answers and passages render as text. Artifact downloads pass through a binary BFF that preserves media type, filename, ETag, and private no-store caching.
+Run results keep Query plan, WebIQ evidence, Model answers, Citation performance, Brand presence, Recommendations, and Limitations separate. Model answers and passages in the results views render as text. Chat assistant replies render safe GitHub-flavoured Markdown with raw HTML disabled. Inline citation actions are created only when a bracketed ID matches the turn's structured citation metadata; unknown IDs remain visible as text. Artifact downloads pass through a binary BFF that preserves media type, filename, ETag, and private no-store caching.
 
 ## Live chat status
 

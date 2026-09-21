@@ -82,6 +82,7 @@ function harness(overrides = {}) {
     "next/navigation": { useSearchParams: () => ({ get: () => null }) },
     "@/components/project-context": { useProject: () => ({ project: { project_id: "project-one", name: "Project", primary_domain: "example.com", active_goal: null } }) },
     "@/components/icons": { Icon: () => null },
+    "@/components/assistant-markdown": { AssistantMarkdown: () => null },
     "@/components/status-state": { LoadingState: () => null, UnavailableState: () => null },
   });
   function render() { cursor = 0; refCursor = 0; return ChatPage(); }

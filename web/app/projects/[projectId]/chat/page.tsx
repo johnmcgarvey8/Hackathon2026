@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { shouldPollMeasurementWorkflow } from "@/lib/chat-runtime";
 import type { ChatCitation, ChatStatus, Conversation, SourceClass } from "@/lib/types";
 import { Icon } from "@/components/icons";
+import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { useProject } from "@/components/project-context";
 import { LoadingState, UnavailableState } from "@/components/status-state";
 
@@ -375,7 +376,13 @@ export default function ChatPage() {
                     <span className="thread-avatar"><Icon name="spark" /></span>
                     <div className="thread-bubble">
                       <div className="thread-speaker">{turn.origin === "workflow" ? "Measurement insight" : "GEO assistant"}</div>
-                      {turn.status === "running" ? <p>Working on your request...</p> : turn.error ? <p className="error-text">{turn.error}</p> : <p>{turn.answer}</p>}
+                      {turn.status === "running" ? <p>Working on your request...</p> : turn.error ? <p className="error-text">{turn.error}</p> : (
+                        <AssistantMarkdown
+                          content={turn.answer || ""}
+                          citations={turn.citations}
+                          onCitationClick={(citation) => openSources([citation])}
+                        />
+                      )}
                       {turn.citations.length > 0 && (
                         <button className="source-summary-button" type="button" onClick={() => openSources(turn.citations)}>
                           <Icon name="sources" /> {turn.citations.length} grounded {turn.citations.length === 1 ? "source" : "sources"}
