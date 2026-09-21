@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useProject } from "@/components/project-context";
 import { ScreenHeader } from "@/components/screen-header";
 import { api, ApiError } from "@/lib/api";
+import type { MeasurementCapacity } from "@/lib/types";
 
 function belongsToProject(value: string, domains: string[]) {
   try {
@@ -24,9 +25,20 @@ export default function NewMeasurementPage() {
   const [objective, setObjective] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capacity, setCapacity] = useState<MeasurementCapacity | null>(null);
+
+  useEffect(() => {
+    if (!project) return;
+    let active = true;
+    setObjective((current) => current || project.active_goal || "");
+    api.measurementCapacity(project.project_id)
+      .then((saved) => { if (active) setCapacity(saved); })
+      .catch(() => { if (active) setCapacity(null); });
+    return () => { active = false; };
+  }, [project]);
 
   if (!project) return null;
-  const effectiveGoal = project.active_goal || objective.trim();
+  const effectiveGoal = objective.trim();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -41,13 +53,13 @@ export default function NewMeasurementPage() {
     }
     setSubmitting(true);
     try {
-      const run = await api.createMeasurement(project.project_id, {
+      const response = await api.createMeasurement(project.project_id, {
         url: page.trim(),
         audience: effectiveGoal,
         goal: effectiveGoal,
         locale: project.default_locale,
       });
-      router.push(`/projects/${project.project_id}/measurements/${run.run_id}`);
+      router.push(`/projects/${project.project_id}/measurements/${response.run.run_id}`);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "The measurement could not be created.");
     } finally {
@@ -57,7 +69,7 @@ export default function NewMeasurementPage() {
 
   return (
     <section className="screen">
-      <ScreenHeader eyebrow="Project measurement" title="Create measurement" description="Select the exact page to measure. Project identity and scope remain authoritative." />
+      <ScreenHeader eyebrow="Live project measurement" title="Measure a page" description="Enter the page and goal once. WebIQ and Foundry complete the live measurement automatically." />
       <div className="grid two measurement-create">
         <section className="card">
           <div className="card-heading"><h2>Authoritative project scope</h2><span className="pill green">Active project</span></div>
@@ -68,22 +80,21 @@ export default function NewMeasurementPage() {
             <div><dt>Locale</dt><dd>{project.default_locale}</dd></div>
             <div><dt>Goal</dt><dd>{project.active_goal || "Set for this measurement below"}</dd></div>
           </dl>
-          <p className="small muted">These values come from the active Project. The browser does not choose an owner or bind an existing run.</p>
+          <p className="small muted">The run stays within this Project. No synthetic provider or fixture fallback is available.</p>
+          <p className="small muted">{capacity?.unlimited ? "No application run limit. WebIQ and Foundry provider quotas still apply." : "Live provider availability will be validated when the run starts."}</p>
         </section>
         <form className="card project-form" onSubmit={(event) => void submit(event)}>
           <label className="form-field full">
             <span>Exact in-scope page</span>
             <input type="url" required placeholder={`https://${project.primary_domain}/exact-page`} value={page} onChange={(event) => setPage(event.target.value)} />
-            <small>Subdomains of the Project domains are accepted; FastAPI performs the authoritative validation.</small>
+            <small>Subdomains are accepted. FastAPI performs the authoritative validation before any live call.</small>
           </label>
-          {!project.active_goal && (
-            <label className="form-field full">
-              <span>Measurement objective</span>
-              <textarea required maxLength={1000} value={objective} onChange={(event) => setObjective(event.target.value)} />
-            </label>
-          )}
+          <label className="form-field full">
+            <span>What do you want to learn?</span>
+            <textarea required maxLength={1000} value={objective} onChange={(event) => setObjective(event.target.value)} />
+          </label>
           {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="button-row"><button className="button primary" type="submit" disabled={submitting}>{submitting ? "Creating..." : "Create saved run"}</button></div>
+          <div className="button-row"><button className="button primary" type="submit" disabled={submitting}>{submitting ? "Starting live measurement..." : "Start live measurement"}</button></div>
         </form>
       </div>
     </section>

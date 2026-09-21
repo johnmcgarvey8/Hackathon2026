@@ -19,7 +19,7 @@ from geo_agent.workflow import RunStore
 
 def load_environment(env_file: Path | None = None) -> None:
     path = env_file if env_file is not None else Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(path, override=False, interpolate=False)
+    load_dotenv(path, override=True, interpolate=False)
 
 
 def main() -> None:
@@ -60,7 +60,12 @@ def main() -> None:
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
         if os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") != policy.deployment:
             raise ValueError("Chat policy does not match the configured Foundry deployment")
-        chat = ConversationAgent(RunStore(database), policy, endpoint=endpoint)
+        chat = ConversationAgent(
+            RunStore(database),
+            policy,
+            endpoint=endpoint,
+            enforce_budget=False,
+        )
     analysis = None
     analysis_file = os.environ.get("GEO_ANALYSIS_POLICY")
     if analysis_file:
@@ -75,6 +80,8 @@ def main() -> None:
         measurement_policy = MeasurementExecutionPolicy.model_validate_json(
             Path(measurement_policy_file).read_text(encoding="utf-8")
         )
+        if measurement_policy.execution_mode != "live":
+            raise ValueError("Application startup accepts only a live measurement policy")
     app = create_app(
         database,
         {token: "local-developer"},
@@ -82,7 +89,6 @@ def main() -> None:
         chat=chat,
         analysis=analysis,
         measurement_policy=measurement_policy,
-        measurement_auto_worker=measurement_policy is not None and measurement_policy.execution_mode == "mock",
         project_foundry=ProjectFoundrySettings.from_environment(os.environ),
     )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))

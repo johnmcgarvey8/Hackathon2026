@@ -350,6 +350,46 @@ def test_retrieval_failure_skips_only_its_evaluator_and_later_queries_continue(t
     assert failed_answer.error == "Retrieval failed; evaluator not called."
 
 
+def test_project_evaluation_rejects_synthetic_inputs_before_provider_calls(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "project-synthetic-evaluation.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "project-synthetic-evaluation",
+        EvaluationRequest(confirm_evaluation_calls=True, project_bound=True),
+    )
+    search = FakeSearch()
+    evaluator = FakeEvaluator(prepared.profiles[0])
+
+    job, run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                search,
+                (evaluator,),
+            ),
+        },
+    ).run_once()
+
+    assert job.state == JobState.FAILED
+    assert job.error_code == "Conflict"
+    assert run.state == MeasurementState.NEEDS_REVIEW
+    assert search.calls == []
+    assert evaluator.calls == []
+
+
 def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):
     execution_policy = policy()
     prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})

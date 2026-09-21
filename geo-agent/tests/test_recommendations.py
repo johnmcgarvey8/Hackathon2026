@@ -11,7 +11,8 @@ from geo_agent.contracts import (
 )
 from geo_agent.foundry import Foundry
 from geo_agent.recommendations import (
-    LIMITATIONS, METHOD_HASH, PROMPT_VERSION, RECOMMENDATION_PROMPT,
+    LEGACY_LIMITATIONS, LEGACY_METHOD_HASH, LIMITATIONS, METHOD_HASH, PROMPT_VERSION,
+    RECOMMENDATION_PROMPT,
     RecommendationProposal, RecommendationReport, RecommendationService,
     build_content_strategy, build_recommendation_context, validate_recommendations,
 )
@@ -152,6 +153,10 @@ def test_report_binding_flags_and_evidence_validation():
     assert report.tasks[0].requires_human_approval is True
     assert report.tasks[0].status == "draft"
     report.validate_for(saved)
+    report.model_copy(update={
+        "method_hash": LEGACY_METHOD_HASH,
+        "limitations": LEGACY_LIMITATIONS,
+    }).validate_for(saved)
     changed = measurement(saved.retrievals, (outcome(saved.retrievals[0]),))
     assert changed.inputs.approval_hash == saved.inputs.approval_hash
     with pytest.raises(ProviderError):

@@ -1,6 +1,7 @@
 import type {
   ApiErrorPayload,
   ArtifactMetadata,
+  AutomaticMeasurementResponse,
   BinaryArtifact,
   BrandEvidenceAssessment,
   ChatStatus,
@@ -10,6 +11,7 @@ import type {
   EvidenceSource,
   ExportResponse,
   JobMutationResponse,
+  MeasurementCapacity,
   MeasurementBriefRequest,
   MeasurementRun,
   Project,
@@ -73,10 +75,12 @@ export const api = {
   project: (projectId: string) => request<Project>(projectPath(projectId)),
   runs: (projectId: string) => request<MeasurementRun[]>(`${projectPath(projectId)}/runs`),
   createMeasurement: (projectId: string, body: MeasurementBriefRequest) =>
-    request<MeasurementRun>(`${projectPath(projectId)}/measurements`, {
+    request<AutomaticMeasurementResponse>(`${projectPath(projectId)}/measurements`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  measurementCapacity: (projectId: string) =>
+    request<MeasurementCapacity>(`${projectPath(projectId)}/measurement-capacity`),
   run: (projectId: string, runId: string) => request<MeasurementRun>(runPath(projectId, runId)),
   prepareRun: (projectId: string, runId: string, expectedRevision: number) =>
     request<JobMutationResponse>(`${runPath(projectId, runId)}/prepare`, {

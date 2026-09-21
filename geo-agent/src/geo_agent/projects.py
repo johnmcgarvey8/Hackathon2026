@@ -6,6 +6,9 @@ from urllib.parse import urlsplit
 from pydantic import Field, field_validator, model_validator
 
 from geo_agent.contracts import Contract, identifier, utc_now
+from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.jobs import JobRepository, WorkflowJob
+from geo_agent.measurement_budget import MeasurementCapacity
 from geo_agent.measurement_workflow import MeasurementRepository, MeasurementRun, OwnerIdentity
 
 
@@ -178,5 +181,14 @@ class ProjectRepository(Protocol):
     ) -> str | None: ...
 
 
-class ProjectMeasurementRepository(ProjectRepository, MeasurementRepository, Protocol):
-    pass
+class ProjectMeasurementRepository(
+    ProjectRepository,
+    MeasurementRepository,
+    JobRepository,
+    Protocol,
+):
+    def measurement_capacity(
+        self,
+        owner: OwnerIdentity,
+        policy: MeasurementExecutionPolicy,
+    ) -> MeasurementCapacity: ...

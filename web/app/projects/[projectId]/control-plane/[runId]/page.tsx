@@ -143,7 +143,7 @@ export default function ControlPlaneRunPage() {
             <div><dt>Project</dt><dd>{project.name}</dd></div>
             <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
             <div><dt>Run ID</dt><dd><code>{run.run_id}</code></dd></div>
-            <div><dt>Approval</dt><dd>{run.approval ? "Approved" : "Not approved"}</dd></div>
+            <div><dt>Automation</dt><dd>{run.approval ? "Query plan bound automatically" : run.latest_job?.state === "failed" ? "Stopped before query binding" : "Preparing automatically"}</dd></div>
             <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
             <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
           </dl>

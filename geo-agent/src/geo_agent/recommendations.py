@@ -29,7 +29,7 @@ RECOMMENDATION_PROMPT = (
     "task's own query. Never invent IDs or quotes. Priority and confidence are hypotheses, not "
     "measured impact. Do not return scores, numeric rank claims, uplift estimates or permission "
     "flags. Returned positions are observations in saved search packets, not global rankings or "
-    "evidence of causal ranking factors. Model citations are observations in completed simulated "
+    "evidence of causal ranking factors. Model citations are observations in completed evaluator "
     "answers, not proof of quality or public product performance. When there are no completed "
     "answers for a query, explicitly describe the rationale as based on retrieval only. Distinguish "
     "the exact target page from same-domain other pages; canonical equivalence is unverified. "
@@ -41,15 +41,31 @@ RECOMMENDATION_PROMPT = (
 METHOD_HASH = digest({"method_version": METHOD_VERSION, "prompt_version": PROMPT_VERSION,
                       "prompt": RECOMMENDATION_PROMPT, "sources_per_query": 2,
                       "page_characters": 10000, "passage_characters": 1000})
+LEGACY_RECOMMENDATION_PROMPT = RECOMMENDATION_PROMPT.replace(
+    "completed evaluator answers",
+    "completed simulated answers",
+)
+LEGACY_METHOD_HASH = digest({
+    "method_version": METHOD_VERSION,
+    "prompt_version": PROMPT_VERSION,
+    "prompt": LEGACY_RECOMMENDATION_PROMPT,
+    "sources_per_query": 2,
+    "page_characters": 10000,
+    "passage_characters": 1000,
+})
 LIMITATIONS = (
     "Draft suggestions are hypotheses requiring human verification and approval, not proven gains. "
     "Exact quotes and references are checked mechanically; generated claims are not semantically "
     "verified. Search positions describe only saved top-five packets, not global rankings or "
-    "causation. Citations describe completed simulated answers, not public product performance. "
+    "causation. Citations describe completed evaluator answers, not public product performance. "
     "A same-domain other page is not the exact target; canonical equivalence is unverified. "
     "Gaps mean not seen in the supplied excerpt, not absent from the page or website. "
     "Competitor facts do not establish target facts. No browsing, content copying or publishing "
     "is authorised. Queries without completed answers have retrieval-only comparison evidence."
+)
+LEGACY_LIMITATIONS = LIMITATIONS.replace(
+    "completed evaluator answers",
+    "completed simulated answers",
 )
 SelectionReason = Literal["higher-returned-position", "cited-alternative", "target-not-returned"]
 ProfileId = Literal["chatgpt-style", "claude-backed", "copilot-style"]
@@ -132,10 +148,15 @@ class RecommendationReport(Contract):
         try:
             report = RecommendationReport.model_validate(self.model_dump(mode="json"))
             context = build_recommendation_context(measurement)
+            method_is_supported = (
+                report.method_hash == METHOD_HASH and report.limitations == LIMITATIONS
+            ) or (
+                report.method_hash == LEGACY_METHOD_HASH
+                and report.limitations == LEGACY_LIMITATIONS
+            )
             if (report.approval_hash != context["approval_hash"]
                     or report.measurement_hash != context["measurement_hash"]
-                    or report.method_hash != METHOD_HASH
-                    or report.limitations != LIMITATIONS
+                    or not method_is_supported
                     or [item.model_dump(mode="json") for item in report.comparison_sources]
                     != context["comparison_sources"]):
                 raise ValueError

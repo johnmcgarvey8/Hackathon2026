@@ -1,7 +1,7 @@
 export type FoundryStatus = "configured-unverified" | "manual-setup-required";
 
 export interface ChatStatus {
-  mode: "foundry" | "mock" | "unavailable";
+  mode: "foundry" | "unavailable";
   can_send: boolean;
   organisational_context_available: boolean;
   detail: string;
@@ -390,6 +390,23 @@ export interface ArtifactMetadata {
 export interface JobMutationResponse {
   job: WorkflowJob;
   run: MeasurementRun;
+}
+
+export interface MeasurementCapacity {
+  authorized_runs: number | null;
+  consumed_runs: number;
+  remaining_runs: number | null;
+  exhausted: boolean;
+  unlimited?: boolean;
+  operations?: Record<string, {
+    allowance: number;
+    consumed: number;
+    remaining: number;
+  }>;
+}
+
+export interface AutomaticMeasurementResponse extends JobMutationResponse {
+  capacity?: MeasurementCapacity;
 }
 
 export interface ExportResponse {

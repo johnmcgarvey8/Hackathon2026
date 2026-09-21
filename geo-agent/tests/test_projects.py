@@ -1,19 +1,29 @@
 import asyncio
+from datetime import datetime, timezone
+from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from geo_agent.api import create_app
+from geo_agent.contracts import Provenance
 from geo_agent.evidence_assessment import BrandDefinition
 from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.jobs import JobType
+from geo_agent.measurement_budget import MeasurementBudgetGrant, MeasurementOperationAllowances
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
     MeasurementEvent,
     MeasurementState,
     OwnerIdentity,
 )
-from geo_agent.persistence import SQLAlchemyMeasurementRepository
+from geo_agent.persistence import SQLAlchemyMeasurementRepository, SQLiteMeasurementRepository
 from geo_agent.project_chat import ProjectChatRequest, ProjectChatService, ProjectConversationStore
+from geo_agent.project_chat import MockProjectAgent
+from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.projects import ProjectCreate
+from geo_agent.workflow import Conflict
 from test_artifacts import measurement_result, recommendation_report
 from test_measurement_workflow import inputs
 
@@ -29,18 +39,26 @@ def alice_headers() -> dict[str, str]:
 def policy() -> MeasurementExecutionPolicy:
     return MeasurementExecutionPolicy(
         policy_id="project-tests",
+        execution_mode="live",
         allowed_domains=("example.com",),
         locale="en-GB",
         profiles=inputs().profiles,
+        budget_grant_id="project-tests-grant",
     )
 
 
 def project_bound_policy() -> MeasurementExecutionPolicy:
     return MeasurementExecutionPolicy(
         policy_id="project-bound-tests",
+        execution_mode="live",
         scope="project-bound",
         profiles=inputs().profiles,
+        budget_grant_id="project-bound-tests-grant",
     )
+
+
+def mock_policy() -> MeasurementExecutionPolicy:
+    return policy().model_copy(update={"execution_mode": "mock", "budget_grant_id": None})
 
 
 def project_payload(name: str = "Example Brand", domain: str = "example.com") -> dict:
@@ -52,6 +70,36 @@ def project_payload(name: str = "Example Brand", domain: str = "example.com") ->
         "active_goal": "Improve grounded discovery",
         "colour": "#0067b8",
     }
+
+
+def project_grant(execution_policy, owner, *, grant_id=None, runs=1):
+    return MeasurementBudgetGrant(
+        grant_id=grant_id or execution_policy.budget_grant_id,
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        owner=owner,
+        allowances=MeasurementOperationAllowances(
+            webiq_browse=runs,
+            page_analysis_model=runs,
+            paired_query_plan=runs,
+            webiq_search=5 * runs,
+            profile_evaluator=5 * len(execution_policy.profiles) * runs,
+            recommendation_model=runs,
+        ),
+        maximum_authorized_cost_usd=Decimal("50.00"),
+        approval="Approved project test capacity",
+        approved_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+    )
+
+
+def live_inputs(execution_policy, brief=None):
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    selected_brief = brief or prepared.brief
+    snapshot = prepared.snapshot.model_copy(update={
+        "url": selected_brief.url,
+        "provenance": Provenance.LIVE,
+    })
+    return prepared.model_copy(update={"brief": selected_brief, "snapshot": snapshot})
 
 
 def test_projects_are_owner_scoped_and_revisioned(tmp_path):
@@ -183,18 +231,104 @@ def test_project_bound_policy_derives_scope_from_each_saved_project(tmp_path):
         assert prepared.status_code == 202, prepared.text
 
 
-def test_project_chat_creates_and_completes_measurement_automatically(tmp_path):
+def test_automatic_measurement_command_enqueues_live_preparation_and_reports_capacity(tmp_path):
+    database = tmp_path / "automatic-command.sqlite3"
+    execution_policy = policy()
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    repository = SQLiteMeasurementRepository(database)
+    repository.bind_measurement_budget(
+        project_grant(execution_policy, owner, runs=2),
+        execution_policy,
+    )
+    app = create_app(database, {ALICE_TOKEN: "alice"}, measurement_policy=execution_policy)
+
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        before = client.get(
+            f"/api/v2/projects/{project['project_id']}/measurement-capacity"
+        )
+        assert before.status_code == 200
+        assert before.json()["authorized_runs"] is None
+        assert before.json()["consumed_runs"] == 0
+        assert before.json()["unlimited"] is True
+
+        response = client.post(
+            f"/api/v2/projects/{project['project_id']}/measurements",
+            json=inputs().brief.model_dump(mode="json"),
+        )
+        assert response.status_code == 202, response.text
+        payload = response.json()
+        assert set(payload) == {"run", "job", "capacity"}
+        assert payload["run"]["state"] == "preparing"
+        assert payload["job"]["job_type"] == "prepare"
+        assert payload["capacity"]["remaining_runs"] is None
+        assert payload["capacity"]["unlimited"] is True
+        saved_job = repository.get_job(payload["job"]["job_id"], owner)
+        assert saved_job.request["project_bound"] is True
+        leased = repository.lease_one_job("manual-live-worker")
+        prepared = live_inputs(
+            execution_policy,
+            repository.get(payload["run"]["run_id"], owner).brief,
+        )
+        completed = repository.complete_job(
+            leased.job_id,
+            "manual-live-worker",
+            lambda current: current.model_copy(update={
+                "inputs": prepared,
+                "state": MeasurementState.AWAITING_APPROVAL,
+                "events": (*current.events, MeasurementEvent(
+                    sequence=len(current.events) + 1,
+                    event_type="awaiting-query-approval",
+                )),
+            }),
+        )
+        ProjectMeasurementOrchestrator(repository, execution_policy).reconcile_job(*completed)
+        advanced = repository.get(payload["run"]["run_id"], owner)
+        jobs = repository.list_run_jobs(advanced.run_id, owner)
+        evaluation_job = next(job for job in jobs if job.job_type == JobType.EVALUATE)
+        assert advanced.state == MeasurementState.QUEUED
+        assert advanced.approval.input_hash == prepared.approval_hash
+        assert evaluation_job.request == {
+            "confirm_evaluation_calls": True,
+            "include_recommendations": True,
+            "project_bound": True,
+        }
+
+
+def test_project_repository_rejects_synthetic_inputs_and_results(tmp_path):
+    repository = SQLiteMeasurementRepository(tmp_path / "project-live-invariant.sqlite3")
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    project = repository.create_project(owner, ProjectCreate.model_validate(project_payload()))
+    with pytest.raises(Conflict, match="live page snapshot"):
+        repository.create(owner, inputs(), project_id=project.project_id)
+
+    execution_policy = policy()
+    prepared = live_inputs(execution_policy)
+    run = repository.create(owner, prepared, project_id=project.project_id)
+    approved = MeasurementCoordinator(repository).approve(
+        run.run_id, owner, run.revision, prepared.approval_hash,
+    )
+    synthetic_measurement = measurement_result()
+    with pytest.raises(Conflict, match="match the run inputs|live"):
+        repository.mutate(
+            run.run_id,
+            owner,
+            approved.revision,
+            lambda current: current.model_copy(update={
+                "measurement": synthetic_measurement,
+                "state": MeasurementState.READY,
+            }),
+        )
+
+
+def test_application_does_not_start_a_mock_measurement_worker(tmp_path):
     app = create_app(
         tmp_path / "agentic-project-chat.sqlite3",
         {ALICE_TOKEN: "alice"},
         measurement_policy=policy(),
-        measurement_auto_worker=True,
     )
     with TestClient(app, headers=alice_headers()) as client:
-        project = client.post(
-            "/api/v2/projects",
-            json=project_payload(),
-        ).json()
+        project = client.post("/api/v2/projects", json=project_payload()).json()
         conversation = client.post(
             f"/api/v2/projects/{project['project_id']}/conversations",
         ).json()
@@ -217,33 +351,24 @@ def test_project_chat_creates_and_completes_measurement_automatically(tmp_path):
                 f"{conversation['conversation_id']}"
             ),
         ).json()
-        assert saved["run_id"]
-        assert saved["measurement_workflow"]["status"] == "completed"
-        assert [turn["origin"] for turn in saved["turns"]] == ["user", "workflow"]
-        assert saved["turns"][0]["mode"] == "workflow"
-        assert saved["turns"][1]["mode"] == "mock"
-        run = client.get(
-            (
-                f"/api/v2/projects/{project['project_id']}/runs/"
-                f"{saved['run_id']}"
-            ),
-        ).json()
-        assert run["state"] in {"ready", "partial"}
-        assert run["approval"]["input_hash"] == run["approval_hash"]
-        jobs = client.get(
-            (
-                f"/api/v2/projects/{project['project_id']}/runs/"
-                f"{saved['run_id']}/jobs"
-            ),
-        ).json()
-        assert [job["job_type"] for job in reversed(jobs)] == ["prepare", "evaluate"]
+        assert saved["run_id"] is not None
+        assert saved["turns"][0]["status"] == "completed"
+        assert "has started" in saved["turns"][0]["answer"]
+        runs = client.get(f"/api/v2/projects/{project['project_id']}/runs").json()
+        assert len(runs) == 1
+        assert runs[0]["state"] == "preparing"
 
 
 def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
+    database = tmp_path / "agentic-project-chat-binding.sqlite3"
+    execution_policy = policy()
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    repository = SQLiteMeasurementRepository(database)
+    repository.bind_measurement_budget(project_grant(execution_policy, owner), execution_policy)
     app = create_app(
-        tmp_path / "agentic-project-chat-binding.sqlite3",
+        database,
         {ALICE_TOKEN: "alice"},
-        measurement_policy=policy(),
+        measurement_policy=execution_policy,
     )
     with TestClient(app, headers=alice_headers()) as client:
         project = client.post(
@@ -269,20 +394,60 @@ def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
         ).json()
         assert second["measurement_workflow"] is None
 
-        from geo_agent.mock_runtime import MockMeasurementRuntime
-        from geo_agent.persistence import SQLiteMeasurementRepository
-        from geo_agent.project_chat import MockProjectAgent
-        from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
-
-        repository = SQLiteMeasurementRepository(tmp_path / "agentic-project-chat-binding.sqlite3")
-        workflow = ProjectMeasurementChatWorkflow(repository, policy())
+        workflow = ProjectMeasurementChatWorkflow(repository, execution_policy)
+        automatic = ProjectMeasurementOrchestrator(repository, execution_policy)
         agent = MockProjectAgent(repository)
-        runtime = MockMeasurementRuntime(
-            repository,
-            policy(),
-            on_job_finished=lambda job, run: workflow.reconcile_job(job, run, agent),
+        run = repository.get(run_id, owner)
+        prepared = live_inputs(execution_policy, run.brief)
+        prepare_job = repository.lease_one_job("test-live-worker")
+        assert prepare_job is not None
+        completed_prepare = repository.complete_job(
+            prepare_job.job_id,
+            "test-live-worker",
+            lambda current: current.model_copy(update={
+                "inputs": prepared,
+                "state": MeasurementState.AWAITING_APPROVAL,
+                "events": (*current.events, MeasurementEvent(
+                    sequence=len(current.events) + 1,
+                    event_type="awaiting-query-approval",
+                )),
+            }),
         )
-        runtime.drain()
+        automatic.reconcile_job(*completed_prepare)
+        workflow.reconcile_job(
+            completed_prepare[0],
+            repository.get(run_id, owner),
+            agent,
+        )
+        evaluate_job = repository.lease_one_job("test-live-worker")
+        assert evaluate_job is not None and evaluate_job.job_type == JobType.EVALUATE
+        base_measurement = measurement_result("live")
+        pairs = {pair.query_id: pair for pair in prepared.query_plan.queries}
+        retrievals = tuple(packet.model_copy(update={
+            "grounding_query": pairs[packet.query_id].grounding_query,
+        }) for packet in base_measurement.retrievals)
+        measurement = base_measurement.model_copy(update={
+            "inputs": prepared,
+            "retrievals": retrievals,
+            "results": tuple(
+                result for result in base_measurement.results
+                if result.profile_id == prepared.profiles[0].profile_id
+            ),
+        })
+        completed_evaluate = repository.complete_job(
+            evaluate_job.job_id,
+            "test-live-worker",
+            lambda current: current.model_copy(update={
+                "measurement": measurement,
+                "state": MeasurementState.READY,
+                "events": (*current.events, MeasurementEvent(
+                    sequence=len(current.events) + 1,
+                    event_type="ready",
+                )),
+            }),
+        )
+        automatic.reconcile_job(*completed_evaluate)
+        workflow.reconcile_job(*completed_evaluate, agent)
 
         saved_original = client.get(
             (
@@ -369,7 +534,7 @@ def test_new_chat_accepts_project_run_id_and_replay_does_not_duplicate(tmp_path)
         first = client.post(route, json=body)
         assert first.status_code == 200, first.text
         assert first.json()["run_id"] == run["run_id"]
-        assert first.json()["turns"][-1]["mode"] == "mock"
+        assert first.json()["turns"][-1]["status"] == "failed"
         replay = client.post(route, json=body)
         assert replay.status_code == 200, replay.text
         assert replay.json() == first.json()
@@ -459,7 +624,7 @@ def test_project_scoped_query_approval_and_start_are_revision_bound(tmp_path):
         owner,
         ProjectCreate.model_validate(project_payload("Other", "other.example.com")),
     )
-    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    prepared = live_inputs(execution_policy)
     run = repository.create(owner, prepared, project_id=project.project_id)
     app = create_app(database, {ALICE_TOKEN: "alice"}, measurement_policy=execution_policy)
 
@@ -520,12 +685,14 @@ def test_project_scoped_query_approval_and_start_are_revision_bound(tmp_path):
 
 def test_project_scoped_results_reviews_and_artifacts_are_isolated(tmp_path):
     database = tmp_path / "project-results.sqlite3"
-    measurement = measurement_result()
+    measurement = measurement_result("live")
     execution_policy = MeasurementExecutionPolicy(
         policy_id="project-results",
+        execution_mode="live",
         allowed_domains=("example.org",),
         locale="en-GB",
         profiles=measurement.inputs.profiles,
+        budget_grant_id="project-results-grant",
     )
     repository = SQLAlchemyMeasurementRepository(
         f"sqlite:///{database}",
@@ -676,10 +843,8 @@ def test_project_chat_is_scoped_persistent_and_idempotent(tmp_path):
         assert first.status_code == 200, first.text
         result = first.json()
         assert result["revision"] == 2
-        assert result["turns"][0]["status"] == "completed"
-        assert result["turns"][0]["mode"] == "mock"
-        assert "Organisational grounding is simulated" in result["turns"][0]["answer"]
-        assert result["turns"][0]["citations"][0]["source_class"] == "geo-evidence"
+        assert result["turns"][0]["status"] == "failed"
+        assert "Foundry chat is not configured" in result["turns"][0]["error"]
         assert client.post(route, json=request).json() == result
         assert client.post(route, json={**request, "message": "Different"}).status_code == 409
 
@@ -775,7 +940,7 @@ def test_mock_project_chat_status_is_explicit(tmp_path):
     app = create_app(
         tmp_path / "projects-explicit-mock.sqlite3",
         {ALICE_TOKEN: "alice"},
-        measurement_policy=policy(),
+        measurement_policy=mock_policy(),
     )
     with TestClient(app, headers={"Authorization": f"Bearer {ALICE_TOKEN}"}) as client:
         project = client.post("/api/v2/projects", json=project_payload()).json()

@@ -17,7 +17,7 @@ import type {
   ContentStrategyResponse,
   EvidenceSource,
   MeasurementRun,
-  QueryPair,
+  MeasurementCapacity,
   RunEvents,
   RunProgress,
   WorkflowJob,
@@ -49,14 +49,11 @@ export default function MeasurementRunPage() {
   const [assessment, setAssessment] = useState<BrandEvidenceAssessment | null>(null);
   const [strategy, setStrategy] = useState<ContentStrategyResponse | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactMetadata[]>([]);
-  const [queryDraft, setQueryDraft] = useState<QueryPair[]>([]);
+  const [capacity, setCapacity] = useState<MeasurementCapacity | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [confirmPreparation, setConfirmPreparation] = useState(false);
-  const [confirmEvaluation, setConfirmEvaluation] = useState(false);
-  const [includeRecommendations, setIncludeRecommendations] = useState(true);
   const [recommendationDecisions, setRecommendationDecisions] = useState<Record<string, "accepted" | "rejected">>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -72,6 +69,7 @@ export default function MeasurementRunPage() {
       api.evidenceAssessment(project.project_id, currentRun.run_id),
       api.contentStrategy(project.project_id, currentRun.run_id),
       api.artifacts(project.project_id, currentRun.run_id),
+      api.measurementCapacity(project.project_id),
     ]);
     if (results[0].status === "fulfilled") setProgress(results[0].value);
     if (results[1].status === "fulfilled") setJobs(results[1].value);
@@ -79,13 +77,13 @@ export default function MeasurementRunPage() {
     if (results[3].status === "fulfilled") setAssessment(results[3].value);
     if (results[4].status === "fulfilled") setStrategy(results[4].value);
     if (results[5].status === "fulfilled") setArtifacts(results[5].value);
+    if (results[6].status === "fulfilled") setCapacity(results[6].value);
   }, [project]);
 
-  const refresh = useCallback(async (preserveDraft = false) => {
+  const refresh = useCallback(async () => {
     if (!project) return;
     const saved = await api.run(project.project_id, params.runId);
     setRun(saved);
-    if (!preserveDraft) setQueryDraft(saved.inputs?.query_plan.queries || []);
     await loadAncillary(saved);
   }, [loadAncillary, params.runId, project]);
 
@@ -104,11 +102,6 @@ export default function MeasurementRunPage() {
   useRunPolling(run, () => refresh());
 
   const actions = run?.available_actions || {};
-  const prepareAction = actions.prepare;
-  const reviseAction = actions.revise_queries;
-  const approveAction = actions.approve_queries || actions.approve;
-  const startAction = actions.start;
-  const recoverEvaluatorsAction = actions.recover_evaluators;
   const cancelAction = actions.cancel;
   const reviewAction = actions.review_recommendations;
   const exportAction = actions.export;
@@ -129,12 +122,11 @@ export default function MeasurementRunPage() {
     try {
       const updated = await action();
       setRun(updated);
-      setQueryDraft(updated.inputs?.query_plan.queries || queryDraft);
       await loadAncillary(updated);
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.status === 409) {
-        await refresh(true).catch(() => undefined);
-        setNotice("The saved revision changed. Latest server state was reloaded and your query draft was preserved. Review differences, then reapply explicitly.");
+        await refresh().catch(() => undefined);
+        setNotice("The saved revision changed. Latest server state was reloaded.");
       } else {
         setError(requestError instanceof ApiError ? requestError.message : `${label} failed.`);
       }
@@ -142,33 +134,6 @@ export default function MeasurementRunPage() {
       setBusy(null);
     }
   };
-
-  const prepare = () => mutation("Preparation", async () => {
-    const response = await api.prepareRun(project.project_id, params.runId, run!.revision);
-    setConfirmPreparation(false);
-    setProgress(null);
-    return response.run;
-  });
-
-  const reviseQueries = () => mutation("Query revision", () =>
-    api.reviseQueries(project.project_id, params.runId, run!.revision, queryDraft));
-
-  const approveQueries = () => mutation("Query approval", () =>
-    api.approveQueries(project.project_id, params.runId, run!.revision, run!.approval_hash!));
-
-  const start = () => mutation("Evaluation start", async () => {
-    const response = await api.startRun(project.project_id, params.runId, run!.revision, includeRecommendations);
-    setConfirmEvaluation(false);
-    setProgress(null);
-    return response.run;
-  });
-
-  const recoverEvaluators = () => mutation("Evaluator recovery", async () => {
-    const response = await api.recoverEvaluators(project.project_id, params.runId, run!.revision);
-    setConfirmEvaluation(false);
-    setProgress(null);
-    return response.run;
-  });
 
   const cancel = () => mutation("Cancellation", async () => {
     if (!cancellableJob) throw new Error("No saved cancellable job is available.");
@@ -268,10 +233,7 @@ export default function MeasurementRunPage() {
   if (error && !run) return <section className="screen"><UnavailableState title="Measurement unavailable" message={error} /></section>;
   if (!run) return null;
 
-  const estimates = typeof prepareAction === "object" ? prepareAction.operation_estimates : run.operation_estimates;
-  const preparationEstimates = estimates?.preparation;
-  const hasQueries = queryDraft.length > 0;
-  const evaluationReady = Boolean(run.approval && actionAllowed(startAction));
+  const runActive = ["preparing", "queued", "evaluating", "recommending"].includes(run.state.toLowerCase());
 
   return (
     <section className="screen measurement-run">
@@ -280,15 +242,15 @@ export default function MeasurementRunPage() {
         title={runObjective(run)}
         description={`${pageUrl(run)} · revision ${run.revision}`}
         actions={<>
-          <button className="button" type="button" disabled={busy !== null} onClick={() => void refresh(true)}>Reload saved state</button>
+          <button className="button" type="button" disabled={busy !== null} onClick={() => void refresh()}>Reload saved state</button>
           <button className="button primary" type="button" disabled={!actionAllowed(discussAction) || busy !== null} title={actionReason(discussAction) || undefined} onClick={() => void discuss()}>Discuss this run</button>
         </>}
       />
       {error && <UnavailableState title="Action unavailable" message={error} compact />}
       {notice && <div className="notice" role="status">{notice}</div>}
-      {!notice && evaluationReady && (
+      {!notice && runActive && (
         <div className="notice" role="status">
-          Queries approved. Confirm the evaluation provider calls in step 3, then select <strong>Start approved run</strong>.
+          This live measurement is running automatically. WebIQ retrieval, Foundry analysis, evaluation, and recommendations will advance without additional approval steps.
         </div>
       )}
 
@@ -299,10 +261,11 @@ export default function MeasurementRunPage() {
             <div><dt>Project</dt><dd>{project.name}</dd></div>
             <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
             <div><dt>Locale</dt><dd>{run.brief?.locale || project.default_locale}</dd></div>
-            <div><dt>Execution policy</dt><dd>{run.policy_mode || "Unavailable"}</dd></div>
-            <div><dt>Approval hash</dt><dd><code>{run.approval_hash || "Not generated"}</code></dd></div>
+            <div><dt>Execution</dt><dd>Live WebIQ + Foundry</dd></div>
+            <div><dt>Query binding</dt><dd>{run.approval_hash ? "Saved automatically" : "Pending preparation"}</dd></div>
             <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
             <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
+            <div><dt>Live capacity</dt><dd>{capacity?.unlimited ? "No application limit" : "Provider availability applies"}</dd></div>
           </dl>
         </section>
         <section className="card">
@@ -311,56 +274,11 @@ export default function MeasurementRunPage() {
         </section>
       </div>
 
-      <section className="card workflow-actions">
-        <div className="card-heading"><h2>Governed actions</h2><span className="small muted">Availability comes from FastAPI</span></div>
-        <div className="action-grid">
-          <article>
-            <h3>1. Prepare page and queries</h3>
-            <p>Preparation may retrieve the exact page, analyse it, and generate paired queries.</p>
-            {preparationEstimates && <p className="small muted">Estimated operations: {Object.entries(preparationEstimates).map(([name, count]) => `${name.replaceAll("_", " ")} ${count}`).join(", ")}</p>}
-            <label className="confirmation"><input type="checkbox" checked={confirmPreparation} onChange={(event) => setConfirmPreparation(event.target.checked)} /> I confirm preparation provider calls.</label>
-            <button className="button primary" type="button" disabled={!actionAllowed(prepareAction) || !confirmPreparation || busy !== null} title={actionReason(prepareAction) || undefined} onClick={() => void prepare()}>Prepare measurement</button>
-          </article>
-          <article>
-            <h3>2. Approve exact queries</h3>
-            <p>Save any edits first. Approval binds the current revision to the displayed hash.</p>
-            <button className="button" type="button" disabled={!actionAllowed(approveAction) || !run.approval_hash || busy !== null} title={actionReason(approveAction) || undefined} onClick={() => void approveQueries()}>Approve queries and unlock evaluation</button>
-          </article>
-          <article>
-            <h3>3. Start evaluation</h3>
-            <label className="confirmation"><input type="checkbox" checked={confirmEvaluation} onChange={(event) => setConfirmEvaluation(event.target.checked)} /> I confirm evaluation provider calls.</label>
-            <label className="confirmation"><input type="checkbox" checked={includeRecommendations} onChange={(event) => setIncludeRecommendations(event.target.checked)} /> Include optional recommendations.</label>
-            <button className="button primary" type="button" disabled={!actionAllowed(startAction) || !confirmEvaluation || busy !== null} title={actionReason(startAction) || undefined} onClick={() => void start()}>Start approved run</button>
-            {actionAllowed(recoverEvaluatorsAction) && (
-              <button className="button primary" type="button" disabled={!confirmEvaluation || busy !== null} title={actionReason(recoverEvaluatorsAction) || undefined} onClick={() => void recoverEvaluators()}>Retry failed evaluators using saved searches</button>
-            )}
-          </article>
-          <article>
-            <h3>Cancel active job</h3>
-            <p>Cancellation records unresolved and not-attempted operations. It never restarts work.</p>
-            <button className="button" type="button" disabled={!actionAllowed(cancelAction) || !cancellableJob || busy !== null} title={actionReason(cancelAction) || undefined} onClick={() => void cancel()}>Cancel saved job</button>
-          </article>
-        </div>
-      </section>
-
-      {hasQueries && (
-        <section className="card query-editor">
-          <div className="card-heading"><h2>Exact query review</h2><span className="pill">{queryDraft.length} saved query pairs</span></div>
-          <div className="query-editor-list">
-            {queryDraft.map((query, index) => (
-              <article key={query.query_id}>
-                <div className="card-heading"><h3>{query.query_id}</h3><label className="confirmation"><input type="checkbox" checked={query.branded} onChange={(event) => setQueryDraft((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, branded: event.target.checked } : item))} /> Branded</label></div>
-                <div className="form-grid">
-                  <label className="form-field"><span>priority</span><select value={query.priority} onChange={(event) => setQueryDraft((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, priority: Number(event.target.value) } : item))}>{[1, 2, 3, 4, 5].map((priority) => <option value={priority} key={priority}>{priority}</option>)}</select></label>
-                  {(["chat_query", "grounding_query", "intent", "rationale"] as const).map((field) => (
-                    <label className="form-field" key={field}><span>{field.replaceAll("_", " ")}</span><textarea maxLength={500} value={query[field]} onChange={(event) => setQueryDraft((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: event.target.value } : item))} /></label>
-                  ))}
-                </div>
-                <p className="small muted">Retained page evidence: {query.evidence.map((item) => `${item.evidence_id}: ${item.quote}`).join(" | ")}</p>
-              </article>
-            ))}
-          </div>
-          <button className="button" type="button" disabled={!actionAllowed(reviseAction) || busy !== null} title={actionReason(reviseAction) || undefined} onClick={() => void reviseQueries()}>Save query revision</button>
+      {actionAllowed(cancelAction) && (
+        <section className="card">
+          <div className="card-heading"><h2>Run control</h2><span className="pill amber">Optional</span></div>
+          <p>Leave this page open or return later. The saved worker continues independently.</p>
+          <button className="button" type="button" disabled={!cancellableJob || busy !== null} title={actionReason(cancelAction) || undefined} onClick={() => void cancel()}>Cancel live measurement</button>
         </section>
       )}
 

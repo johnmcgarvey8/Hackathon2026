@@ -21,7 +21,8 @@ class LiveMeasurementRuntime:
         repository: SQLAlchemyMeasurementRepository,
         policy: MeasurementExecutionPolicy,
         *,
-        budget_grant: MeasurementBudgetGrant,
+        budget_grant: MeasurementBudgetGrant | tuple[MeasurementBudgetGrant, ...],
+        enforce_budget: bool = True,
         webiq_api_key: str,
         preparation_endpoint: str,
         preparation_deployment: str,
@@ -43,7 +44,9 @@ class LiveMeasurementRuntime:
             raise ValueError(
                 "OpenAI evaluator profiles must use the environment-configured Azure OpenAI endpoint"
             )
-        repository.bind_measurement_budget(budget_grant, policy)
+        grants = budget_grant if isinstance(budget_grant, tuple) else (budget_grant,)
+        repository.bind_measurement_budgets(grants, policy)
+        repository.set_measurement_budget_enforcement(enforce_budget)
         webiq_options = {"url_validator": webiq_url_validator} if webiq_url_validator is not None else {}
         webiq = WebIQ(webiq_api_key, transport=webiq_transport, **webiq_options)
         preparation = Foundry(

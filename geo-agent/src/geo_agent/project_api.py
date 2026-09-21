@@ -7,7 +7,7 @@ from pydantic import Field
 
 from geo_agent.artifact_storage import ArtifactService, ArtifactStorage, MeasurementArtifact
 from geo_agent.artifacts import render_assessment_bundle, render_content_strategy_bundle
-from geo_agent.contracts import Brief, Contract, MeasurementInputs, QueryPlan
+from geo_agent.contracts import Brief, Contract, MeasurementInputs, Provenance, QueryPlan, identifier
 from geo_agent.evaluation_workflow import EvaluationRequest, EvaluatorRecoveryRequest
 from geo_agent.evidence_assessment import BrandDefinition, build_evidence_assessment
 from geo_agent.execution_policy import MeasurementExecutionPolicy
@@ -32,6 +32,7 @@ from geo_agent.measurement_workflow import (
 )
 from geo_agent.preparation import PreparationRequest
 from geo_agent.projects import Project, ProjectCreate, ProjectMeasurementRepository, ProjectUpdate
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.recommendations import build_content_strategy
 from geo_agent.run_view import build_run_view, job_view
 from geo_agent.workflow import Conflict, NotFound
@@ -89,6 +90,7 @@ def create_project_router(
     coordinator = MeasurementCoordinator(repository)
     jobs = JobService(repository)
     artifact_service = ArtifactService(repository, artifact_storage)
+    automatic = ProjectMeasurementOrchestrator(repository, policy)
 
     def require_operator(
         principal: Annotated[OperatorPrincipal, Depends(authenticate)],
@@ -107,12 +109,27 @@ def create_project_router(
         return repository.get_project_run(project_id, run_id, owner)
 
     def run_view(run: MeasurementRun, project_id: str) -> dict:
+        if run.inputs is not None and run.inputs.snapshot.provenance != Provenance.LIVE:
+            raise Conflict("Project measurement contains non-live provenance")
         return build_run_view(repository, run, policy, project_id=project_id)
 
     def require_measurement_policy() -> MeasurementExecutionPolicy:
-        if policy is None:
+        if policy is None or policy.execution_mode != "live":
             raise HTTPException(503, "Live measurement policy is not configured; no mock fallback is enabled.")
         return policy
+
+    def measurement_capacity_view(
+        owner: OwnerIdentity,
+        execution_policy: MeasurementExecutionPolicy,
+    ) -> dict:
+        historical = repository.measurement_capacity(owner, execution_policy).model_dump(mode="json")
+        return {
+            **historical,
+            "authorized_runs": None,
+            "remaining_runs": None,
+            "exhausted": False,
+            "unlimited": True,
+        }
 
     @router.get("/projects")
     def list_projects(owner: OwnerIdentity = owner_dependency) -> list[dict]:
@@ -198,6 +215,38 @@ def create_project_router(
             project_id=project_id,
         )
         return run_view(run, project_id)
+
+    @router.post("/projects/{project_id}/measurements", status_code=202)
+    def create_automatic_measurement(
+        project_id: str,
+        body: ProjectBriefRequest,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        execution_policy = require_measurement_policy()
+        project = repository.get_project(project_id, owner)
+        brief = Brief.model_validate(body.model_dump())
+        try:
+            job, run = automatic.start(
+                project,
+                brief,
+                idempotency_key=f"automatic-{identifier()}-prepare",
+            )
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        return {
+            "run": run_view(run, project_id),
+            "job": job_view(job),
+            "capacity": measurement_capacity_view(owner, execution_policy),
+        }
+
+    @router.get("/projects/{project_id}/measurement-capacity")
+    def get_measurement_capacity(
+        project_id: str,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        execution_policy = require_measurement_policy()
+        repository.get_project(project_id, owner)
+        return measurement_capacity_view(owner, execution_policy)
 
     @router.post("/projects/{project_id}/runs/{run_id}/brand-definition")
     def save_brand_definition(
@@ -402,6 +451,7 @@ def create_project_router(
             EvaluationRequest(
                 confirm_evaluation_calls=True,
                 include_recommendations=body.include_recommendations,
+                project_bound=True,
             ),
         )
         if run_pending_jobs is not None:

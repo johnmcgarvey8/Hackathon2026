@@ -171,6 +171,23 @@ def test_paired_planner_bounded_payload_and_metadata():
     assert metadata == {"model": "model-version-test", "response_id": "resp-test", "input_tokens": 100, "output_tokens": 30}
 
 
+def test_paired_planner_removes_unsupported_navigation_marker_from_exact_quote():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["quote"] = "Local places >"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence[0].quote == "Local places"
+
+
 @pytest.mark.parametrize("problem", ["count", "id", "priority", "order", "chat", "grounding", "quote", "passage", "rationale"])
 def test_paired_planner_rejects_invalid_plans(problem):
     proposal = paired_proposal()
@@ -241,7 +258,7 @@ def test_paired_planner_rejects_invalid_snapshot_before_authentication(problem):
         provider.propose_pairs(brief, snapshot)
 
 
-@pytest.mark.parametrize("brand_case", ["supported", "missing", "invented-quote", "unanchored-name"])
+@pytest.mark.parametrize("brand_case", ["supported", "missing", "invented-quote", "unanchored-name", "invalid-definition"])
 def test_preparation_infers_brand_in_existing_analysis_call(brand_case):
     from test_page_analysis import report_for
 
@@ -258,6 +275,10 @@ def test_preparation_infers_brand_in_existing_analysis_call(brand_case):
         report["brand"]["evidence"][0]["quote"] = "Invented Clarity quote"
     elif brand_case == "unanchored-name":
         report["brand"]["definition"].update(name="Another brand", aliases=[])
+    elif brand_case == "invalid-definition":
+        report["brand"]["definition"]["aliases"].append(
+            {"text": "Microsoft Clarity", "ambiguous": False}
+        )
     calls = []
 
     def handler(request):

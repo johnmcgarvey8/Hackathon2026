@@ -266,3 +266,40 @@ def test_budget_last_allowance_is_atomic_across_jobs(tmp_path):
             "WHERE grant_id = ? AND operation_type = 'webiq-browse'",
             (grant.grant_id,),
         ).fetchone()[0] == 1
+
+
+def test_compatible_additive_grant_preserves_history_and_aggregates_capacity(tmp_path):
+    database = tmp_path / "additive-budget.sqlite3"
+    policy = live_policy(("chatgpt-style",))
+    first_grant = budget_grant(policy)
+    repository = SQLiteMeasurementRepository(database)
+    repository.bind_measurement_budget(first_grant, policy)
+    first_job = leased_job(repository, first_grant.owner)
+    first_claim = repository.claim_operation(
+        first_job.job_id,
+        "worker-a",
+        "first-grant:browse",
+        "webiq-browse",
+    )
+    repository.record_operation(
+        first_claim.claim_id,
+        "worker-a",
+        OperationClaimState.COMPLETED,
+    )
+
+    additional = budget_grant(policy, authorized_runs=2).model_copy(update={
+        "grant_id": "clarity-live-runtime-test-topup",
+        "approval": "Approved additive project capacity",
+    })
+    repository.bind_measurement_budget(additional, policy)
+    capacity = repository.measurement_capacity(first_grant.owner, policy)
+
+    assert (capacity.authorized_runs, capacity.consumed_runs, capacity.remaining_runs) == (3, 1, 2)
+    assert capacity.operations["webiq-browse"].allowance == 3
+    assert capacity.operations["webiq-browse"].consumed == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT consumed FROM measurement_budget_usage "
+            "WHERE grant_id = ? AND operation_type = 'webiq-browse'",
+            (first_grant.grant_id,),
+        ).fetchone()[0] == 1

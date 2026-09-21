@@ -68,8 +68,7 @@ class MeasurementBudgetGrant(Contract):
         if policy.execution_mode != "live":
             raise Conflict("Measurement budget grants require a live execution policy")
         if (
-            policy.budget_grant_id != self.grant_id
-            or policy.policy_id != self.policy_id
+            policy.policy_id != self.policy_id
             or policy.policy_hash != self.policy_hash
         ):
             raise Conflict("Measurement budget grant does not match the execution policy")
@@ -111,3 +110,17 @@ class MeasurementBudgetGrant(Contract):
         maximum_recommendation_calls = policy.max_recommendation_calls * authorized_runs
         if self.allowances.recommendation_model > maximum_recommendation_calls:
             raise Conflict("Measurement budget recommendation allowance exceeds the authorized runs")
+
+
+class MeasurementOperationCapacity(Contract):
+    allowance: int = Field(ge=0)
+    consumed: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+
+
+class MeasurementCapacity(Contract):
+    authorized_runs: int = Field(ge=0)
+    consumed_runs: int = Field(ge=0)
+    remaining_runs: int = Field(ge=0)
+    exhausted: bool
+    operations: dict[MeasurementOperationType, MeasurementOperationCapacity]

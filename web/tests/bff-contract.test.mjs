@@ -22,6 +22,7 @@ test("project-scoped BFF routes include projectId upstream", () => {
     "app/api/projects/[projectId]/conversations/[conversationId]/route.ts",
     "app/api/projects/[projectId]/conversations/[conversationId]/messages/route.ts",
     "app/api/projects/[projectId]/measurements/route.ts",
+    "app/api/projects/[projectId]/measurement-capacity/route.ts",
     "app/api/projects/[projectId]/runs/[runId]/route.ts",
     "app/api/projects/[projectId]/runs/[runId]/[...operation]/route.ts",
   ];
@@ -65,8 +66,7 @@ test("chat and integrations use server-selected runtime identity without allowan
   assert.doesNotMatch(integrations, /runtime\.detail|Configuration is not remote verification/);
   assert.doesNotMatch(integrations, /budgetLabel|requests remaining|owner budget/i);
   assert.doesNotMatch(integrations, /ggs-geo-hackathon2026|project\.foundry_status/);
-  assert.match(read("lib/types.ts"), /mode: "foundry" \| "mock" \| "unavailable"/);
-  assert.doesNotMatch(read("lib/types.ts"), /budget\?:|remaining:\s*number/);
+  assert.match(read("lib/types.ts"), /mode: "foundry" \| "unavailable"/);
   assert.doesNotMatch(read("lib/chat-runtime.ts"), /budget|requests remaining/i);
 });
 
@@ -75,10 +75,7 @@ test("measurement BFF is project scoped and preserves binary artifact headers", 
   const route = read("app/api/projects/[projectId]/runs/[runId]/[...operation]/route.ts");
   const serverApi = read("lib/server-api.ts");
   assert.match(browserApi, /createMeasurement/);
-  assert.match(browserApi, /prepareRun/);
-  assert.match(browserApi, /reviseQueries/);
-  assert.match(browserApi, /approveQueries/);
-  assert.match(browserApi, /startRun/);
+  assert.match(browserApi, /measurementCapacity/);
   assert.match(browserApi, /cancelJob/);
   assert.match(browserApi, /requestBinary/);
   assert.doesNotMatch(browserApi, /\/api\/v2\/runs|\/api\/v2\/briefs/);

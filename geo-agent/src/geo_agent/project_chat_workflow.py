@@ -3,15 +3,13 @@ import re
 from urllib.parse import urlsplit
 
 from geo_agent.contracts import Brief
-from geo_agent.evaluation_workflow import EvaluationRequest
 from geo_agent.execution_policy import MeasurementExecutionPolicy
-from geo_agent.jobs import JobService, JobState, JobType, WorkflowJob
+from geo_agent.jobs import JobState, JobType, WorkflowJob
 from geo_agent.measurement_workflow import (
-    MeasurementCoordinator,
     MeasurementRun,
     MeasurementState,
 )
-from geo_agent.preparation import PreparationRequest
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.project_chat import (
     ProjectAgent,
     ProjectAgentReply,
@@ -70,8 +68,7 @@ class ProjectMeasurementChatWorkflow:
         self.repository = repository
         self.policy = policy
         self.store = ProjectConversationStore(repository)
-        self.coordinator = MeasurementCoordinator(repository)
-        self.jobs = JobService(repository)
+        self.orchestrator = ProjectMeasurementOrchestrator(repository, policy)
 
     def _workflow_reply(
         self,
@@ -186,11 +183,10 @@ class ProjectMeasurementChatWorkflow:
             goal=objective,
             locale=project.default_locale,
         )
-        self.policy.validate_brief(brief, project_bound=True)
-        run = self.repository.create(
-            project.owner,
-            brief=brief,
-            project_id=project.project_id,
+        _, run = self.orchestrator.start(
+            project,
+            brief,
+            idempotency_key=f"chat-{conversation.conversation_id}-{source_key}-prepare",
         )
         workflow = ProjectMeasurementWorkflow(
             status="preparing",
@@ -201,18 +197,6 @@ class ProjectMeasurementChatWorkflow:
         )
         conversation = self.store.update_active(
             conversation, workflow=workflow, run_id=run.run_id,
-        )
-        self.jobs.enqueue(
-            run.run_id,
-            project.owner,
-            run.revision,
-            JobType.PREPARE,
-            f"chat-{conversation.conversation_id}-{source_key}-prepare",
-            PreparationRequest(
-                brief=brief,
-                confirm_preparation_calls=True,
-                project_bound=True,
-            ),
         )
         return conversation, self._workflow_reply(
             f"Run {run.run_id} has started for {brief.url}. "
@@ -236,57 +220,13 @@ class ProjectMeasurementChatWorkflow:
                 "error": f"The {job.job_type.value} job failed with {job.error_code or 'an unknown error'}.",
             }))
             return
-        if job.job_type == JobType.PREPARE and run.state == MeasurementState.AWAITING_APPROVAL:
-            try:
-                approved = self.coordinator.approve(
-                    run.run_id,
-                    run.owner,
-                    run.revision,
-                    run.inputs.approval_hash,
-                )
-            except Conflict:
-                approved = self.repository.get_project_run(
-                    conversation.project_id,
-                    run.run_id,
-                    run.owner,
-                )
-                if approved.state not in {
-                    MeasurementState.QUEUED,
-                    MeasurementState.EVALUATING,
-                    MeasurementState.READY,
-                    MeasurementState.PARTIAL,
-                    MeasurementState.FAILED,
-                }:
-                    raise
-                latest = self.store.get(
-                    conversation.project_id,
-                    conversation.conversation_id,
-                    conversation.owner,
-                )
-                self.store.set_workflow(latest, workflow.model_copy(update={
-                    "status": (
-                        "completed"
-                        if approved.state in {
-                            MeasurementState.READY,
-                            MeasurementState.PARTIAL,
-                            MeasurementState.FAILED,
-                        }
-                        else "evaluating"
-                    ),
-                    "error": None,
-                }))
-                return
-            _, queued = self.jobs.enqueue(
-                approved.run_id,
-                approved.owner,
-                approved.revision,
-                JobType.EVALUATE,
-                f"chat-{conversation.conversation_id}-{workflow.source_idempotency_key}-evaluate",
-                EvaluationRequest(
-                    confirm_evaluation_calls=True,
-                    include_recommendations=True,
-                ),
-            )
+        if job.job_type == JobType.PREPARE and run.state in {
+            MeasurementState.QUEUED,
+            MeasurementState.EVALUATING,
+            MeasurementState.READY,
+            MeasurementState.PARTIAL,
+            MeasurementState.FAILED,
+        }:
             latest = self.store.get(
                 conversation.project_id,
                 conversation.conversation_id,

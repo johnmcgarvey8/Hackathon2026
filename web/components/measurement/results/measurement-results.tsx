@@ -60,6 +60,15 @@ export function MeasurementResultsView({
   const queries = run.inputs?.query_plan.queries || [];
   const retrievals = measurement?.retrievals || [];
   const answers = measurement?.results || [];
+  const hasNonLiveData = Boolean(
+    (run.inputs && run.inputs.snapshot.provenance !== "live")
+    || retrievals.some((retrieval) =>
+      retrieval.provenance !== "live"
+      || retrieval.sources.some((source) => source.provenance !== "live"))
+    || answers.some((answer) =>
+      answer.provenance !== "live"
+      || answer.sources.some((source) => source.provenance !== "live")),
+  );
   const limitations = [
     "Search evidence is limited to saved result packets and does not represent the full web.",
     "Model answers and saved passages are untrusted evidence and may contain errors.",
@@ -72,11 +81,20 @@ export function MeasurementResultsView({
       : Array.isArray(strategy?.report?.limitations) ? strategy.report.limitations : []),
   ];
 
+  if (hasNonLiveData) {
+    return (
+      <section className="card result-section">
+        <div className="card-heading"><h2>Results blocked</h2><span className="pill red">Non-live provenance</span></div>
+        <p>This web workspace displays only live WebIQ evidence and live Foundry answers. This saved run contains non-live data and cannot be shown here.</p>
+      </section>
+    );
+  }
+
   return (
     <div className="result-sections">
       <section className="card result-section" id="query-plan">
         <div className="card-heading"><h2>Query plan</h2><span className="pill">{queries.length} queries</span></div>
-        {queries.length === 0 ? <p className="muted">No approved query plan is saved.</p> : queries.map((query) => (
+        {queries.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before a query plan could be saved." : "The query plan is being generated and will be bound automatically."}</p> : queries.map((query) => (
           <article className="query-result" key={query.query_id}>
             <div><span className="pill blue">{query.query_id}</span><strong>Priority {query.priority}</strong>{query.branded && <span className="pill">Branded</span>}</div>
             <p><strong>Conversational query:</strong> {query.chat_query}</p>
@@ -89,7 +107,7 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="webiq-evidence">
-        <div className="card-heading"><h2>WebIQ evidence</h2><span className="pill">{retrievals.length} packets</span></div>
+        <div className="card-heading"><h2>WebIQ evidence</h2><span className="pill green">Live · {retrievals.length} packets</span></div>
         {retrievals.length === 0 ? <p className="muted">No saved WebIQ evidence is available.</p> : retrievals.map((retrieval) => (
           <article className="evidence-packet" key={retrieval.query_id}>
             <h3>{retrieval.query_id}: {retrieval.status}</h3>
@@ -105,12 +123,12 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="model-answers">
-        <div className="card-heading"><h2>Model answers</h2><span className="pill amber">Untrusted evidence</span></div>
+        <div className="card-heading"><h2>Foundry answers</h2><span className="pill green">Live provider calls</span></div>
         {answers.length === 0 ? <p className="muted">No saved model answers are available.</p> : answers.map((answer) => (
           <article className="answer-result" key={`${answer.query_id}-${answer.profile_id}`}>
             <div><span className="pill blue">{answer.query_id}</span><strong>{answer.profile_id}</strong><span className={`pill ${answer.status === "completed" ? "green" : "red"}`}>{answer.status}</span></div>
             {answer.status === "completed" ? <p>{answer.answer}</p> : <p className="form-error">{answer.error || "Answer unavailable."}</p>}
-            <small>Citation IDs: {answer.citation_ids.length ? answer.citation_ids.join(", ") : "None"}</small>
+            <small>{answer.model ? `Model: ${answer.model}. ` : ""}Citation IDs: {answer.citation_ids.length ? answer.citation_ids.join(", ") : "None"}</small>
           </article>
         ))}
       </section>

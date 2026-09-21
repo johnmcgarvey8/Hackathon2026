@@ -204,7 +204,7 @@ def test_unbound_workflow_follow_up_reports_approved_queries_are_ready_to_start(
         owner,
         ProjectCreate(name="Approved Project", primary_domain="example.com"),
     )
-    measurement = measurement_result()
+    measurement = measurement_result("live")
     run = repository.create(owner, measurement.inputs, project_id=project.project_id)
     approved = MeasurementCoordinator(repository).approve(
         run.run_id,
@@ -265,7 +265,7 @@ def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
         owner,
         ProjectCreate(name="Unrelated Private Project", primary_domain="private.example"),
     )
-    measurement = measurement_result()
+    measurement = measurement_result("live")
     run = repository.create(owner, measurement.inputs, project_id=project.project_id)
     approved = MeasurementCoordinator(repository).approve(
         run.run_id, owner, run.revision, measurement.inputs.approval_hash,
@@ -414,7 +414,7 @@ def test_legacy_allowance_rows_are_untouched_by_hosted_chat_and_restart(workspac
 def test_legacy_run_bound_conversation_backfills_and_persists_context(workspace):
     repository, owner, projects = workspace
     project = projects[0]
-    measurement = measurement_result()
+    measurement = measurement_result("live")
     run = repository.create(
         owner,
         measurement.inputs,

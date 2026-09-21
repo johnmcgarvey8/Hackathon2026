@@ -41,7 +41,7 @@
         "cwd": "${workspaceFolder}",
         "env": {
           "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
-          "GEO_MEASUREMENT_BUDGET_GRANT": "${input:measurementBudgetGrant}",
+          "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}/geo-agent/measurement-live-budget-grant-10-runs.json",
           "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
         }
       },
@@ -55,12 +55,31 @@
       }
     },
     {
+      "label": "GEO: Run Next.js Web",
+      "type": "process",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}/web"
+      },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^(.+)$", "message": 1 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Ready in|Local:"
+        }
+      }
+    },
+    {
       "label": "GEO: Open Agent Inspector",
       "type": "shell",
       "command": "echo '${input:geoInspector}'",
       "dependsOn": [
         "GEO: Run Chat Debug Server",
-        "GEO: Run Live Measurement Worker"
+        "GEO: Run Live Measurement Worker",
+        "GEO: Run Next.js Web"
       ],
       "dependsOrder": "parallel",
       "presentation": { "reveal": "never" },
@@ -73,11 +92,6 @@
       "type": "command",
       "command": "ai-mlstudio.openTestTool",
       "args": { "triggeredFrom": "tasks", "port": 8090 }
-    },
-    {
-      "id": "measurementBudgetGrant",
-      "type": "promptString",
-      "description": "Absolute path to a fresh immutable grant matching measurement-live-policy-v2.json"
     }
   ]
 }

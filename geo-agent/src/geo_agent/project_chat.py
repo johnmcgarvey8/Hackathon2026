@@ -498,8 +498,6 @@ class ProjectConversationStore:
                 raise Conflict("Stale conversation revision; reload the conversation")
             if any(turn.status == "running" for turn in current.turns):
                 raise Conflict("A conversation turn is already running")
-            if len(current.turns) >= 30:
-                raise Conflict("Conversation turn limit reached")
             turn = ProjectConversationTurn(
                 sequence=len(current.turns) + 1,
                 message=request.message,

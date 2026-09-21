@@ -5,7 +5,8 @@ from geo_agent.contracts import (
     EvaluationResult,
     MeasurementResults,
     RetrievalResult,
-    SimulationProfile,
+    EvaluatorProfile,
+    Provenance,
     Source,
 )
 from geo_agent.execution_policy import MeasurementExecutionPolicy
@@ -18,6 +19,7 @@ from geo_agent.workflow import Conflict
 class EvaluationRequest(Contract):
     confirm_evaluation_calls: Literal[True]
     include_recommendations: bool = False
+    project_bound: bool = False
 
 
 class EvaluatorRecoveryRequest(Contract):
@@ -30,7 +32,7 @@ class SearchProvider(Protocol):
 
 class Evaluator(Protocol):
     @property
-    def profile(self) -> SimulationProfile: ...
+    def profile(self) -> EvaluatorProfile: ...
 
     def evaluate(self, query, locale: str, sources: tuple[Source, ...]) -> EvaluationResult: ...
 
@@ -66,6 +68,13 @@ class EvaluationHandler:
         run = self.repository.get(job.run_id, job.owner)
         if run.state != MeasurementState.EVALUATING or run.inputs is None or run.approval is None:
             raise Conflict("Evaluation requires leased, approved measurement inputs")
+        if not recovery and request.project_bound:
+            if self.policy.execution_mode != "live":
+                raise Conflict("Project measurements require a live execution policy")
+            try:
+                run.inputs.validate_live()
+            except ValueError as error:
+                raise Conflict(str(error)) from None
         recovery_profiles_match = (
             recovery
             and tuple(
@@ -153,6 +162,11 @@ class EvaluationHandler:
             retrievals=tuple(retrievals),
             results=tuple(results),
         )
+        if request.project_bound:
+            try:
+                measurement.validate_live()
+            except ValueError as error:
+                raise Conflict(str(error)) from None
         completed = sum(result.status == "completed" for result in measurement.results)
         state = (
             MeasurementState.READY
@@ -313,7 +327,7 @@ class EvaluationHandler:
     @staticmethod
     def _error_result(
         query_id: str,
-        profile: SimulationProfile,
+        profile: EvaluatorProfile,
         sources: tuple[Source, ...],
         provenance,
         error: str,

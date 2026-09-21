@@ -342,6 +342,16 @@ def test_worker_failure_is_sanitized_and_never_requeued(repository, owner):
     assert failed_job.error_code == "RuntimeError"
     assert failed_run.state == MeasurementState.NEEDS_REVIEW
     assert repository.lease_one_job("worker-b") is None
+    recovery_job, recovering_run = JobService(repository).enqueue(
+        failed_run.run_id,
+        owner,
+        failed_run.revision,
+        JobType.PREPARE,
+        "prepare-recovery",
+        {},
+    )
+    assert recovery_job.state == JobState.QUEUED
+    assert recovering_run.state == MeasurementState.PREPARING
     with repository.engine.connect() as connection:
         payload = connection.exec_driver_sql(
             "SELECT payload FROM operation_claims WHERE operation_key = 'prepare-1:browse'"

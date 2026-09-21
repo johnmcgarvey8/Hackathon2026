@@ -36,7 +36,7 @@ test("measurement runtime uses explicit actions and saved operation totals", () 
   assert.equal(totals.percentage, 67);
 });
 
-test("measurement pages preserve project authority and explicit confirmations", () => {
+test("measurement pages start one automatic live workflow", () => {
   const create = read("app/projects/[projectId]/measurements/new/page.tsx");
   const detail = read("app/projects/[projectId]/measurements/[runId]/page.tsx");
   assert.match(create, /project\.name/);
@@ -44,15 +44,17 @@ test("measurement pages preserve project authority and explicit confirmations", 
   assert.match(create, /project\.default_locale/);
   assert.match(create, /project\.active_goal/);
   assert.match(create, /Exact in-scope page/);
-  assert.match(detail, /confirmPreparation/);
-  assert.match(detail, /confirmEvaluation/);
-  assert.match(detail, /approval_hash/);
-  assert.match(detail, /Queries approved\. Confirm the evaluation provider calls/);
-  assert.match(detail, /Approve queries and unlock evaluation/);
-  assert.match(detail, /Retry failed evaluators using saved searches/);
-  assert.match(detail, /api\.recoverEvaluators/);
+  assert.match(create, /What do you want to learn/);
+  assert.match(create, /api\.createMeasurement/);
+  assert.match(create, /Start live measurement/);
+  assert.match(create, /No synthetic provider or fixture fallback/);
+  assert.match(detail, /running automatically/);
+  assert.match(detail, /Live WebIQ \+ Foundry/);
+  assert.doesNotMatch(detail, /confirmPreparation|confirmEvaluation/);
+  assert.doesNotMatch(detail, /Approve queries|Save query revision|Start approved run/);
+  assert.doesNotMatch(detail, /api\.prepareRun|api\.approveQueries|api\.startRun|api\.recoverEvaluators/);
   assert.match(detail, /status === 409/);
-  assert.match(detail, /query draft was preserved/i);
+  assert.match(detail, /Latest server state was reloaded/);
 });
 
 test("polling is bounded, visibility aware, and GET only", () => {
@@ -67,7 +69,7 @@ test("results are separated and unsafe evidence remains React text", () => {
   for (const heading of [
     "Query plan",
     "WebIQ evidence",
-    "Model answers",
+    "Foundry answers",
     "Citation performance",
     "Brand presence",
     "Recommendations",
@@ -80,6 +82,8 @@ test("results are separated and unsafe evidence remains React text", () => {
   assert.match(results, /Unsupported citation ID/);
   assert.match(results, /No citation/);
   assert.match(results, /findingLabels\(finding\)\.join/);
+  assert.match(results, /Results blocked/);
+  assert.match(results, /non-live data/);
   assert.doesNotMatch(results, /dangerouslySetInnerHTML/);
 });
 

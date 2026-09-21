@@ -17,7 +17,6 @@ from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.live import BudgetedLiveWorkflow, LiveWorkflow
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.measurement_api import OperatorPrincipal, create_measurement_router
-from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
 from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.project_api import create_project_router
@@ -52,7 +51,6 @@ class LiveBriefRequest(Brief):
 def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | BudgetedLiveWorkflow | None = None,
                chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
                measurement_policy: MeasurementExecutionPolicy | None = None,
-               measurement_auto_worker: bool = False,
                project_foundry: ProjectFoundrySettings | None = None) -> FastAPI:
     if not api_tokens or any(len(token) < 32 or not owner for token, owner in api_tokens.items()):
         raise ValueError("Configure at least one 32-character token mapped to an owner")
@@ -73,7 +71,6 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     measurement_repository = SQLiteMeasurementRepository(database)
     measurement_artifacts = LocalArtifactStorage(database.parent / "measurement-artifacts")
-    mock_runtime = None
 
     def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
         return OperatorPrincipal(
@@ -95,30 +92,19 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
     )
 
     if measurement_policy is not None:
-        mock_runtime = (
-            MockMeasurementRuntime(
-                measurement_repository,
-                measurement_policy,
-                on_job_finished=lambda job, run: project_chat_workflow.reconcile_job(
-                    job, run, project_agent,
-                ),
-            )
-            if measurement_auto_worker else None
-        )
-
         app.include_router(create_measurement_router(
             measurement_repository,
             measurement_policy,
             authenticate_operator,
             measurement_artifacts,
-            mock_runtime.drain if mock_runtime is not None else None,
+            None,
         ))
     app.include_router(create_project_router(
         measurement_repository,
         measurement_policy,
         authenticate_operator,
         measurement_artifacts,
-        mock_runtime.drain if mock_runtime is not None else None,
+        None,
     ))
     app.include_router(create_project_chat_router(
         ProjectChatService(
@@ -128,7 +114,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         ),
         measurement_policy,
         authenticate_operator,
-        mock_runtime.drain if mock_runtime is not None else None,
+        None,
     ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
@@ -223,7 +209,26 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "mode": "live-policy-enabled" if live else "chat-policy-enabled" if chat else "synthetic-only", "live_ready": False, "live_configured": live is not None, "chat_configured": chat is not None}
+        project_live = (
+            measurement_policy is not None
+            and measurement_policy.execution_mode == "live"
+        )
+        return {
+            "status": "ok",
+            "mode": (
+                "project-live-enabled"
+                if project_live else
+                "live-policy-enabled"
+                if live else
+                "chat-policy-enabled"
+                if chat else
+                "configuration-required"
+            ),
+            "live_ready": project_live and project_foundry is not None,
+            "live_configured": live is not None,
+            "chat_configured": chat is not None or project_foundry is not None,
+            "measurement_configured": project_live,
+        }
 
     @app.exception_handler(ProviderError)
     async def provider_handler(request: Request, error: ProviderError) -> JSONResponse:

@@ -35,7 +35,7 @@ Both `npm run dev` and `npm start` bind to `127.0.0.1` by default. This server-t
 - `/projects/[projectId]`: dashboard
 - `/projects/[projectId]/chat`: primary chat-first measurement and conversation workspace
 - `/projects/[projectId]/measurements/new`: secondary manual measurement workflow
-- `/projects/[projectId]/measurements/[runId]`: manual workflow preparation, approval, execution, and recovery
+- `/projects/[projectId]/measurements/[runId]`: automatic live progress, results, and recovery status
 - `/projects/[projectId]/control-plane`: read-only measurement progress and project run history
 - `/projects/[projectId]/control-plane/[runId]`: read-only results, saved downloads, and audit detail
 - `/projects/[projectId]/integrations`: available BFF status and explicit unavailable states
@@ -51,15 +51,17 @@ npm run build
 
 The BFF token is read only in `lib/server-api.ts`. It is never returned to browser code.
 
-## Measurement workflow
+## Live measurement workflow
 
-Chat is the primary measurement surface. A message containing a measurement request, valid in-scope project URL, and objective starts the backend workflow automatically. Chat displays the saved collecting, preparing, evaluating, completed, or failed status and returns the workflow-origin insight without inventing a user message. Pasting a valid run UUID into a new chat lets the backend bind that conversation to the saved run.
+Chat is the primary measurement surface. A message containing a measurement request, valid in-scope project URL, and objective starts the live backend workflow automatically. The secondary manual screen accepts the same two pieces of information: exact URL and goal. Both paths use WebIQ and Foundry, automatically advance preparation, query binding, evaluation, and recommendations, and never fall back to synthetic data.
 
 While a chat workflow is preparing or evaluating, the browser performs bounded, visibility-aware GET polling of the saved conversation, run, and progress. Polling pauses while the page is hidden and never retries a mutation. The **Manual measurement** link remains available for the secondary explicit workflow.
 
 All measurement traffic uses project-scoped BFF routes. The active Project supplies the brand name, allowed domains, locale, goal, ownership, and isolation boundary.
 
-Chat-first measurements use the authenticated user request as the instruction to create the run, prepare it, approve the exact generated query hash, and start evaluation. The application owns those mutations; the hosted Foundry agent receives no measurement tools. The secondary manual workflow retains separate preparation and evaluation confirmations, revision-bound query editing, and exact-hash approval. The Control Plane and its run detail route are strictly read-only. They load saved progress, results, ancillary assessments, jobs, events, and existing artifacts. Existing GET-only downloads are available, but the Control Plane never creates exports or exposes prepare, approve, start, review, recovery, or cancellation actions.
+The authenticated request creates the run and queues automatic live execution. The application binds the exact generated query hash and advances the durable jobs; the hosted Foundry agent receives no measurement tools. Query details remain visible as read-only evidence after preparation. The Control Plane and its run detail route are strictly read-only. They load saved progress, results, ancillary assessments, jobs, events, and existing artifacts.
+
+The measurement-capacity endpoint reports `unlimited: true`; historical operation counts remain available for auditing but do not block runs. Provider errors are saved as failures, and recoverable preparation failures can be resumed without human query approval. The application never substitutes fixtures.
 
 Run results keep Query plan, WebIQ evidence, Model answers, Citation performance, Brand presence, Recommendations, and Limitations separate. Model answers and passages in the results views render as text. Chat assistant replies render safe GitHub-flavoured Markdown with raw HTML disabled. Inline citation actions are created only when a bracketed ID matches the turn's structured citation metadata; unknown IDs remain visible as text. Artifact downloads pass through a binary BFF that preserves media type, filename, ETag, and private no-store caching.
 

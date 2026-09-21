@@ -109,14 +109,14 @@ export default function ControlPlanePage() {
             {runs.length === 0 ? <UnavailableState title="No run history" message="Start a measurement in Chat to populate the Control Plane." compact /> : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Page and objective</th><th>Status</th><th>Approval</th><th>Current operation</th><th>Revision</th><th>Updated</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Page and objective</th><th>Status</th><th>Automation</th><th>Current operation</th><th>Revision</th><th>Updated</th><th>Actions</th></tr></thead>
                   <tbody>{runs.map((run) => {
                     const savedProgress = progress[run.run_id] || run.progress || null;
                     return (
                       <tr key={run.run_id}>
                         <td><strong>{pageUrl(run)}</strong><small className="table-subtitle">{runObjective(run)}</small></td>
                         <td><span className={`pill ${["ready", "exported"].includes(run.state.toLowerCase()) ? "green" : run.state.toLowerCase() === "failed" ? "red" : "blue"}`}>{run.state}</span></td>
-                        <td>{run.approval ? "Approved" : run.approval_hash ? "Awaiting approval" : "Not prepared"}</td>
+                        <td>{run.approval ? "Query plan bound" : run.latest_job?.state === "failed" ? "Stopped during preparation" : "Preparing automatically"}</td>
                         <td>{savedProgress?.current_operation ? operationLabel(savedProgress.current_operation) : "None"}</td>
                         <td>{run.revision}</td>
                         <td>{displayDate(run.updated_at || run.created_at)}</td>

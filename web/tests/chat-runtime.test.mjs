@@ -31,7 +31,6 @@ test("runtime labels preserve dynamic agent identity without implying verificati
   assert.equal(labels.runtimeLabel(runtime), "Live Foundry selected");
   assert.equal(labels.agentLabel(runtime), "server-selected-agent · version 42 · Shared default");
   assert.match(labels.agentLabel({ ...runtime, agent: { ...runtime.agent, scope: "project" } }), /Project override/);
-  assert.equal(labels.runtimeLabel({ ...runtime, mode: "mock" }), "Mock assistant");
   assert.equal(labels.runtimeLabel({ ...runtime, mode: "unavailable" }), "Live agent unavailable");
   assert.equal(labels.runtimeLabel(null), "Runtime status unavailable");
   assert.equal(labels.agentLabel(null), null);

@@ -55,9 +55,10 @@ class ChatRequest(Contract):
 
 
 class ChatStore:
-    def __init__(self, store: RunStore, policy: ChatPolicy):
+    def __init__(self, store: RunStore, policy: ChatPolicy, *, enforce_budget: bool = True):
         self.store = store
         self.policy = policy
+        self.enforce_budget = enforce_budget
         initialise_grants(store)
         with store.connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS chat_budgets (policy_id TEXT PRIMARY KEY, policy_hash TEXT NOT NULL, used INTEGER NOT NULL)")
@@ -72,13 +73,28 @@ class ChatStore:
             used = connection.execute("SELECT used FROM chat_budgets WHERE policy_id = ?", (self.policy.policy_id,)).fetchone()[0]
             added = connection.execute("SELECT COALESCE(SUM(chat_requests), 0) FROM budget_grants WHERE chat_policy_id = ? AND owner = ?", (self.policy.policy_id, self.policy.owner)).fetchone()[0]
         limit = self.policy.max_requests + added
-        return {"policy_id": self.policy.policy_id, "used": used, "limit": limit, "remaining": limit - used, "additional_requests": added}
+        budget = {
+            "policy_id": self.policy.policy_id,
+            "used": used,
+            "limit": limit if self.enforce_budget else None,
+            "remaining": limit - used if self.enforce_budget else None,
+            "additional_requests": added,
+        }
+        if not self.enforce_budget:
+            budget["unlimited"] = True
+        return budget
 
     def reserve(self) -> int:
         with self.store.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            added = connection.execute("SELECT COALESCE(SUM(chat_requests), 0) FROM budget_grants WHERE chat_policy_id = ? AND owner = ?", (self.policy.policy_id, self.policy.owner)).fetchone()[0]
-            row = connection.execute("UPDATE chat_budgets SET used = used + 1 WHERE policy_id = ? AND used < ? RETURNING used", (self.policy.policy_id, self.policy.max_requests + added)).fetchone()
+            if self.enforce_budget:
+                added = connection.execute("SELECT COALESCE(SUM(chat_requests), 0) FROM budget_grants WHERE chat_policy_id = ? AND owner = ?", (self.policy.policy_id, self.policy.owner)).fetchone()[0]
+                row = connection.execute("UPDATE chat_budgets SET used = used + 1 WHERE policy_id = ? AND used < ? RETURNING used", (self.policy.policy_id, self.policy.max_requests + added)).fetchone()
+            else:
+                row = connection.execute(
+                    "UPDATE chat_budgets SET used = used + 1 WHERE policy_id = ? RETURNING used",
+                    (self.policy.policy_id,),
+                ).fetchone()
             if row is None:
                 raise ProviderError("Chat request budget exhausted; new human authorisation is required")
             return row[0]
@@ -115,7 +131,7 @@ class ChatStore:
                 raise Conflict("Stale conversation revision")
             if any(turn["status"] == "running" for turn in chat["turns"]):
                 raise Conflict("A turn is already running; interrupted turns require manual review")
-            if len(chat["turns"]) >= 12:
+            if self.enforce_budget and len(chat["turns"]) >= 12:
                 raise Conflict("Conversation turn limit reached")
             chat["turns"].append({**request.model_dump(), "status": "running", "answer": None, "error": None, "calls": [], "tool_trace": []})
             connection.execute("UPDATE chats SET payload = ? WHERE chat_id = ?", (json.dumps(chat), chat_id))
@@ -179,9 +195,10 @@ class BudgetTransport(httpx.AsyncBaseTransport):
 
 class ConversationAgent:
     def __init__(self, store: RunStore, policy: ChatPolicy, *, token_provider: Callable[[], str] = azure_cli_token,
-                 transport: httpx.AsyncBaseTransport | None = None, endpoint: str | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, endpoint: str | None = None,
+                 enforce_budget: bool = True):
         self.base_url = model_base_url(endpoint or policy.endpoint)
-        self.chats = ChatStore(store, policy)
+        self.chats = ChatStore(store, policy, enforce_budget=enforce_budget)
         self.token_provider = token_provider
         self.transport = transport
 
@@ -194,7 +211,7 @@ class ConversationAgent:
         answer = None
         error = None
         try:
-            if self.chats.budget()["remaining"] == 0:
+            if self.chats.enforce_budget and self.chats.budget()["remaining"] == 0:
                 raise ProviderError("Chat request budget exhausted; new human authorisation is required")
             tools = RunTools(self.chats.store, owner, chat["run_id"])
 

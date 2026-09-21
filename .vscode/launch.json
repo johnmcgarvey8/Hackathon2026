@@ -37,25 +37,18 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
-        "GEO_MEASUREMENT_BUDGET_GRANT": "${input:measurementBudgetGrant}",
+        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}/geo-agent/measurement-live-budget-grant-10-runs.json",
         "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
       },
       "console": "integratedTerminal",
       "justMyCode": true
     },
     {
-      "name": "GEO: Local Synthetic Backend",
-      "type": "debugpy",
+      "name": "GEO: Next.js Web",
+      "type": "node-terminal",
       "request": "launch",
-      "module": "geo_agent",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}/geo-agent/src",
-        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data",
-        "GEO_PORT": "8088"
-      },
-      "console": "integratedTerminal",
-      "justMyCode": true
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}/web"
     }
   ],
   "compounds": [
@@ -63,16 +56,10 @@
       "name": "GEO: Full Live Workspace",
       "configurations": [
         "GEO: Conversational Agent Server",
-        "GEO: Live Measurement Worker"
+        "GEO: Live Measurement Worker",
+        "GEO: Next.js Web"
       ],
       "stopAll": true
-    }
-  ],
-  "inputs": [
-    {
-      "id": "measurementBudgetGrant",
-      "type": "promptString",
-      "description": "Absolute path to a fresh immutable grant matching measurement-live-policy-v2.json"
     }
   ]
 }

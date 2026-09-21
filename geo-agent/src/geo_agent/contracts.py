@@ -216,7 +216,7 @@ class QueryPlan(Contract):
                 raise ValueError("Query plan contains an unsupported page reference or quote")
 
 
-class SimulationProfile(Contract):
+class EvaluatorProfile(Contract):
     profile_id: Literal["chatgpt-style", "claude-backed", "copilot-style"]
     provider: Literal["openai-responses", "anthropic-messages"]
     deployment: str = Field(min_length=1, max_length=200)
@@ -226,11 +226,15 @@ class SimulationProfile(Contract):
     simulation: Literal[True] = True
 
     @model_validator(mode="after")
-    def validate_provider(self) -> "SimulationProfile":
+    def validate_provider(self) -> "EvaluatorProfile":
         expected = "anthropic-messages" if self.profile_id == "claude-backed" else "openai-responses"
         if self.provider != expected:
-            raise ValueError("Simulation label does not match the configured provider")
+            raise ValueError("Evaluator profile does not match the configured provider")
         return self
+
+
+# Compatibility alias for persisted v2 inputs and existing integrations.
+SimulationProfile = EvaluatorProfile
 
 
 class MeasurementInputs(Contract):
@@ -238,7 +242,7 @@ class MeasurementInputs(Contract):
     brief: Brief
     snapshot: PageSnapshot
     query_plan: QueryPlan
-    profiles: tuple[SimulationProfile, ...] = Field(min_length=1, max_length=3)
+    profiles: tuple[EvaluatorProfile, ...] = Field(min_length=1, max_length=3)
     policy_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     method_version: Literal["exact-page-citation/v1"] = "exact-page-citation/v1"
     retrieval_mode: Literal["controlled-evidence-packet"] = "controlled-evidence-packet"
@@ -251,9 +255,13 @@ class MeasurementInputs(Contract):
         if len({profile.profile_id for profile in self.profiles}) != len(self.profiles):
             raise ValueError("Profile IDs must be unique")
         if len({(profile.endpoint, profile.deployment) for profile in self.profiles}) != len(self.profiles):
-            raise ValueError("Simulation profiles require distinct deployments")
+            raise ValueError("Evaluator profiles require distinct deployments")
         self.query_plan.validate_evidence(self.snapshot)
         return self
+
+    def validate_live(self) -> None:
+        if self.snapshot.provenance != Provenance.LIVE:
+            raise ValueError("Project measurement inputs require a live page snapshot")
 
     @property
     def approval_hash(self) -> str:
@@ -320,3 +328,20 @@ class MeasurementResults(Contract):
             if result.sources != (packet.sources if packet else ()):
                 raise ValueError("Answer sources must exactly match the saved retrieval packet")
         return self
+
+    def validate_live(self) -> None:
+        self.inputs.validate_live()
+        if any(packet.provenance != Provenance.LIVE for packet in self.retrievals):
+            raise ValueError("Project measurement retrievals require live provenance")
+        if any(result.provenance != Provenance.LIVE for result in self.results):
+            raise ValueError("Project measurement answers require live provenance")
+        if any(
+            source.provenance != Provenance.LIVE
+            for packet in self.retrievals
+            for source in packet.sources
+        ) or any(
+            source.provenance != Provenance.LIVE
+            for result in self.results
+            for source in result.sources
+        ):
+            raise ValueError("Project measurement evidence requires live provenance")

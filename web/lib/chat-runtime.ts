@@ -4,7 +4,6 @@ const pollableWorkflowStatuses = new Set(["preparing", "evaluating"]);
 
 export function runtimeLabel(runtime: ChatStatus | null): string {
   if (!runtime) return "Runtime status unavailable";
-  if (runtime.mode === "mock") return "Mock assistant";
   if (runtime.mode === "unavailable") return "Live agent unavailable";
   return "Live Foundry selected";
 }
