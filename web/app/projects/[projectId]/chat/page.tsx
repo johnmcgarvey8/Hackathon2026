@@ -465,7 +465,6 @@ export default function ChatPage() {
         </div>
 
         <div className="composer-dock">
-          {runtime && <div className="small muted" role="status"><strong>{runtimeLabel(runtime)}</strong><p>{runtime.detail}</p>{runtime.mode === "foundry" && <p>Configuration is not remote verification. No tools or knowledge retrieval are connected.</p>}</div>}
           {error && <UnavailableState title="Request unavailable" message={error} compact />}
           {(recoveryId || pendingTurn) && <button className="button ghost" type="button" disabled={sending || changingConversation} onClick={() => void recover()}>Reload saved conversation</button>}
           <form className="prompt-composer" onSubmit={(event) => void submit(event)}>

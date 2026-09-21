@@ -63,8 +63,6 @@ export default function IntegrationsPage() {
           <summary><span className="category-symbol iq">AI</span><span className="category-heading"><strong>Project assistant</strong><small>Microsoft Foundry runtime</small></span><span className={`pill ${runtime?.can_send ? "amber" : "red"}`}>{loading ? "Loading runtime" : runtimeLabel(runtime)}</span></summary>
           <div className="integration-category-content">
             {agentLabel(runtime) && <p><strong>{agentLabel(runtime)}</strong></p>}
-            {runtime && <p>{runtime.detail}</p>}
-            {runtime?.mode === "foundry" && <p className="muted">Configuration is not remote verification. No tools or knowledge retrieval are connected. Organisational retrieval remains unavailable.</p>}
             {error && <UnavailableState title="Runtime status unavailable" message={error} compact />}
             <p className="muted">Status is provided by the project BFF. Credentials and bearer tokens remain server-only.</p>
           </div>

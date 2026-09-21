@@ -54,7 +54,7 @@ test("switching projects remounts the project workspace", () => {
   assert.doesNotMatch(shell, /router\.push\(`\/projects\/\$\{value\}\$\{suffix\}`\)/);
 });
 
-test("chat and integrations render server-selected runtime identity without allowance labels", () => {
+test("chat and integrations use server-selected runtime identity without allowance labels", () => {
   for (const path of [
     "app/projects/[projectId]/chat/page.tsx",
     "app/projects/[projectId]/integrations/page.tsx",
@@ -62,10 +62,13 @@ test("chat and integrations render server-selected runtime identity without allo
     const source = read(path);
     assert.match(source, /api\.chatStatus\(project\.project_id\)/);
     assert.match(source, /agentLabel\(runtime\)/);
-    assert.match(source, /Configuration is not remote verification/);
     assert.doesNotMatch(source, /budgetLabel|requests remaining|owner budget/i);
     assert.doesNotMatch(source, /ggs-geo-hackathon2026|project\.foundry_status/);
   }
+  const chat = read("app/projects/[projectId]/chat/page.tsx");
+  assert.doesNotMatch(chat, /runtime\.detail|Configuration is not remote verification/);
+  const integrations = read("app/projects/[projectId]/integrations/page.tsx");
+  assert.doesNotMatch(integrations, /runtime\.detail|Configuration is not remote verification/);
   assert.match(read("lib/types.ts"), /mode: "foundry" \| "mock" \| "unavailable"/);
   assert.doesNotMatch(read("lib/types.ts"), /budget\?:|remaining:\s*number/);
   assert.doesNotMatch(read("lib/chat-runtime.ts"), /budget|requests remaining/i);
