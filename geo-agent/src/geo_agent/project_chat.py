@@ -28,7 +28,7 @@ class ProjectAgentReply(Contract):
     answer: str = Field(min_length=1, max_length=10000)
     citations: tuple[ProjectChatCitation, ...] = ()
     provider_response_id: str | None = Field(default=None, max_length=500)
-    mode: Literal["mock", "foundry"]
+    mode: Literal["mock", "foundry", "workflow"]
     agent_name: str | None = None
     agent_version: str | None = None
     context_hash: str | None = None
@@ -42,18 +42,39 @@ class ProjectChatRequest(Contract):
     use_organisational_context: bool = False
 
 
+class ProjectMeasurementWorkflow(Contract):
+    status: Literal["collecting", "preparing", "evaluating", "completed", "failed"]
+    url: str | None = Field(default=None, max_length=2000)
+    objective: str | None = Field(default=None, max_length=1000)
+    run_id: str | None = None
+    source_idempotency_key: str
+    error: str | None = Field(default=None, max_length=1000)
+
+
+class BoundProjectContext(Contract):
+    name: str
+    domains: tuple[str, ...]
+    locale: str
+    goal: str | None = None
+    brand_definition_version: int | None = Field(default=None, ge=1)
+    brand_definition_hash: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$",
+    )
+
+
 class ProjectConversationTurn(Contract):
     sequence: int = Field(ge=1)
     message: str = Field(min_length=1, max_length=4000)
     idempotency_key: str = Field(min_length=1, max_length=128)
     expected_revision: int = Field(ge=0)
     use_organisational_context: bool
+    origin: Literal["user", "workflow"] = "user"
     status: Literal["running", "completed", "failed"]
     answer: str | None = None
     error: str | None = None
     citations: tuple[ProjectChatCitation, ...] = ()
     provider_response_id: str | None = None
-    mode: Literal["mock", "foundry"] | None = None
+    mode: Literal["mock", "foundry", "workflow"] | None = None
     agent_name: str | None = None
     agent_version: str | None = None
     context_hash: str | None = None
@@ -67,6 +88,8 @@ class ProjectConversation(Contract):
     conversation_id: str = Field(default_factory=identifier)
     project_id: str
     run_id: str | None = None
+    measurement_workflow: ProjectMeasurementWorkflow | None = None
+    bound_project_context: BoundProjectContext | None = None
     owner: OwnerIdentity
     revision: int = Field(default=0, ge=0)
     title: str = "New conversation"
@@ -84,6 +107,15 @@ class ProjectAgent(Protocol):
         conversation: ProjectConversation,
         request: ProjectChatRequest,
     ) -> ProjectAgentReply: ...
+
+
+class ProjectChatWorkflowHandler(Protocol):
+    def handle(
+        self,
+        project: Project,
+        conversation: ProjectConversation,
+        request: ProjectChatRequest,
+    ) -> tuple[ProjectConversation, ProjectAgentReply | None]: ...
 
 
 class FoundryAgentClient:
@@ -204,6 +236,56 @@ class ProjectConversationStore:
     def _read_payload(row) -> ProjectConversation:
         return ProjectConversation.model_validate_json(row.payload)
 
+    def _bound_context(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> BoundProjectContext:
+        project = self.repository.get_project(project_id, owner)
+        self.repository.get_project_run(project_id, run_id, owner)
+        definition = self.repository.get_brand_definition(run_id, owner)
+        return BoundProjectContext(
+            name=project.name,
+            domains=project.domains,
+            locale=project.default_locale,
+            goal=project.active_goal,
+            brand_definition_version=(
+                definition.definition_version if definition else None
+            ),
+            brand_definition_hash=(
+                definition.definition_hash if definition else None
+            ),
+        )
+
+    def _backfill_bound_context(
+        self,
+        conversation: ProjectConversation,
+    ) -> ProjectConversation:
+        if conversation.run_id is None or conversation.bound_project_context is not None:
+            return conversation
+        try:
+            bound_context = self._bound_context(
+                conversation.project_id,
+                conversation.run_id,
+                conversation.owner,
+            )
+        except NotFound:
+            return conversation
+        updated = conversation.model_copy(update={
+            "bound_project_context": bound_context,
+        })
+        with self.repository.engine.begin() as connection:
+            result = connection.execute(update(project_conversations).where(
+                project_conversations.c.conversation_id == conversation.conversation_id,
+                project_conversations.c.project_id == conversation.project_id,
+                project_conversations.c.owner_key == conversation.owner.key,
+                project_conversations.c.revision == conversation.revision,
+            ).values(payload=updated.model_dump_json()))
+            if result.rowcount != 1:
+                return conversation
+        return updated
+
     def create(
         self,
         project_id: str,
@@ -211,9 +293,15 @@ class ProjectConversationStore:
         run_id: str | None = None,
     ) -> ProjectConversation:
         self.repository.get_project(project_id, owner)
+        bound_project_context = None
         if run_id is not None:
-            self.repository.get_project_run(project_id, run_id, owner)
-        conversation = ProjectConversation(project_id=project_id, run_id=run_id, owner=owner)
+            bound_project_context = self._bound_context(project_id, run_id, owner)
+        conversation = ProjectConversation(
+            project_id=project_id,
+            run_id=run_id,
+            bound_project_context=bound_project_context,
+            owner=owner,
+        )
         with self.repository.engine.begin() as connection:
             connection.execute(insert(project_conversations).values(
                 conversation_id=conversation.conversation_id,
@@ -241,7 +329,8 @@ class ProjectConversationStore:
             )).first()
             if row is None:
                 raise NotFound("Project conversation not found")
-            return self._read_payload(row)
+            conversation = self._read_payload(row)
+        return self._backfill_bound_context(conversation)
 
     def list(
         self,
@@ -259,7 +348,112 @@ class ProjectConversationStore:
                 key=lambda item: (item.updated_at, item.conversation_id),
                 reverse=True,
             )
-            return tuple(conversations)
+        return tuple(
+            self._backfill_bound_context(conversation)
+            for conversation in conversations
+        )
+
+    def find_workflow_by_run(
+        self,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> ProjectConversation | None:
+        with self.repository.engine.connect() as connection:
+            rows = connection.execute(select(project_conversations).where(
+                project_conversations.c.run_id == run_id,
+                project_conversations.c.owner_key == owner.key,
+            ).order_by(project_conversations.c.created_at.asc())).all()
+        for row in rows:
+            conversation = self._read_payload(row)
+            if (
+                conversation.measurement_workflow is not None
+                and conversation.measurement_workflow.run_id == run_id
+            ):
+                return conversation
+        return None
+
+    def update_active(
+        self,
+        conversation: ProjectConversation,
+        *,
+        workflow: ProjectMeasurementWorkflow | None = None,
+        run_id: str | None = None,
+    ) -> ProjectConversation:
+        effective_run_id = run_id if run_id is not None else conversation.run_id
+        bound_context = conversation.bound_project_context
+        if effective_run_id is not None and effective_run_id != conversation.run_id:
+            bound_context = self._bound_context(
+                conversation.project_id,
+                effective_run_id,
+                conversation.owner,
+            )
+        updated = conversation.model_copy(update={
+            "run_id": effective_run_id,
+            "bound_project_context": bound_context,
+            "measurement_workflow": (
+                workflow if workflow is not None else conversation.measurement_workflow
+            ),
+            "updated_at": utc_now(),
+        })
+        with self.repository.engine.begin() as connection:
+            result = connection.execute(update(project_conversations).where(
+                project_conversations.c.conversation_id == conversation.conversation_id,
+                project_conversations.c.project_id == conversation.project_id,
+                project_conversations.c.owner_key == conversation.owner.key,
+                project_conversations.c.revision == conversation.revision,
+            ).values(
+                run_id=effective_run_id,
+                payload=updated.model_dump_json(),
+                updated_at=updated.updated_at.isoformat(),
+            ))
+            if result.rowcount != 1:
+                raise Conflict("Conversation changed concurrently; reload it")
+        return updated
+
+    def set_workflow(
+        self,
+        conversation: ProjectConversation,
+        workflow: ProjectMeasurementWorkflow,
+    ) -> ProjectConversation:
+        updated = conversation.model_copy(update={
+            "revision": conversation.revision + 1,
+            "measurement_workflow": workflow,
+            "updated_at": utc_now(),
+        })
+        with self.repository.engine.begin() as connection:
+            result = connection.execute(update(project_conversations).where(
+                project_conversations.c.conversation_id == conversation.conversation_id,
+                project_conversations.c.owner_key == conversation.owner.key,
+                project_conversations.c.revision == conversation.revision,
+            ).values(
+                revision=updated.revision,
+                payload=updated.model_dump_json(),
+                updated_at=updated.updated_at.isoformat(),
+            ))
+            if result.rowcount != 1:
+                raise Conflict("Conversation changed concurrently; reload it")
+        return updated
+
+    def clear_workflow(
+        self,
+        conversation: ProjectConversation,
+    ) -> ProjectConversation:
+        updated = conversation.model_copy(update={
+            "measurement_workflow": None,
+            "updated_at": utc_now(),
+        })
+        with self.repository.engine.begin() as connection:
+            result = connection.execute(update(project_conversations).where(
+                project_conversations.c.conversation_id == conversation.conversation_id,
+                project_conversations.c.owner_key == conversation.owner.key,
+                project_conversations.c.revision == conversation.revision,
+            ).values(
+                payload=updated.model_dump_json(),
+                updated_at=updated.updated_at.isoformat(),
+            ))
+            if result.rowcount != 1:
+                raise Conflict("Conversation changed concurrently; reload it")
+        return updated
 
     def claim(
         self,
@@ -267,6 +461,8 @@ class ProjectConversationStore:
         conversation_id: str,
         owner: OwnerIdentity,
         request: ProjectChatRequest,
+        *,
+        origin: Literal["user", "workflow"] = "user",
     ) -> tuple[ProjectConversation, bool]:
         with self.repository.engine.begin() as connection:
             row = connection.execute(select(project_conversations).where(
@@ -277,6 +473,18 @@ class ProjectConversationStore:
             if row is None:
                 raise NotFound("Project conversation not found")
             current = self._read_payload(row)
+            if current.run_id is not None and current.bound_project_context is None:
+                current = current.model_copy(update={
+                    "bound_project_context": self._bound_context(
+                        current.project_id,
+                        current.run_id,
+                        current.owner,
+                    ),
+                })
+                connection.execute(update(project_conversations).where(
+                    project_conversations.c.conversation_id == conversation_id,
+                    project_conversations.c.revision == current.revision,
+                ).values(payload=current.model_dump_json()))
             for turn in current.turns:
                 if turn.idempotency_key == request.idempotency_key:
                     if (
@@ -298,6 +506,7 @@ class ProjectConversationStore:
                 idempotency_key=request.idempotency_key,
                 expected_revision=request.expected_revision,
                 use_organisational_context=request.use_organisational_context,
+                origin=origin,
                 status="running",
             )
             updated = current.model_copy(update={
@@ -377,10 +586,12 @@ class ProjectChatService:
         self,
         repository: SQLAlchemyMeasurementRepository,
         agent: ProjectAgent,
+        workflow: ProjectChatWorkflowHandler | None = None,
     ):
         self.repository = repository
         self.store = ProjectConversationStore(repository)
         self.agent = agent
+        self.workflow = workflow
 
     async def respond(
         self,
@@ -401,7 +612,13 @@ class ProjectChatService:
             project = self.repository.get_project(project_id, owner)
             if project.archived:
                 raise Conflict("This project is archived")
-            reply = await self.agent.respond(project, conversation, request)
+            reply = None
+            if self.workflow is not None:
+                conversation, reply = self.workflow.handle(
+                    project, conversation, request,
+                )
+            if reply is None:
+                reply = await self.agent.respond(project, conversation, request)
         except Conflict as failure:
             return self.store.finish(
                 project_id,

@@ -12,8 +12,8 @@ import { LoadingState, UnavailableState } from "./status-state";
 
 const navItems: { href: string; label: string; icon: IconName; disabled?: boolean }[] = [
   { href: "", label: "Dashboard", icon: "dashboard" },
-  { href: "/chat", label: "Chat", icon: "chat" },
   { href: "/control-plane", label: "Control Plane", icon: "control" },
+  { href: "/chat", label: "Chat", icon: "chat" },
   { href: "/cms-updates", label: "CMS Updates", icon: "cms", disabled: true },
   { href: "/integrations", label: "Integrations", icon: "integrations" },
 ];
@@ -67,7 +67,10 @@ export function ProjectShell({ children }: { children: React.ReactNode }) {
       return;
     }
     const suffix = pathname.replace(`/projects/${projectId}`, "");
-    router.push(`/projects/${value}${suffix}`);
+    const safeSuffix = ["/control-plane", "/chat", "/integrations"].includes(suffix)
+      ? suffix
+      : "";
+    router.push(`/projects/${value}${safeSuffix}`);
   };
 
   return (
@@ -114,7 +117,10 @@ export function ProjectShell({ children }: { children: React.ReactNode }) {
           <nav>
             {navItems.map((item) => {
               const href = `/projects/${projectId}${item.href}`;
-              const active = pathname === href;
+              const active = pathname === href
+                || (item.href === "/control-plane" && (
+                  pathname.startsWith(`${href}/`) || pathname.includes("/measurements/")
+                ));
               return (
                 <Link
                   className={`nav-item ${active ? "active" : ""} ${item.disabled ? "future" : ""}`}

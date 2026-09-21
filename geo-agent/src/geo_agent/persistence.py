@@ -461,6 +461,20 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 raise NotFound("Measurement run not found in project")
             return self._read(connection, run_id, owner)
 
+    def get_run_project_id(
+        self,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> str | None:
+        with self.engine.connect() as connection:
+            self._read(connection, run_id, owner)
+            return connection.execute(
+                select(project_runs.c.project_id).where(
+                    project_runs.c.run_id == run_id,
+                    project_runs.c.owner_key == owner.key,
+                )
+            ).scalar_one_or_none()
+
     def create(
         self,
         owner: OwnerIdentity,
@@ -804,11 +818,24 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     raise Conflict("Preparation can only be queued for a draft run")
                 next_state = MeasurementState.PREPARING
                 event_type = "preparation-queued"
-            else:
+            elif job_type == JobType.EVALUATE:
                 if current.state != MeasurementState.AWAITING_APPROVAL or current.approval is None:
                     raise Conflict("Evaluation requires current human query approval")
                 next_state = MeasurementState.QUEUED
                 event_type = "evaluation-queued"
+            else:
+                failed_results = (
+                    tuple(result for result in current.measurement.results if result.status == "error")
+                    if current.measurement is not None else ()
+                )
+                if (
+                    current.state not in {MeasurementState.FAILED, MeasurementState.PARTIAL}
+                    or current.approval is None
+                    or not failed_results
+                ):
+                    raise Conflict("Evaluator recovery requires saved failed evaluator results")
+                next_state = MeasurementState.QUEUED
+                event_type = "evaluator-recovery-queued"
             updated_run = self._mutate_run(
                 connection,
                 current,
@@ -914,7 +941,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             run = self._read(connection, job.run_id, job.owner)
             if run.revision != job.run_revision:
                 raise Conflict("Queued job is bound to a stale measurement revision")
-            if job.job_type == JobType.EVALUATE:
+            if job.job_type in {JobType.EVALUATE, JobType.RECOVER_EVALUATORS}:
                 run = self._mutate_run(
                     connection,
                     run,
@@ -1155,6 +1182,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             allowed_states = {
                 JobType.PREPARE: {MeasurementState.AWAITING_APPROVAL},
                 JobType.EVALUATE: {
+                    MeasurementState.READY,
+                    MeasurementState.PARTIAL,
+                    MeasurementState.FAILED,
+                },
+                JobType.RECOVER_EVALUATORS: {
                     MeasurementState.READY,
                     MeasurementState.PARTIAL,
                     MeasurementState.FAILED,

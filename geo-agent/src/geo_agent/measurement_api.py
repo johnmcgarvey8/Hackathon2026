@@ -8,20 +8,19 @@ from pydantic import Field
 from geo_agent.artifact_storage import ArtifactRepository, ArtifactService, ArtifactStorage, MeasurementArtifact
 from geo_agent.artifacts import render_assessment_bundle, render_content_strategy_bundle
 from geo_agent.contracts import Brief, Contract, MeasurementInputs, QueryPair, QueryPlan
-from geo_agent.evaluation_workflow import EvaluationRequest
+from geo_agent.evaluation_workflow import EvaluationRequest, EvaluatorRecoveryRequest
 from geo_agent.execution_policy import MeasurementExecutionPolicy
-from geo_agent.evaluation import measurement_scores
 from geo_agent.evidence_assessment import BrandDefinition, build_evidence_assessment
 from geo_agent.jobs import JobRepository, JobService, JobType, WorkflowJob
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
     RecommendationDecision,
     MeasurementRepository,
-    MeasurementRun,
     OwnerIdentity,
 )
 from geo_agent.preparation import PreparationRequest
 from geo_agent.recommendations import build_content_strategy
+from geo_agent.run_view import build_run_view, job_view
 from geo_agent.workflow import Conflict, NotFound
 
 
@@ -74,23 +73,16 @@ class StartEvaluationRequest(QueueRequest):
     include_recommendations: bool = False
 
 
+class RecoverEvaluatorsRequest(QueueRequest):
+    confirm_evaluation_calls: bool
+
+
 class ReviewRecommendationsRequest(RevisionRequest):
     decisions: tuple[RecommendationDecision, ...] = Field(min_length=1, max_length=3)
 
 
-def _run_view(run: MeasurementRun) -> dict:
-    payload = run.model_dump(mode="json", exclude={"owner"})
-    if payload["approval"] is not None:
-        payload["approval"].pop("actor", None)
-    if payload["recommendation_review"] is not None:
-        payload["recommendation_review"].pop("actor", None)
-    payload["approval_hash"] = run.inputs.approval_hash if run.inputs is not None else None
-    payload["scores"] = measurement_scores(run.measurement) if run.measurement is not None else None
-    return payload
-
-
 def _job_view(job: WorkflowJob) -> dict:
-    return job.model_dump(mode="json", exclude={"owner", "request"})
+    return job_view(job)
 
 
 def _artifact_view(artifact: MeasurementArtifact) -> dict:
@@ -108,6 +100,7 @@ def create_measurement_router(
     coordinator = MeasurementCoordinator(repository)
     jobs = JobService(repository)
     artifact_service = ArtifactService(repository, artifact_storage)
+    run_view = lambda run: build_run_view(repository, run, policy)
 
     def require_operator(
         principal: Annotated[OperatorPrincipal, Depends(authenticate)],
@@ -143,7 +136,7 @@ def create_measurement_router(
     def create_brief(body: CreateMeasurementBriefRequest, owner: OwnerIdentity = owner_dependency) -> dict:
         brief = Brief.model_validate(body.model_dump(exclude={"brand_definition"}))
         policy.validate_brief(brief)
-        return _run_view(repository.create(owner, brief=brief, brand_definition=body.brand_definition))
+        return run_view(repository.create(owner, brief=brief, brand_definition=body.brand_definition))
 
     @router.post("/runs/{run_id}/brand-definition")
     def save_brand_definition(run_id: str, body: SaveBrandDefinitionRequest,
@@ -189,7 +182,7 @@ def create_measurement_router(
 
     @router.get("/runs")
     def list_runs(owner: OwnerIdentity = owner_dependency) -> list[dict]:
-        return [_run_view(run) for run in repository.list_runs(owner)]
+        return [run_view(run) for run in repository.list_runs(owner)]
 
     @router.get("/runs/{run_id}/content-strategy")
     def get_content_strategy(run_id: str, response: Response, owner: OwnerIdentity = owner_dependency) -> dict:
@@ -239,7 +232,7 @@ def create_measurement_router(
         )
         if run_pending_jobs is not None:
             background_tasks.add_task(run_pending_jobs)
-        return {"job": _job_view(job), "run": _run_view(updated)}
+        return {"job": _job_view(job), "run": run_view(updated)}
 
     @router.post("/runs/{run_id}/query-approval")
     def approve_queries(
@@ -247,7 +240,7 @@ def create_measurement_router(
         body: ApproveQueriesRequest,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        return _run_view(coordinator.approve(
+        return run_view(coordinator.approve(
             run_id,
             owner,
             body.expected_revision,
@@ -271,7 +264,7 @@ def create_measurement_router(
             })
         except ValueError:
             raise HTTPException(422, "Queries must be unique and retain supported page evidence") from None
-        return _run_view(coordinator.revise_inputs(
+        return run_view(coordinator.revise_inputs(
             run_id,
             owner,
             body.expected_revision,
@@ -300,7 +293,28 @@ def create_measurement_router(
         )
         if run_pending_jobs is not None:
             background_tasks.add_task(run_pending_jobs)
-        return {"job": _job_view(job), "run": _run_view(updated)}
+        return {"job": _job_view(job), "run": run_view(updated)}
+
+    @router.post("/runs/{run_id}/recover-evaluators", status_code=202)
+    def recover_evaluators(
+        run_id: str,
+        body: RecoverEvaluatorsRequest,
+        background_tasks: BackgroundTasks,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        if body.confirm_evaluation_calls is not True:
+            raise Conflict("Evaluator recovery calls require explicit confirmation")
+        job, updated = jobs.enqueue(
+            run_id,
+            owner,
+            body.expected_revision,
+            JobType.RECOVER_EVALUATORS,
+            body.idempotency_key,
+            EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+        )
+        if run_pending_jobs is not None:
+            background_tasks.add_task(run_pending_jobs)
+        return {"job": _job_view(job), "run": run_view(updated)}
 
     @router.post("/runs/{run_id}/recommendation-review")
     def review_recommendations(
@@ -308,7 +322,7 @@ def create_measurement_router(
         body: ReviewRecommendationsRequest,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        return _run_view(coordinator.review_recommendations(
+        return run_view(coordinator.review_recommendations(
             run_id,
             owner,
             body.expected_revision,
@@ -317,7 +331,7 @@ def create_measurement_router(
 
     @router.get("/runs/{run_id}")
     def get_run(run_id: str, owner: OwnerIdentity = owner_dependency) -> dict:
-        return _run_view(repository.get(run_id, owner))
+        return run_view(repository.get(run_id, owner))
 
     @router.get("/runs/{run_id}/events")
     def get_events(run_id: str, owner: OwnerIdentity = owner_dependency) -> dict:
@@ -344,7 +358,7 @@ def create_measurement_router(
                                                  body.definition_version, body.definition_hash)
         return {
             "artifact": _artifact_view(artifact),
-            "run": _run_view(run),
+            "run": run_view(run),
             "download_url": f"/api/v2/runs/{run.run_id}/artifacts/{artifact.artifact_id}",
         }
 
@@ -382,8 +396,16 @@ def create_measurement_router(
         return repository.get_run_progress(run_id, owner).model_dump(mode="json")
 
     @router.post("/jobs/{job_id}/cancel")
-    def cancel_job(job_id: str, owner: OwnerIdentity = owner_dependency) -> dict:
+    def cancel_job(
+        job_id: str,
+        body: RevisionRequest,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        current_job = repository.get_job(job_id, owner)
+        current_run = repository.get(current_job.run_id, owner)
+        if current_run.revision != body.expected_revision:
+            raise Conflict("Stale measurement revision; reload the run")
         job, run = jobs.cancel(job_id, owner)
-        return {"job": _job_view(job), "run": _run_view(run)}
+        return {"job": _job_view(job), "run": run_view(run)}
 
     return router

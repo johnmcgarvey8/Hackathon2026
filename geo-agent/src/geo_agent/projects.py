@@ -173,6 +173,10 @@ class ProjectRepository(Protocol):
         self, project_id: str, run_id: str, owner: OwnerIdentity,
     ) -> MeasurementRun: ...
 
+    def get_run_project_id(
+        self, run_id: str, owner: OwnerIdentity,
+    ) -> str | None: ...
+
 
 class ProjectMeasurementRepository(ProjectRepository, MeasurementRepository, Protocol):
     pass

@@ -24,20 +24,26 @@ const runtime = {
   mode: "foundry", can_send: true, organisational_context_available: false,
   detail: "Configured, unverified.",
   agent: { name: "server-selected-agent", version: "42", scope: "shared-default" },
-  budget: { limit: 6, used: 2, remaining: 4 },
 };
 const conversation = { conversation_id: "chat-one", revision: 1, title: "Saved chat", turns: [], updated_at: "2026-09-17" };
 
 test("runtime labels preserve dynamic agent identity without implying verification", () => {
   assert.equal(labels.runtimeLabel(runtime), "Live Foundry selected");
   assert.equal(labels.agentLabel(runtime), "server-selected-agent · version 42 · Shared default");
-  assert.match(labels.budgetLabel(runtime), /4 of 6 requests remaining \(2 used\), shared across projects/);
   assert.match(labels.agentLabel({ ...runtime, agent: { ...runtime.agent, scope: "project" } }), /Project override/);
   assert.equal(labels.runtimeLabel({ ...runtime, mode: "mock" }), "Mock assistant");
   assert.equal(labels.runtimeLabel({ ...runtime, mode: "unavailable" }), "Live agent unavailable");
   assert.equal(labels.runtimeLabel(null), "Runtime status unavailable");
   assert.equal(labels.agentLabel(null), null);
-  assert.equal(labels.budgetLabel({ mode: "mock" }), null);
+});
+
+test("chat workflow polling is limited to active backend workflow states", () => {
+  assert.equal(labels.shouldPollMeasurementWorkflow({ status: "preparing" }), true);
+  assert.equal(labels.shouldPollMeasurementWorkflow({ status: "evaluating" }), true);
+  assert.equal(labels.shouldPollMeasurementWorkflow({ status: "collecting" }), false);
+  assert.equal(labels.shouldPollMeasurementWorkflow({ status: "completed" }), false);
+  assert.equal(labels.shouldPollMeasurementWorkflow({ status: "failed" }), false);
+  assert.equal(labels.shouldPollMeasurementWorkflow(null), false);
 });
 
 function harness(overrides = {}) {
@@ -49,7 +55,7 @@ function harness(overrides = {}) {
   const saved = { ...conversation, revision: 2, turns: [{ sequence: 1, message: "Draft question", status: "completed", answer: "Saved answer", citations: [], idempotency_key: "new-turn-key" }] };
   const api = Object.fromEntries(Object.entries({
     conversations: async () => [saved],
-    chatStatus: async () => ({ ...runtime, budget: { limit: 6, used: 3, remaining: 3 } }),
+    chatStatus: async () => runtime,
     conversation: async () => saved,
     sendMessage: async () => saved,
     createConversation: async () => conversation,
@@ -68,7 +74,13 @@ function harness(overrides = {}) {
   const { default: ChatPage } = load("app/projects/[projectId]/chat/page.tsx", {
     react, "@/lib/api": { api, ApiError: class extends Error {} },
     "@/lib/chat-runtime": labels,
-    "@/components/project-context": { useProject: () => ({ project: { project_id: "project-one", name: "Project" } }) },
+    "@/lib/measurement-runtime": {
+      pageUrl: () => "https://example.com/page",
+      operationLabel: () => "Model evaluation",
+      operationTotals: () => ({ planned: 0, resolved: 0, percentage: 0 }),
+    },
+    "next/navigation": { useSearchParams: () => ({ get: () => null }) },
+    "@/components/project-context": { useProject: () => ({ project: { project_id: "project-one", name: "Project", primary_domain: "example.com", active_goal: null } }) },
     "@/components/icons": { Icon: () => null },
     "@/components/status-state": { LoadingState: () => null, UnavailableState: () => null },
   });
@@ -92,7 +104,7 @@ const sendButton = (node) => node.props?.["aria-label"] === "Send message";
 const newChat = (node) => node.props?.className === "new-chat-button";
 const reloadButton = (node) => node.props?.children === "Reload saved conversation";
 
-test("sending locks navigation and refreshes history and owner budget", async () => {
+test("sending locks navigation and refreshes history and runtime", async () => {
   let finish;
   const h = harness({ sendMessage: () => new Promise((resolve) => { finish = resolve; }) });
   h.submit();
@@ -107,7 +119,6 @@ test("sending locks navigation and refreshes history and owner budget", async ()
   await settle();
   assert.deepEqual(h.calls, ["sendMessage", "conversation", "conversations", "chatStatus"]);
   assert.equal(h.states[4], "");
-  assert.equal(h.states[1].budget.remaining, 3);
   assert.equal(h.find(newChat).props.disabled, false);
 });
 
@@ -160,12 +171,12 @@ test("a saved running turn blocks another send after recovery", async () => {
 });
 
 test("a persisted failed turn returned successfully preserves the draft", async () => {
-  const failed = { ...conversation, revision: 2, turns: [{ status: "failed", error: "Budget exhausted", citations: [] }] };
+  const failed = { ...conversation, revision: 2, turns: [{ status: "failed", error: "Provider unavailable", citations: [] }] };
   const h = harness({ sendMessage: async () => failed, conversation: async () => failed });
   h.submit();
   await settle();
   assert.equal(h.states[4], "Draft question");
-  assert.equal(h.states[10], "Budget exhausted");
+  assert.equal(h.states[10], "Provider unavailable");
   assert.ok(h.calls.includes("chatStatus"));
 });
 

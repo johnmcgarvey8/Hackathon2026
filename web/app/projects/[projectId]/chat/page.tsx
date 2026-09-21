@@ -1,16 +1,19 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import { agentLabel, budgetLabel, runtimeLabel } from "@/lib/chat-runtime";
-import type { ChatCitation, ChatStatus, Conversation, SourceClass } from "@/lib/types";
+import { agentLabel, runtimeLabel, shouldPollMeasurementWorkflow } from "@/lib/chat-runtime";
+import { operationLabel, operationTotals, pageUrl } from "@/lib/measurement-runtime";
+import type { ChatCitation, ChatStatus, Conversation, MeasurementRun, RunProgress, SourceClass } from "@/lib/types";
 import { Icon } from "@/components/icons";
 import { useProject } from "@/components/project-context";
 import { LoadingState, UnavailableState } from "@/components/status-state";
 
-const suggestions = [
-  "Find the highest-impact GEO opportunities",
-  "Review visibility for a priority page",
+const runSuggestions = [
+  "Find the highest-priority evidence-backed opportunities",
+  "Review visibility for the measured page",
   "Explain the latest measurement evidence",
   "Identify content gaps using approved context",
 ];
@@ -39,8 +42,19 @@ function safeCitationUrl(value: string | null) {
   }
 }
 
+function suggestedMeasurementUrl(domain?: string) {
+  if (!domain) return "https://example.com/";
+  try {
+    return new URL(domain.includes("://") ? domain : `https://${domain}`).toString();
+  } catch {
+    return domain;
+  }
+}
+
 export default function ChatPage() {
   const { project } = useProject();
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get("conversation");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [runtime, setRuntime] = useState<ChatStatus | null>(null);
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -55,13 +69,15 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSources, setDrawerSources] = useState<ChatCitation[]>([]);
+  const [boundRun, setBoundRun] = useState<MeasurementRun | null>(null);
+  const [workflowProgress, setWorkflowProgress] = useState<RunProgress | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const recoveryKey = useRef<string | null>(null);
 
   const reloadSavedConversation = async (conversationId: string) => {
     if (!project) return;
-    // GET-only reconciliation also refreshes the owner budget before another turn.
+    // GET-only reconciliation refreshes saved history and runtime before another turn.
     const [saved, items, status] = await Promise.all([
       api.conversation(project.project_id, conversationId),
       api.conversations(project.project_id),
@@ -81,11 +97,14 @@ export default function ChatPage() {
     setLoading(true);
     setError(null);
     setRuntime(null);
-    Promise.all([api.conversations(project.project_id), api.chatStatus(project.project_id)])
+    Promise.all([
+      api.conversations(project.project_id),
+      api.chatStatus(project.project_id),
+    ])
       .then(([items, status]) => {
         if (!active) return;
         setConversations(items);
-        setSelected(items[0] || null);
+        setSelected(items.find((item) => item.conversation_id === requestedConversationId) || items[0] || null);
         setRuntime(status);
       })
       .catch((requestError) => {
@@ -93,7 +112,77 @@ export default function ChatPage() {
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [project]);
+  }, [project, requestedConversationId]);
+
+  const workflowRunId = selected?.measurement_workflow?.run_id || selected?.run_id || null;
+  const workflowStatus = selected?.measurement_workflow?.status || null;
+  const selectedConversationId = selected?.conversation_id || null;
+  const workflowPollingRequired = shouldPollMeasurementWorkflow(selected?.measurement_workflow);
+
+  useEffect(() => {
+    if (!project || !workflowRunId) {
+      setBoundRun(null);
+      setWorkflowProgress(null);
+      return;
+    }
+    setBoundRun(null);
+    setWorkflowProgress(null);
+    let active = true;
+    Promise.allSettled([
+      api.run(project.project_id, workflowRunId),
+      api.runProgress(project.project_id, workflowRunId),
+    ])
+      .then(([savedRun, savedProgress]) => {
+        if (!active) return;
+        if (savedRun.status === "fulfilled") setBoundRun(savedRun.value);
+        if (savedProgress.status === "fulfilled") setWorkflowProgress(savedProgress.value);
+      })
+      .catch(() => { if (active) setBoundRun(null); });
+    return () => { active = false; };
+  }, [project, workflowRunId]);
+
+  useEffect(() => {
+    if (!project || !selectedConversationId || !workflowPollingRequired) return;
+    const conversationId = selectedConversationId;
+    const runId = workflowRunId;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+    const schedule = () => {
+      if (!stopped && attempts < 120) timer = setTimeout(tick, 3000);
+    };
+    const tick = async () => {
+      if (stopped) return;
+      if (document.visibilityState === "hidden") {
+        schedule();
+        return;
+      }
+      attempts += 1;
+      const [conversationResult, runResult, progressResult] = await Promise.allSettled([
+        api.conversation(project.project_id, conversationId),
+        runId ? api.run(project.project_id, runId) : Promise.resolve(null),
+        runId ? api.runProgress(project.project_id, runId) : Promise.resolve(null),
+      ]);
+      if (!stopped && conversationResult.status === "fulfilled") {
+        const saved = conversationResult.value;
+        setSelected(saved);
+        setConversations((items) => items.map((item) =>
+          item.conversation_id === saved.conversation_id ? saved : item));
+      }
+      if (!stopped && runResult.status === "fulfilled" && runResult.value) {
+        setBoundRun(runResult.value);
+      }
+      if (!stopped && progressResult.status === "fulfilled" && progressResult.value) {
+        setWorkflowProgress(progressResult.value);
+      }
+      schedule();
+    };
+    schedule();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [project, selectedConversationId, workflowPollingRequired, workflowRunId, workflowStatus]);
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: "smooth" });
@@ -110,6 +199,19 @@ export default function ChatPage() {
   );
 
   if (!project) return null;
+  const projectUrl = suggestedMeasurementUrl(project.primary_domain);
+  const projectSuggestions = [
+    `Measure ${projectUrl} for ${project.active_goal || "AI search visibility"}`,
+    `Start a measurement of ${projectUrl} and identify citation gaps`,
+    "Explain how chat-first measurement works",
+    "What URL and objective should I use for a measurement?",
+  ];
+  const suggestions = workflowRunId ? runSuggestions : projectSuggestions;
+  const workflow = selected?.measurement_workflow;
+  const workflowTotals = operationTotals(workflowProgress);
+  const controlPlaneHref = workflowRunId
+    ? `/projects/${project.project_id}/control-plane/${workflowRunId}`
+    : `/projects/${project.project_id}/control-plane`;
   const interactionLocked = sending || changingConversation || loading || recoveryId !== null;
   const pendingTurn = selected?.turns.some((turn) => turn.status === "running") ?? false;
 
@@ -140,6 +242,7 @@ export default function ChatPage() {
       setConversations((items) => [conversation, ...items]);
       setHistoryOpen(false);
       setMessage("");
+      setBoundRun(null);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "A new conversation could not be created.");
     } finally {
@@ -245,8 +348,24 @@ export default function ChatPage() {
         <label className="history-search"><Icon name="search" /><span className="sr-only">Search chats</span><input type="search" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
         <nav aria-label="Saved conversations">
           <div className="history-group">
-            <h3>Project history</h3>
-            {filtered.map((conversation) => (
+            <h3>Run-bound conversations</h3>
+            {filtered.filter((conversation) => conversation.run_id || conversation.measurement_workflow?.run_id).map((conversation) => (
+              <button
+                className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
+                type="button"
+                key={conversation.conversation_id}
+                disabled={interactionLocked}
+                onClick={() => void openConversation(conversation.conversation_id)}
+                aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
+              >
+                <Icon name="chat" />
+                <span><strong>{conversation.title}</strong><small>Run {conversation.measurement_workflow?.run_id || conversation.run_id} · {new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
+              </button>
+            ))}
+          </div>
+          <div className="history-group">
+            <h3>Project conversations</h3>
+            {filtered.filter((conversation) => !conversation.run_id && !conversation.measurement_workflow?.run_id).map((conversation) => (
               <button
                 className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
                 type="button"
@@ -268,8 +387,10 @@ export default function ChatPage() {
       <section className="conversation-canvas">
         <header className="conversation-toolbar">
           <button className="history-mobile-toggle icon-button" type="button" aria-label="Show conversations" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}><Icon name="menu" /></button>
-          <div className="conversation-heading"><span className="agent-symbol"><Icon name="spark" /></span><span><strong>GEO assistant</strong><small>{project.name}</small></span></div>
+          <div className="conversation-heading"><span className="agent-symbol"><Icon name="spark" /></span><span><strong>GEO assistant</strong><small>{workflowRunId ? `Measurement run: ${workflowRunId}` : `${project.name} · project conversation`}</small></span></div>
           <div className="conversation-toolbar-actions">
+            {workflowRunId && <Link className="button" href={controlPlaneHref}>View in Control Plane</Link>}
+            <Link className="button ghost" href={`/projects/${project.project_id}/measurements/new`}>Manual measurement</Link>
             <button className="button ghost" type="button" onClick={() => openSources(allSources)}><Icon name="sources" /><span>Sources</span></button>
           </div>
         </header>
@@ -278,15 +399,37 @@ export default function ChatPage() {
           <span className="surface-badge">{runtimeLabel(runtime)}</span>
           {agentLabel(runtime) && <span className="surface-badge">{agentLabel(runtime)}</span>}
           <span className="surface-badge">Organisational retrieval unavailable</span>
+          {workflowRunId && <span className="surface-badge">Run {workflowRunId}</span>}
+          {boundRun && boundRun.run_id === workflowRunId && <span className="surface-badge">{pageUrl(boundRun)} · {boundRun.state} · evidence {boundRun.measurement ? "available" : "pending"}</span>}
           <span className="surfaces-status">Project scoped</span>
         </div>
+        {workflow && (
+          <div className="chat-run-notice">
+            <span>
+              <strong>Measurement {workflow.status}</strong>
+              {workflow.url || "Waiting for a valid project URL"}
+              {workflow.objective && <small>{workflow.objective}</small>}
+              {["preparing", "evaluating"].includes(workflow.status) && (
+                <>
+                  <small>
+                    {workflowProgress?.current_operation ? operationLabel(workflowProgress.current_operation) : "Waiting for saved progress"}
+                    {workflowTotals.planned > 0 ? ` · ${workflowTotals.resolved}/${workflowTotals.planned} operations resolved` : ""}
+                  </small>
+                  {workflowTotals.planned > 0 && <span className="chat-workflow-progress" aria-label={`${workflowTotals.percentage}% of measurement operations resolved`}><i style={{ width: `${workflowTotals.percentage}%` }} /></span>}
+                </>
+              )}
+              {workflow.error && <small className="error-text">{workflow.error}</small>}
+            </span>
+            {workflow.run_id && <Link className="button" href={controlPlaneHref}>Read-only run detail</Link>}
+          </div>
+        )}
 
         <div className={`conversation-stream ${!selected?.turns.length ? "welcome-stream" : ""}`} ref={streamRef}>
           {loading ? <LoadingState label="Loading conversations" /> : !selected?.turns.length ? (
             <div className="chat-welcome">
               <span className="welcome-project">{project.name} workspace</span>
-              <h1>What would you like<br />to improve today?</h1>
-              <p>Turn GEO goals into evidence-backed recommendations and grounded answers.</p>
+              <h1>Measure a page<br />from Chat</h1>
+              <p>{workflowRunId ? "Discuss the saved evidence for this measurement run." : "Send a measurement request with an in-scope project URL and objective. The run starts automatically and returns an insight here."}</p>
               <div className="welcome-suggestions">
                 {suggestions.map((suggestion, index) => (
                   <button className="suggestion-card" type="button" key={suggestion} disabled={!runtime?.can_send || interactionLocked || pendingTurn} onClick={() => void submit(undefined, suggestion)}>
@@ -300,12 +443,12 @@ export default function ChatPage() {
           ) : (
             <div className="thread">
               {selected.turns.map((turn) => (
-                <div className="turn-pair" key={turn.sequence}>
-                  <div className="thread-message from-user"><div className="thread-bubble"><p>{turn.message}</p></div></div>
+                <div className={`turn-pair ${turn.origin === "workflow" ? "workflow-turn" : ""}`} key={turn.sequence}>
+                  {turn.origin !== "workflow" && <div className="thread-message from-user"><div className="thread-bubble"><p>{turn.message}</p></div></div>}
                   <div className="thread-message from-agent">
                     <span className="thread-avatar"><Icon name="spark" /></span>
                     <div className="thread-bubble">
-                      <div className="thread-speaker">GEO assistant</div>
+                      <div className="thread-speaker">{turn.origin === "workflow" ? "Measurement insight" : "GEO assistant"}</div>
                       {turn.status === "running" ? <p>Working on your request...</p> : turn.error ? <p className="error-text">{turn.error}</p> : <p>{turn.answer}</p>}
                       {turn.citations.length > 0 && (
                         <button className="source-summary-button" type="button" onClick={() => openSources(turn.citations)}>
@@ -322,12 +465,12 @@ export default function ChatPage() {
         </div>
 
         <div className="composer-dock">
-          {runtime && <div className="small muted" role="status"><strong>{runtimeLabel(runtime)}</strong><p>{runtime.detail}</p>{runtime.mode === "foundry" && <p>Configuration is not remote verification. No tools or knowledge retrieval are connected.</p>}{budgetLabel(runtime) && <p>{budgetLabel(runtime)}</p>}</div>}
+          {runtime && <div className="small muted" role="status"><strong>{runtimeLabel(runtime)}</strong><p>{runtime.detail}</p>{runtime.mode === "foundry" && <p>Configuration is not remote verification. No tools or knowledge retrieval are connected.</p>}</div>}
           {error && <UnavailableState title="Request unavailable" message={error} compact />}
           {(recoveryId || pendingTurn) && <button className="button ghost" type="button" disabled={sending || changingConversation} onClick={() => void recover()}>Reload saved conversation</button>}
           <form className="prompt-composer" onSubmit={(event) => void submit(event)}>
             <label className="sr-only" htmlFor="chat-input">Message the GEO assistant</label>
-            <textarea id="chat-input" maxLength={4000} placeholder="Ask about evidence, opportunities, or project context..." value={message} disabled={interactionLocked || pendingTurn || !runtime?.can_send} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
+            <textarea id="chat-input" maxLength={4000} placeholder={`Measure ${projectUrl} for ${project.active_goal || "AI search visibility"}...`} value={message} disabled={interactionLocked || pendingTurn || !runtime?.can_send} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();

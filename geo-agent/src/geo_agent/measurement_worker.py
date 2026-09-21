@@ -12,6 +12,9 @@ from geo_agent.foundry import azure_cli_token
 from geo_agent.live_runtime import LiveMeasurementRuntime
 from geo_agent.measurement_budget import MeasurementBudgetGrant
 from geo_agent.persistence import SQLiteMeasurementRepository
+from geo_agent.project_chat import UnavailableProjectAgent
+from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
+from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
 
 
 def _required(environment: Mapping[str, str], name: str) -> str:
@@ -53,6 +56,16 @@ def create_runtime_from_environment(
     data_dir.mkdir(parents=True, exist_ok=True)
     repository = SQLiteMeasurementRepository(data_dir / "runs.sqlite3")
     try:
+        settings = ProjectFoundrySettings.from_environment(environment)
+        project_agent = (
+            HostedProjectAgent(
+                repository,
+                settings,
+                token_provider=token_provider,
+            )
+            if settings is not None else UnavailableProjectAgent()
+        )
+        chat_workflow = ProjectMeasurementChatWorkflow(repository, policy)
         return LiveMeasurementRuntime(
             repository,
             policy,
@@ -64,6 +77,9 @@ def create_runtime_from_environment(
             webiq_transport=webiq_transport,
             foundry_transport=foundry_transport,
             worker_id=environment.get("GEO_MEASUREMENT_WORKER_ID", "local-live-worker"),
+            on_job_finished=lambda job, run: chat_workflow.reconcile_job(
+                job, run, project_agent,
+            ),
         )
     except Exception:
         repository.close()
@@ -94,6 +110,7 @@ def main() -> None:
     except ValueError:
         runtime.close()
         raise ValueError("GEO_MEASUREMENT_WORKER_POLL_SECONDS must be a number") from None
+    print("Live measurement worker ready", flush=True)
     stop_event = Event()
 
     def request_stop(_signum, _frame) -> None:

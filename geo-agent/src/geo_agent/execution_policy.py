@@ -10,9 +10,10 @@ class MeasurementExecutionPolicy(Contract):
     schema_version: Literal["geo-execution-policy/v1"] = "geo-execution-policy/v1"
     policy_id: str = Field(pattern=r"^[a-z0-9-]{1,100}$")
     execution_mode: Literal["mock", "live"] = "mock"
+    scope: Literal["explicit-domains", "project-bound"] = "explicit-domains"
     owner_role: Literal["Geo.Operator"] = "Geo.Operator"
-    allowed_domains: tuple[str, ...] = Field(min_length=1, max_length=20)
-    locale: str = Field(pattern=r"^[a-z]{2}-[A-Z]{2}$")
+    allowed_domains: tuple[str, ...] = Field(default=(), max_length=20)
+    locale: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
     profiles: tuple[SimulationProfile, ...] = Field(min_length=1, max_length=3)
     retention_days: int = Field(default=30, ge=1, le=365)
     max_output_tokens_per_call: int = Field(default=2000, ge=1, le=4000)
@@ -28,6 +29,10 @@ class MeasurementExecutionPolicy(Contract):
 
     @model_validator(mode="after")
     def validate_live_gate(self) -> "MeasurementExecutionPolicy":
+        if self.scope == "explicit-domains" and (not self.allowed_domains or self.locale is None):
+            raise ValueError("Explicit-domain policies require allowed domains and a locale")
+        if self.scope == "project-bound" and (self.allowed_domains or self.locale is not None):
+            raise ValueError("Project-bound policies derive domains and locale from the saved Project")
         if self.execution_mode == "live" and (
             self.budget_grant_id is None or len(self.profiles) not in {1, 3}
         ):
@@ -40,7 +45,11 @@ class MeasurementExecutionPolicy(Contract):
     def policy_hash(self) -> str:
         return digest(self.model_dump(mode="json"))
 
-    def validate_brief(self, brief: Brief) -> None:
+    def validate_brief(self, brief: Brief, *, project_bound: bool = False) -> None:
+        if self.scope == "project-bound":
+            if not project_bound:
+                raise Conflict("This measurement policy requires a project-bound run")
+            return
         host = (brief.url.host or "").casefold()
         allowed = tuple(domain.casefold().strip(".") for domain in self.allowed_domains)
         if brief.locale != self.locale:

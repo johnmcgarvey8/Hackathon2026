@@ -67,6 +67,47 @@ def test_error_is_redacted_and_not_retried(status, code):
     assert caught.value.code == code
 
 
+def test_safe_unsupported_parameter_hint_is_retained_without_long_identifiers():
+    def handler(_request):
+        return httpx.Response(400, json={"error": {
+            "code": "invalid_request_error",
+            "message": (
+                "Unsupported parameter: parallel_tool_calls for request "
+                "abcdefghijklmnopqrstuvwxyz0123456789-secret"
+            ),
+        }})
+
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy-token",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.evaluate(Query(query_id="q-1", text="Question", intent="Plan"), "en-GB", ())
+    message = str(caught.value)
+    assert "Unsupported parameter: parallel_tool_calls" in message
+    assert "invalid_request_error" in message
+    assert "secret" not in message
+
+
+def test_structured_output_disables_parallel_tool_calls():
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=response_payload())
+
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy-token",
+        transport=httpx.MockTransport(handler),
+    )
+    provider.evaluate(Query(query_id="q-1", text="Question", intent="Plan"), "en-GB", ())
+    assert requests[0]["parallel_tool_calls"] is False
+
+
 def test_cli_failure_never_prints_tokens(monkeypatch, capsys):
     monkeypatch.setattr("geo_agent.foundry.shutil.which", lambda name: "az")
     def fail(*args, **kwargs):

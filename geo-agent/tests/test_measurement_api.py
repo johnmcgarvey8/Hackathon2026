@@ -113,6 +113,16 @@ def test_v2_brief_and_preparation_job_are_owner_scoped_and_idempotent(client):
     assert progress.json()["job_state"] == "queued"
     assert len(progress.json()["operations"]) == 3
     assert not {"owner", "request", "lease_holder", "idempotency_key"}.intersection(progress.json())
+    cancel_route = f"/api/v2/jobs/{payload['job']['job_id']}/cancel"
+    assert client.post(cancel_route).status_code == 422
+    assert client.post(
+        cancel_route, json={"expected_revision": run["revision"]},
+    ).status_code == 409
+    cancelled = client.post(
+        cancel_route, json={"expected_revision": payload["run"]["revision"]},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["run"]["state"] == "cancelled"
 
     bob_headers = {"Authorization": f"Bearer {BOB_TOKEN}"}
     assert client.get("/api/v2/runs", headers=bob_headers).json() == []

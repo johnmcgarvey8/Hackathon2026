@@ -61,6 +61,7 @@ export default function DashboardPage() {
           <div className="summary-line"><span className="status-dot success" /><span><strong>Project scope</strong><small>{project.domains.join(", ")}</small></span></div>
           <div className="summary-line"><span className={`status-dot ${project.foundry_status === "configured-unverified" ? "warning" : ""}`} /><span><strong>Assistant runtime</strong><small>{project.foundry_status === "configured-unverified" ? "Foundry configured, verification pending." : "Manual Foundry setup required. Local mock chat may still be available."}</small></span></div>
           <div className="button-row">
+            <Link className="button primary" href={`/projects/${project.project_id}/measurements/new`}>Create measurement</Link>
             <Link className="button primary" href={`/projects/${project.project_id}/chat`}>Open GEO assistant</Link>
             <Link className="button" href={`/projects/${project.project_id}/control-plane`}>View Control Plane</Link>
           </div>

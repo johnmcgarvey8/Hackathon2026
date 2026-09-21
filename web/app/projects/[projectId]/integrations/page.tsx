@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { agentLabel, budgetLabel, runtimeLabel } from "@/lib/chat-runtime";
+import { agentLabel, runtimeLabel } from "@/lib/chat-runtime";
 import type { ChatStatus } from "@/lib/types";
 import { useProject } from "@/components/project-context";
 import { ScreenHeader } from "@/components/screen-header";
@@ -65,7 +65,6 @@ export default function IntegrationsPage() {
             {agentLabel(runtime) && <p><strong>{agentLabel(runtime)}</strong></p>}
             {runtime && <p>{runtime.detail}</p>}
             {runtime?.mode === "foundry" && <p className="muted">Configuration is not remote verification. No tools or knowledge retrieval are connected. Organisational retrieval remains unavailable.</p>}
-            {budgetLabel(runtime) && <p className="muted">{budgetLabel(runtime)}</p>}
             {error && <UnavailableState title="Runtime status unavailable" message={error} compact />}
             <p className="muted">Status is provided by the project BFF. Credentials and bearer tokens remain server-only.</p>
           </div>

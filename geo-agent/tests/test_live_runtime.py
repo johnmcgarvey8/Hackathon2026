@@ -18,6 +18,7 @@ from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.preparation import PreparationHandler, PreparationRequest
 from geo_agent.providers import ClaudeMessagesEvaluator, OpenAIResponsesEvaluator, simulation_instructions
 from geo_agent.webiq import BROWSE_ENDPOINT, SEARCH_ENDPOINT
+from geo_agent.workflow import Conflict
 from test_foundry import response_payload
 from test_providers import claude_payload
 
@@ -67,6 +68,38 @@ def budget_grant(policy, owner=None, *, recommendations=False, authorized_runs=1
     )
 
 
+def recovery_grant(policy, owner=None, evaluator_calls=5):
+    return MeasurementBudgetGrant(
+        grant_id=policy.budget_grant_id,
+        purpose="failed-evaluator-recovery",
+        policy_id=policy.policy_id,
+        policy_hash=policy.policy_hash,
+        owner=owner or OwnerIdentity(tenant_id="tenant-a", object_id="user-a"),
+        allowances=MeasurementOperationAllowances(
+            webiq_browse=0,
+            page_analysis_model=0,
+            paired_query_plan=0,
+            webiq_search=0,
+            profile_evaluator=evaluator_calls,
+            recommendation_model=0,
+        ),
+        maximum_authorized_cost_usd=Decimal("10.00"),
+        approval="Approved failed-evaluator recovery test",
+        approved_at=datetime(2026, 9, 18, tzinfo=timezone.utc),
+    )
+
+
+def test_recovery_grant_authorizes_only_evaluator_calls():
+    execution_policy = live_policy(("chatgpt-style",))
+    grant = recovery_grant(execution_policy)
+    grant.validate_for(execution_policy)
+    invalid = grant.model_copy(update={
+        "allowances": grant.allowances.model_copy(update={"webiq_search": 1}),
+    })
+    with pytest.raises(Conflict, match="only a bounded evaluator batch"):
+        invalid.validate_for(execution_policy)
+
+
 def test_live_runtime_composes_real_adapters_without_provider_calls(tmp_path):
     def reject_token_call() -> str:
         pytest.fail("Runtime construction must not acquire a provider token")
@@ -109,6 +142,20 @@ def test_live_runtime_accepts_one_profile_and_rejects_two(tmp_path):
     invalid_payload["profiles"] = invalid_payload["profiles"][:2]
     with pytest.raises(ValueError, match="one- or three-profile roster"):
         MeasurementExecutionPolicy.model_validate(invalid_payload)
+
+
+def test_live_runtime_rejects_cross_resource_openai_evaluator_endpoint(tmp_path):
+    execution_policy = live_policy(("chatgpt-style",))
+    with pytest.raises(ValueError, match="environment-configured Azure OpenAI endpoint"):
+        LiveMeasurementRuntime(
+            SQLiteMeasurementRepository(tmp_path / "cross-resource.sqlite3"),
+            execution_policy,
+            budget_grant=budget_grant(execution_policy),
+            webiq_api_key="test-webiq-key",
+            preparation_endpoint="https://different.services.ai.azure.com/openai/v1/",
+            preparation_deployment="test-preparation",
+            token_provider=lambda: "test-token",
+        )
 
 
 def test_live_runtime_rejects_mock_policy(tmp_path):

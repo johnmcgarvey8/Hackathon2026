@@ -12,6 +12,7 @@ from geo_agent.workflow import Conflict
 class PreparationRequest(Contract):
     brief: Brief
     confirm_preparation_calls: Literal[True]
+    project_bound: bool = False
 
 
 class BrowseProvider(Protocol):
@@ -51,7 +52,7 @@ class PreparationHandler:
         if job.job_type != JobType.PREPARE:
             raise Conflict("Preparation handler requires a preparation job")
         request = PreparationRequest.model_validate(job.request)
-        self.policy.validate_brief(request.brief)
+        self.policy.validate_brief(request.brief, project_bound=request.project_bound)
 
         def browse_call() -> tuple[PageSnapshot, dict[str, str | int | bool | None]]:
             snapshot = self.browse.browse(request.brief)

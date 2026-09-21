@@ -21,8 +21,23 @@
         "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
         "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
         "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
-        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-policy.json",
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
         "GEO_PORT": "8090",
+        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "GEO: Live Measurement Worker",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/geo-agent/.venv/Scripts/python.exe",
+      "module": "geo_agent.measurement_worker",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
+        "GEO_MEASUREMENT_BUDGET_GRANT": "${input:measurementBudgetGrant}",
         "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
       },
       "console": "integratedTerminal",
@@ -41,6 +56,23 @@
       },
       "console": "integratedTerminal",
       "justMyCode": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "GEO: Full Live Workspace",
+      "configurations": [
+        "GEO: Conversational Agent Server",
+        "GEO: Live Measurement Worker"
+      ],
+      "stopAll": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "measurementBudgetGrant",
+      "type": "promptString",
+      "description": "Absolute path to a fresh immutable grant matching measurement-live-policy-v2.json"
     }
   ]
 }

@@ -231,6 +231,41 @@ def test_worker_claims_before_dispatch_and_completes_atomically(repository, owne
     assert completed_run.state == MeasurementState.AWAITING_APPROVAL
 
 
+def test_post_job_reconciliation_failure_does_not_stop_worker(repository, owner):
+    draft = repository.create(owner)
+    JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "prepare-with-failing-callback",
+        {},
+    )
+
+    def handler(_job, _operations):
+        return lambda run: run.model_copy(update={
+            "inputs": inputs(),
+            "state": MeasurementState.AWAITING_APPROVAL,
+            "events": (*run.events, MeasurementEvent(
+                sequence=len(run.events) + 1,
+                event_type="awaiting-query-approval",
+            )),
+        })
+
+    result = Worker(
+        repository,
+        "worker-a",
+        {JobType.PREPARE: handler},
+        on_job_finished=lambda _job, _run: (_ for _ in ()).throw(
+            RuntimeError("synthetic reconciliation failure")
+        ),
+    ).run_once()
+
+    assert result is not None
+    assert result[0].state == JobState.COMPLETED
+    assert result[1].state == MeasurementState.AWAITING_APPROVAL
+
+
 def test_progress_updates_without_run_revision_and_is_owner_scoped(repository, owner):
     draft = repository.create(owner)
     job, run = JobService(repository).enqueue(

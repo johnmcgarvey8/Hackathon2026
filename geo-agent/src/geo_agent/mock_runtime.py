@@ -155,20 +155,32 @@ class SyntheticRecommendations:
 
 
 class MockMeasurementRuntime:
-    def __init__(self, repository: JobRepository, policy: MeasurementExecutionPolicy):
+    def __init__(
+        self,
+        repository: JobRepository,
+        policy: MeasurementExecutionPolicy,
+        on_job_finished=None,
+    ):
         if policy.execution_mode != "mock":
             raise ValueError("The local mock runtime requires a mock execution policy")
         preparation = SyntheticPreparationModel()
-        self.worker = Worker(repository, "local-mock-worker", {
-            JobType.PREPARE: PreparationHandler(policy, SyntheticBrowse(), preparation, preparation),
-            JobType.EVALUATE: EvaluationHandler(
-                repository,
-                policy,
-                SyntheticSearch(),
-                tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
-                SyntheticRecommendations(),
-            ),
-        })
+        self.worker = Worker(
+            repository,
+            "local-mock-worker",
+            {
+                JobType.PREPARE: PreparationHandler(
+                    policy, SyntheticBrowse(), preparation, preparation,
+                ),
+                JobType.EVALUATE: EvaluationHandler(
+                    repository,
+                    policy,
+                    SyntheticSearch(),
+                    tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
+                    SyntheticRecommendations(),
+                ),
+            },
+            on_job_finished=on_job_finished,
+        )
         self._lock = Lock()
 
     def drain(self) -> None:

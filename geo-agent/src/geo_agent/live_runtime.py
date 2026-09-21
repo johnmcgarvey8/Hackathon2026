@@ -4,7 +4,7 @@ import httpx
 
 from geo_agent.evaluation_workflow import EvaluationHandler
 from geo_agent.execution_policy import MeasurementExecutionPolicy
-from geo_agent.foundry import Foundry, azure_cli_token
+from geo_agent.foundry import Foundry, azure_cli_token, model_base_url
 from geo_agent.jobs import JobType
 from geo_agent.measurement_budget import MeasurementBudgetGrant
 from geo_agent.persistence import SQLAlchemyMeasurementRepository
@@ -30,9 +30,19 @@ class LiveMeasurementRuntime:
         foundry_transport: httpx.BaseTransport | None = None,
         webiq_url_validator: Callable[[str], str] | None = None,
         worker_id: str = "local-live-worker",
+        on_job_finished=None,
     ):
         if policy.execution_mode != "live":
             raise ValueError("The live measurement runtime requires a live execution policy")
+        preparation_base_url = model_base_url(preparation_endpoint)
+        if any(
+            profile.provider == "openai-responses"
+            and profile.endpoint != preparation_base_url
+            for profile in policy.profiles
+        ):
+            raise ValueError(
+                "OpenAI evaluator profiles must use the environment-configured Azure OpenAI endpoint"
+            )
         repository.bind_measurement_budget(budget_grant, policy)
         webiq_options = {"url_validator": webiq_url_validator} if webiq_url_validator is not None else {}
         webiq = WebIQ(webiq_api_key, transport=webiq_transport, **webiq_options)
@@ -46,16 +56,23 @@ class LiveMeasurementRuntime:
             create_evaluator(profile, token_provider=token_provider, transport=foundry_transport)
             for profile in policy.profiles
         )
-        self.worker = Worker(repository, worker_id, {
-            JobType.PREPARE: PreparationHandler(policy, webiq, preparation, preparation),
-            JobType.EVALUATE: EvaluationHandler(
-                repository,
-                policy,
-                webiq,
-                evaluators,
-                RecommendationService(preparation),
-            ),
-        })
+        evaluation = EvaluationHandler(
+            repository,
+            policy,
+            webiq,
+            evaluators,
+            RecommendationService(preparation),
+        )
+        self.worker = Worker(
+            repository,
+            worker_id,
+            {
+                JobType.PREPARE: PreparationHandler(policy, webiq, preparation, preparation),
+                JobType.EVALUATE: evaluation,
+                JobType.RECOVER_EVALUATORS: evaluation,
+            },
+            on_job_finished=on_job_finished,
+        )
         self.repository = repository
 
     def run_once(self):

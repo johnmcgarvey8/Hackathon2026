@@ -31,9 +31,16 @@ class ProviderFailure(StrEnum):
 
 
 class ProviderError(ValueError):
-    def __init__(self, message: str, *, code: ProviderFailure = ProviderFailure.UNKNOWN):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: ProviderFailure = ProviderFailure.UNKNOWN,
+        safe_detail: str | None = None,
+    ):
         super().__init__(message)
         self.code = ProviderFailure(code)
+        self.safe_detail = safe_detail
 
 
 def public_url(value: str, resolve: bool = True) -> str:

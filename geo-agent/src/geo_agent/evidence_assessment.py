@@ -23,7 +23,7 @@ class BrandAlias(Contract):
 class BrandDefinition(Contract):
     name: str = Field(min_length=1, max_length=120)
     aliases: tuple[BrandAlias, ...] = Field(default=(), max_length=10)
-    domains: tuple[str, ...] = Field(default=(), max_length=10)
+    domains: tuple[str, ...] = Field(default=(), max_length=21)
 
     @field_validator("domains")
     @classmethod

@@ -23,6 +23,7 @@ from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.project_api import create_project_router
 from geo_agent.project_chat import MockProjectAgent, ProjectChatService, UnavailableProjectAgent
 from geo_agent.project_chat_api import create_project_chat_router
+from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
 from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict, Coordinator, NotFound, RunStore
@@ -71,6 +72,8 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
     owner_dependency = Depends(authenticate)
 
     measurement_repository = SQLiteMeasurementRepository(database)
+    measurement_artifacts = LocalArtifactStorage(database.parent / "measurement-artifacts")
+    mock_runtime = None
 
     def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
         return OperatorPrincipal(
@@ -79,21 +82,6 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
             roles=("Geo.Operator",),
         )
 
-    if measurement_policy is not None:
-        mock_runtime = MockMeasurementRuntime(measurement_repository, measurement_policy) if measurement_auto_worker else None
-
-        app.include_router(create_measurement_router(
-            measurement_repository,
-            measurement_policy,
-            authenticate_operator,
-            LocalArtifactStorage(database.parent / "measurement-artifacts"),
-            mock_runtime.drain if mock_runtime is not None else None,
-        ))
-    app.include_router(create_project_router(
-        measurement_repository,
-        measurement_policy,
-        authenticate_operator,
-    ))
     project_agent = (
         HostedProjectAgent(measurement_repository, project_foundry)
         if project_foundry is not None
@@ -101,10 +89,46 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         if measurement_policy is not None and measurement_policy.execution_mode == "mock"
         else UnavailableProjectAgent()
     )
-    app.include_router(create_project_chat_router(
-        ProjectChatService(measurement_repository, project_agent),
+    project_chat_workflow = ProjectMeasurementChatWorkflow(
+        measurement_repository,
+        measurement_policy,
+    )
+
+    if measurement_policy is not None:
+        mock_runtime = (
+            MockMeasurementRuntime(
+                measurement_repository,
+                measurement_policy,
+                on_job_finished=lambda job, run: project_chat_workflow.reconcile_job(
+                    job, run, project_agent,
+                ),
+            )
+            if measurement_auto_worker else None
+        )
+
+        app.include_router(create_measurement_router(
+            measurement_repository,
+            measurement_policy,
+            authenticate_operator,
+            measurement_artifacts,
+            mock_runtime.drain if mock_runtime is not None else None,
+        ))
+    app.include_router(create_project_router(
+        measurement_repository,
         measurement_policy,
         authenticate_operator,
+        measurement_artifacts,
+        mock_runtime.drain if mock_runtime is not None else None,
+    ))
+    app.include_router(create_project_chat_router(
+        ProjectChatService(
+            measurement_repository,
+            project_agent,
+            project_chat_workflow,
+        ),
+        measurement_policy,
+        authenticate_operator,
+        mock_runtime.drain if mock_runtime is not None else None,
     ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)

@@ -107,7 +107,7 @@ window.GEO_MOCK_DATA = {
       name: "Daylesford",
       initials: "DA",
       colour: "#107c10",
-      domain: "daylesford.example",
+      domain: "daylesford.com",
       scopeLabel: "Commerce and editorial",
       activeGoal: "Increase qualified AI referral traffic",
       health: "On track",
@@ -309,9 +309,9 @@ window.GEO_MOCK_DATA = {
         }
       ],
       runs: [
-        { id: "RUN-1048", goal: "Increase qualified AI referral traffic", scope: "daylesford.example/products/organic-produce", status: "Completed", started: "14 Sep 2026, 08:00", duration: "11m 24s", agents: "5/5", recommendations: 4, cmsOutcome: "4 awaiting review", clarity: "Used" },
-        { id: "RUN-1037", goal: "Improve citation visibility for farm-shop queries", scope: "daylesford.example/visit", status: "Completed", started: "7 Sep 2026, 08:00", duration: "9m 51s", agents: "5/5", recommendations: 3, cmsOutcome: "2 published", clarity: "Used" },
-        { id: "RUN-1029", goal: "Identify product content gaps", scope: "daylesford.example/products", status: "Failed validation", started: "31 Aug 2026, 08:00", duration: "4m 12s", agents: "3/5", recommendations: 0, cmsOutcome: "No proposal", clarity: "Used" }
+        { id: "RUN-1048", goal: "Increase qualified AI referral traffic", scope: "daylesford.com/products/organic-produce", status: "Completed", started: "14 Sep 2026, 08:00", duration: "11m 24s", agents: "5/5", recommendations: 4, cmsOutcome: "4 awaiting review", clarity: "Used" },
+        { id: "RUN-1037", goal: "Improve citation visibility for farm-shop queries", scope: "daylesford.com/visit", status: "Completed", started: "7 Sep 2026, 08:00", duration: "9m 51s", agents: "5/5", recommendations: 3, cmsOutcome: "2 published", clarity: "Used" },
+        { id: "RUN-1029", goal: "Identify product content gaps", scope: "daylesford.com/products", status: "Failed validation", started: "31 Aug 2026, 08:00", duration: "4m 12s", agents: "3/5", recommendations: 0, cmsOutcome: "No proposal", clarity: "Used" }
       ],
       cmsBundles: [
         {
@@ -340,7 +340,7 @@ window.GEO_MOCK_DATA = {
       name: "Contoso Outdoors",
       initials: "CO",
       colour: "#0078d4",
-      domain: "contoso-outdoors.example",
+      domain: "contoso.com",
       scopeLabel: "Global commerce",
       activeGoal: "Improve AI visibility for trail-running products",
       health: "Needs attention",
@@ -461,8 +461,8 @@ window.GEO_MOCK_DATA = {
         }
       ],
       runs: [
-        { id: "RUN-2084", goal: "Improve AI visibility for trail-running products", scope: "contoso-outdoors.example/products/trail-runner-pro", status: "Completed", started: "11 Sep 2026, 09:00", duration: "8m 33s", agents: "4/5", recommendations: 2, cmsOutcome: "2 awaiting review", clarity: "Skipped" },
-        { id: "RUN-2076", goal: "Improve collection-page grounding", scope: "contoso-outdoors.example/collections/trail", status: "Completed", started: "4 Sep 2026, 09:00", duration: "7m 49s", agents: "4/5", recommendations: 2, cmsOutcome: "1 published", clarity: "Skipped" }
+        { id: "RUN-2084", goal: "Improve AI visibility for trail-running products", scope: "contoso.com/products/trail-runner-pro", status: "Completed", started: "11 Sep 2026, 09:00", duration: "8m 33s", agents: "4/5", recommendations: 2, cmsOutcome: "2 awaiting review", clarity: "Skipped" },
+        { id: "RUN-2076", goal: "Improve collection-page grounding", scope: "contoso.com/collections/trail", status: "Completed", started: "4 Sep 2026, 09:00", duration: "7m 49s", agents: "4/5", recommendations: 2, cmsOutcome: "1 published", clarity: "Skipped" }
       ],
       cmsBundles: [
         {
@@ -493,10 +493,10 @@ window.GEO_MOCK_DATA = {
     "Strengthen product-page grounding"
   ],
   agentBlueprint: [
-    { id: "clarity", name: "Clarity analytics agent", description: "Reads configured project analytics and behavior signals.", duration: "1m 18s", durationMs: 78000 },
-    { id: "webiq", name: "WebIQ evidence agent", description: "Retrieves bounded external grounding and citation evidence.", duration: "3m 42s", durationMs: 222000 },
-    { id: "evaluation", name: "GEO evaluation agent", description: "Assesses discoverability, evidence coverage, and content gaps.", duration: "2m 09s", durationMs: 129000 },
-    { id: "brand", name: "Brand Context agent", description: "References approved Word and SharePoint guidance through Microsoft IQ.", duration: "52s", durationMs: 52000 },
-    { id: "recommendation", name: "Recommendation agent", description: "Prioritizes reviewable actions with evidence and limitations.", duration: "1m 36s", durationMs: 96000 }
+    { id: "clarity", name: "Clarity analytics agent", description: "Reads configured project analytics and behavior signals.", duration: "6s", durationMs: 6000 },
+    { id: "webiq", name: "WebIQ evidence agent", description: "Retrieves bounded external grounding and citation evidence.", duration: "14s", durationMs: 14000 },
+    { id: "evaluation", name: "GEO evaluation agent", description: "Assesses discoverability, evidence coverage, and content gaps.", duration: "10s", durationMs: 10000 },
+    { id: "brand", name: "Brand Context agent", description: "References approved Word and SharePoint guidance through Microsoft IQ.", duration: "6s", durationMs: 6000 },
+    { id: "recommendation", name: "Recommendation agent", description: "Prioritizes reviewable actions with evidence and limitations.", duration: "9s", durationMs: 9000 }
   ]
 };

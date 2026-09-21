@@ -21,6 +21,9 @@ test("project-scoped BFF routes include projectId upstream", () => {
     "app/api/projects/[projectId]/conversations/route.ts",
     "app/api/projects/[projectId]/conversations/[conversationId]/route.ts",
     "app/api/projects/[projectId]/conversations/[conversationId]/messages/route.ts",
+    "app/api/projects/[projectId]/measurements/route.ts",
+    "app/api/projects/[projectId]/runs/[runId]/route.ts",
+    "app/api/projects/[projectId]/runs/[runId]/[...operation]/route.ts",
   ];
   for (const route of routes) {
     const source = read(route);
@@ -46,9 +49,12 @@ test("switching projects remounts the project workspace", () => {
     read("app/projects/[projectId]/layout.tsx"),
     /<ProjectShell key=\{projectId\}/,
   );
+  const shell = read("components/project-shell.tsx");
+  assert.match(shell, /safeSuffix/);
+  assert.doesNotMatch(shell, /router\.push\(`\/projects\/\$\{value\}\$\{suffix\}`\)/);
 });
 
-test("chat and integrations render server-selected runtime identity and budget", () => {
+test("chat and integrations render server-selected runtime identity without allowance labels", () => {
   for (const path of [
     "app/projects/[projectId]/chat/page.tsx",
     "app/projects/[projectId]/integrations/page.tsx",
@@ -56,11 +62,35 @@ test("chat and integrations render server-selected runtime identity and budget",
     const source = read(path);
     assert.match(source, /api\.chatStatus\(project\.project_id\)/);
     assert.match(source, /agentLabel\(runtime\)/);
-    assert.match(source, /budgetLabel\(runtime\)/);
     assert.match(source, /Configuration is not remote verification/);
+    assert.doesNotMatch(source, /budgetLabel|requests remaining|owner budget/i);
     assert.doesNotMatch(source, /ggs-geo-hackathon2026|project\.foundry_status/);
   }
   assert.match(read("lib/types.ts"), /mode: "foundry" \| "mock" \| "unavailable"/);
+  assert.doesNotMatch(read("lib/types.ts"), /budget\?:|remaining:\s*number/);
+  assert.doesNotMatch(read("lib/chat-runtime.ts"), /budget|requests remaining/i);
+});
+
+test("measurement BFF is project scoped and preserves binary artifact headers", () => {
+  const browserApi = read("lib/api.ts");
+  const route = read("app/api/projects/[projectId]/runs/[runId]/[...operation]/route.ts");
+  const serverApi = read("lib/server-api.ts");
+  assert.match(browserApi, /createMeasurement/);
+  assert.match(browserApi, /prepareRun/);
+  assert.match(browserApi, /reviseQueries/);
+  assert.match(browserApi, /approveQueries/);
+  assert.match(browserApi, /startRun/);
+  assert.match(browserApi, /cancelJob/);
+  assert.match(browserApi, /requestBinary/);
+  assert.doesNotMatch(browserApi, /\/api\/v2\/runs|\/api\/v2\/briefs/);
+  assert.match(route, /proxyFastApiBinary/);
+  assert.match(route, /encodeURIComponent\(projectId\)/);
+  assert.match(route, /encodeURIComponent\(runId\)/);
+  assert.match(route, /definition_version/);
+  assert.match(route, /measurement_hash/);
+  for (const header of ["content-type", "content-disposition", "etag"]) {
+    assert.match(serverApi, new RegExp(header));
+  }
 });
 
 test("dev and production servers bind to loopback", () => {

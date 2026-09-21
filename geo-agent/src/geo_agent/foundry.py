@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -13,6 +14,65 @@ from geo_agent.contracts import Brief, EvaluationResult, PageSnapshot, Profile, 
 from geo_agent.contracts import QueryPlan
 from geo_agent.evidence_assessment import BrandDefinition, brand_matches
 from geo_agent.webiq import ProviderError, ProviderFailure
+
+
+def _safe_api_error_code(error: APIError) -> str | None:
+    candidates = [getattr(error, "code", None)]
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        candidates.extend((body.get("code"), body.get("type"), body.get("param")))
+        detail = body.get("error")
+        if isinstance(detail, dict):
+            candidates.extend((detail.get("code"), detail.get("type"), detail.get("param")))
+            inner = detail.get("inner_error")
+            if isinstance(inner, dict):
+                candidates.extend((inner.get("code"), inner.get("type")))
+        inner = body.get("inner_error")
+        if isinstance(inner, dict):
+            candidates.extend((inner.get("code"), inner.get("type")))
+    for candidate in candidates:
+        if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", candidate):
+            return candidate
+    return None
+
+
+def _safe_api_error_hint(error: APIError) -> str | None:
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        response = getattr(error, "response", None)
+        try:
+            body = response.json() if response is not None else None
+        except (AttributeError, ValueError):
+            body = None
+    message = None
+    if isinstance(body, dict):
+        detail = body.get("error", body)
+        if isinstance(detail, dict):
+            message = detail.get("message")
+    if not isinstance(message, str):
+        return None
+    normalized = " ".join(message.split())
+    allowed = (
+        "unsupported parameter",
+        "unknown parameter",
+        "invalid parameter",
+        "not supported",
+        "is required",
+        "must be",
+        "too large",
+        "content filter",
+        "does not match resource tenant",
+    )
+    if not any(fragment in normalized.casefold() for fragment in allowed):
+        return None
+    normalized = re.sub(r"https?://\S+", "[url]", normalized)
+    normalized = re.sub(r"\b[A-Za-z0-9_-]{33,}\b", "[redacted]", normalized)
+    normalized = re.sub(
+        r"(?i)\b[A-Za-z0-9_-]*(?:secret|sensitive|credential|access[_-]?token|api[_-]?key)[A-Za-z0-9_-]*\b",
+        "[redacted]",
+        normalized,
+    )
+    return normalized[:300]
 
 
 QUERY_PROMPT = (
@@ -191,7 +251,7 @@ class Foundry:
                 raw_response = client.responses.with_raw_response.parse(
                     model=self.deployment, instructions=prompt,
                     input=json.dumps(payload, ensure_ascii=True), text_format=output_type,
-                    max_output_tokens=2000, store=False,
+                    max_output_tokens=2000, parallel_tool_calls=False, store=False,
                 )
                 body = raw_response.http_response.json()
                 incomplete = body.get("incomplete_details") or {}
@@ -212,11 +272,18 @@ class Foundry:
             return response
         except APIError as error:
             status = getattr(error, "status_code", None)
+            safe_code = _safe_api_error_code(error)
+            safe_hint = _safe_api_error_hint(error)
             code = (ProviderFailure.AUTH if status in {401, 403} else
                     ProviderFailure.RATE_LIMIT if status == 429 else
                     ProviderFailure.CONNECTION if status is None else ProviderFailure.REQUEST)
-            raise ProviderError(f"Foundry request failed (HTTP {status or 'unavailable'}); no automatic retry",
-                                code=code) from None
+            detail = f", code {safe_code}" if safe_code else ""
+            hint = f": {safe_hint}" if safe_hint else ""
+            message = (
+                f"Foundry request failed (HTTP {status or 'unavailable'}{detail})"
+                f"{hint}; no automatic retry"
+            )
+            raise ProviderError(message, code=code, safe_detail=message) from None
         except (ValidationError, ValueError, TypeError) as error:
             if isinstance(error, ProviderError):
                 raise

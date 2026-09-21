@@ -1,4 +1,6 @@
-import type { ChatStatus } from "./types";
+import type { ChatStatus, MeasurementWorkflow } from "./types";
+
+const pollableWorkflowStatuses = new Set(["preparing", "evaluating"]);
 
 export function runtimeLabel(runtime: ChatStatus | null): string {
   if (!runtime) return "Runtime status unavailable";
@@ -13,8 +15,8 @@ export function agentLabel(runtime: ChatStatus | null): string | null {
   return `${name} · version ${version} · ${scope === "shared-default" ? "Shared default" : "Project override"}`;
 }
 
-export function budgetLabel(runtime: ChatStatus | null): string | null {
-  if (!runtime?.budget) return null;
-  const { remaining, limit, used } = runtime.budget;
-  return `Owner budget: ${remaining} of ${limit} requests remaining (${used} used), shared across projects`;
+export function shouldPollMeasurementWorkflow(
+  workflow: MeasurementWorkflow | null | undefined,
+): boolean {
+  return Boolean(workflow && pollableWorkflowStatuses.has(workflow.status));
 }

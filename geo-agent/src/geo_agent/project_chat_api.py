@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.measurement_api import OperatorPrincipal
@@ -17,6 +17,7 @@ def create_project_chat_router(
     service: ProjectChatService,
     policy: MeasurementExecutionPolicy | None,
     authenticate: Callable[..., OperatorPrincipal],
+    run_pending_jobs: Callable[[], None] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["project-chat"])
 
@@ -68,6 +69,7 @@ def create_project_chat_router(
         project_id: str,
         conversation_id: str,
         body: ProjectChatRequest,
+        background_tasks: BackgroundTasks,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
         conversation = await service.respond(
@@ -76,6 +78,8 @@ def create_project_chat_router(
             owner,
             body,
         )
+        if run_pending_jobs is not None:
+            background_tasks.add_task(run_pending_jobs)
         return _conversation_view(conversation)
 
     return router

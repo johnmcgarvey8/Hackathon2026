@@ -21,7 +21,7 @@
           "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
           "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
           "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
-          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-policy.json",
+          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
           "GEO_PORT": "8090",
           "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
         }
@@ -32,10 +32,37 @@
       }
     },
     {
+      "label": "GEO: Run Live Measurement Worker",
+      "type": "process",
+      "command": "${workspaceFolder}/geo-agent/.venv/Scripts/python.exe",
+      "args": ["-m", "geo_agent.measurement_worker"],
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
+          "GEO_MEASUREMENT_BUDGET_GRANT": "${input:measurementBudgetGrant}",
+          "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
+        }
+      },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^(.+):(\\d+): (.+)$", "file": 1, "line": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Live measurement worker ready"
+        }
+      }
+    },
+    {
       "label": "GEO: Open Agent Inspector",
       "type": "shell",
       "command": "echo '${input:geoInspector}'",
-      "dependsOn": "GEO: Run Chat Debug Server",
+      "dependsOn": [
+        "GEO: Run Chat Debug Server",
+        "GEO: Run Live Measurement Worker"
+      ],
+      "dependsOrder": "parallel",
       "presentation": { "reveal": "never" },
       "problemMatcher": []
     }
@@ -46,6 +73,11 @@
       "type": "command",
       "command": "ai-mlstudio.openTestTool",
       "args": { "triggeredFrom": "tasks", "port": 8090 }
+    },
+    {
+      "id": "measurementBudgetGrant",
+      "type": "promptString",
+      "description": "Absolute path to a fresh immutable grant matching measurement-live-policy-v2.json"
     }
   ]
 }

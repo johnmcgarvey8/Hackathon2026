@@ -12,16 +12,15 @@ Fill these non-secret settings in `geo-agent\.env`, then restart FastAPI:
 GEO_FOUNDRY_AGENT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>/agents/<agent-name>/endpoint/protocols/openai/responses
 GEO_FOUNDRY_AGENT_NAME=<agent-name>
 GEO_FOUNDRY_AGENT_VERSION=<numeric-version>
-GEO_FOUNDRY_MAX_REQUESTS=6
 ```
 
 Current and future app projects inherit this default unless they have an explicit `foundry` binding. No knowledge base or model deployment name is required: the hosted agent already defines its model. Authentication uses the developer's Azure CLI sign-in; credentials are never sent to Next.js browser code.
 
 The runtime derives the project endpoint and calls its `/openai/v1/responses` API with an explicit `agent_reference` name and version. This avoids relying on the stable agent endpoint's potentially latest-version routing. It does not change Azure endpoint configuration.
 
-Each message sends one request with at most 2,000 output tokens, `tool_choice: none` and `store: false`. Only the selected local conversation and bounded project/run summary are included. No response ID or cloud conversation ID is reused. The six-request initial cap is shared per local owner across all projects and retained after restarts. Failed requests after dispatch consume a slot. Changing the environment cap cannot reset or expand an existing ledger; additional allowance requires a separately authorised change.
+Each explicit submission sends at most one request with at most 2,000 output tokens, `tool_choice: none` and `store: false`. Only the selected local conversation and deterministic `geo-context/v2` packet for its immutable project-bound run are included. The packet separates query plan, WebIQ evidence, model answers, citation performance, literal brand presence, recommendations, and limitations/provenance. No response ID or cloud conversation ID is reused.
 
-Opening the UI makes no model call. The first sent message checks Azure access and may consume allowance. The Azure identity must have permission to invoke the existing agent. The UI surfaces authentication, quota, missing-agent and interrupted-request errors without automatic replay.
+Opening the UI makes no model call. The first sent message checks Azure access. The application does not impose a hosted-chat lifetime allowance; Azure service quota, rate limits, access, and consumption still apply. The Azure identity must have permission to invoke the existing agent. The UI surfaces authentication, quota, missing-agent and interrupted-request errors without automatic replay.
 
 ## Required manual outcome
 
