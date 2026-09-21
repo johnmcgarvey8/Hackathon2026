@@ -16,7 +16,7 @@ No installation or development server is required:
 
 ## Demonstrated product concepts
 
-The visual styling follows the light theme in the repository's `geo-optimiser.html`: Segoe UI typography, neutral grey surfaces, `#0067b8` accents, 5px controls, 8px panels, and Microsoft-colour section rules. These shared tokens and the responsive workspace styling live in `workspace.css`; the reference HTML itself is unchanged.
+The visual styling follows the light theme in the repository's [`original/geo-optimiser.html`](original/geo-optimiser.html): Segoe UI typography, neutral grey surfaces, `#0067b8` accents, 5px controls, 8px panels, and Microsoft-colour section rules. These shared tokens and the responsive workspace styling live in `workspace.css`; the reference HTML itself is unchanged.
 
 | Area | Mock behavior |
 | --- | --- |
