@@ -18,7 +18,7 @@ from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict
 
 
-MAX_INPUT_BYTES = 32000
+MAX_INPUT_BYTES = 512_000
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_OUTPUT_TOKENS = 2000
 

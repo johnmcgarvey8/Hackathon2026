@@ -27,7 +27,7 @@ from geo_agent.project_chat import (
     ProjectChatService,
     ProjectConversationStore,
 )
-from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
+from geo_agent.project_foundry import MAX_INPUT_BYTES, HostedProjectAgent, ProjectFoundrySettings
 from geo_agent.projects import FoundryProjectBinding, ProjectCreate, ProjectUpdate
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict
@@ -90,6 +90,7 @@ def send(service, project, owner, conversation, text="What can you help with?", 
 
 
 def test_environment_extracts_agent_and_defaults_without_deployment_or_knowledge():
+    assert MAX_INPUT_BYTES == 512_000
     result = ProjectFoundrySettings.from_environment({
         "GEO_FOUNDRY_AGENT_ENDPOINT": f"{ENDPOINT}/agents/shared-geo/endpoint/protocols/openai/responses",
         "GEO_FOUNDRY_AGENT_NAME": "shared-geo",

@@ -18,7 +18,7 @@ Current and future app projects inherit this default unless they have an explici
 
 The runtime derives the project endpoint and calls its `/openai/v1/responses` API with an explicit `agent_reference` name and version. This avoids relying on the stable agent endpoint's potentially latest-version routing. It does not change Azure endpoint configuration.
 
-Each explicit submission sends at most one request with at most 2,000 output tokens, `tool_choice: none` and `store: false`. Only the selected local conversation and deterministic `geo-context/v2` packet for its immutable project-bound run are included. The packet separates query plan, WebIQ evidence, model answers, citation performance, literal brand presence, recommendations, and limitations/provenance. No response ID or cloud conversation ID is reused.
+Each explicit submission sends at most one request with at most 512,000 input bytes, 2,000 output tokens, `tool_choice: none` and `store: false`. Only the selected local conversation and deterministic `geo-context/v2` packet for its immutable project-bound run are included. The packet separates query plan, WebIQ evidence, model answers, citation performance, literal brand presence, recommendations, and limitations/provenance. No response ID or cloud conversation ID is reused.
 
 Opening the UI makes no model call. The first sent message checks Azure access. The application does not impose a hosted-chat lifetime allowance; Azure service quota, rate limits, access, and consumption still apply. The Azure identity must have permission to invoke the existing agent. The UI surfaces authentication, quota, missing-agent and interrupted-request errors without automatic replay.
 
