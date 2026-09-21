@@ -1,12 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import { agentLabel, runtimeLabel, shouldPollMeasurementWorkflow } from "@/lib/chat-runtime";
-import { operationLabel, operationTotals, pageUrl } from "@/lib/measurement-runtime";
-import type { ChatCitation, ChatStatus, Conversation, MeasurementRun, RunProgress, SourceClass } from "@/lib/types";
+import { shouldPollMeasurementWorkflow } from "@/lib/chat-runtime";
+import type { ChatCitation, ChatStatus, Conversation, SourceClass } from "@/lib/types";
 import { Icon } from "@/components/icons";
 import { useProject } from "@/components/project-context";
 import { LoadingState, UnavailableState } from "@/components/status-state";
@@ -69,8 +67,6 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSources, setDrawerSources] = useState<ChatCitation[]>([]);
-  const [boundRun, setBoundRun] = useState<MeasurementRun | null>(null);
-  const [workflowProgress, setWorkflowProgress] = useState<RunProgress | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const recoveryKey = useRef<string | null>(null);
@@ -115,36 +111,12 @@ export default function ChatPage() {
   }, [project, requestedConversationId]);
 
   const workflowRunId = selected?.measurement_workflow?.run_id || selected?.run_id || null;
-  const workflowStatus = selected?.measurement_workflow?.status || null;
   const selectedConversationId = selected?.conversation_id || null;
   const workflowPollingRequired = shouldPollMeasurementWorkflow(selected?.measurement_workflow);
 
   useEffect(() => {
-    if (!project || !workflowRunId) {
-      setBoundRun(null);
-      setWorkflowProgress(null);
-      return;
-    }
-    setBoundRun(null);
-    setWorkflowProgress(null);
-    let active = true;
-    Promise.allSettled([
-      api.run(project.project_id, workflowRunId),
-      api.runProgress(project.project_id, workflowRunId),
-    ])
-      .then(([savedRun, savedProgress]) => {
-        if (!active) return;
-        if (savedRun.status === "fulfilled") setBoundRun(savedRun.value);
-        if (savedProgress.status === "fulfilled") setWorkflowProgress(savedProgress.value);
-      })
-      .catch(() => { if (active) setBoundRun(null); });
-    return () => { active = false; };
-  }, [project, workflowRunId]);
-
-  useEffect(() => {
     if (!project || !selectedConversationId || !workflowPollingRequired) return;
     const conversationId = selectedConversationId;
-    const runId = workflowRunId;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let attempts = 0;
@@ -158,22 +130,14 @@ export default function ChatPage() {
         return;
       }
       attempts += 1;
-      const [conversationResult, runResult, progressResult] = await Promise.allSettled([
+      const conversationResult = await Promise.allSettled([
         api.conversation(project.project_id, conversationId),
-        runId ? api.run(project.project_id, runId) : Promise.resolve(null),
-        runId ? api.runProgress(project.project_id, runId) : Promise.resolve(null),
       ]);
-      if (!stopped && conversationResult.status === "fulfilled") {
-        const saved = conversationResult.value;
+      if (!stopped && conversationResult[0].status === "fulfilled") {
+        const saved = conversationResult[0].value;
         setSelected(saved);
         setConversations((items) => items.map((item) =>
           item.conversation_id === saved.conversation_id ? saved : item));
-      }
-      if (!stopped && runResult.status === "fulfilled" && runResult.value) {
-        setBoundRun(runResult.value);
-      }
-      if (!stopped && progressResult.status === "fulfilled" && progressResult.value) {
-        setWorkflowProgress(progressResult.value);
       }
       schedule();
     };
@@ -182,7 +146,7 @@ export default function ChatPage() {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [project, selectedConversationId, workflowPollingRequired, workflowRunId, workflowStatus]);
+  }, [project, selectedConversationId, workflowPollingRequired]);
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: "smooth" });
@@ -207,11 +171,6 @@ export default function ChatPage() {
     "What URL and objective should I use for a measurement?",
   ];
   const suggestions = workflowRunId ? runSuggestions : projectSuggestions;
-  const workflow = selected?.measurement_workflow;
-  const workflowTotals = operationTotals(workflowProgress);
-  const controlPlaneHref = workflowRunId
-    ? `/projects/${project.project_id}/control-plane/${workflowRunId}`
-    : `/projects/${project.project_id}/control-plane`;
   const interactionLocked = sending || changingConversation || loading || recoveryId !== null;
   const pendingTurn = selected?.turns.some((turn) => turn.status === "running") ?? false;
 
@@ -242,7 +201,6 @@ export default function ChatPage() {
       setConversations((items) => [conversation, ...items]);
       setHistoryOpen(false);
       setMessage("");
-      setBoundRun(null);
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "A new conversation could not be created.");
     } finally {
@@ -359,7 +317,7 @@ export default function ChatPage() {
                 aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
               >
                 <Icon name="chat" />
-                <span><strong>{conversation.title}</strong><small>Run {conversation.measurement_workflow?.run_id || conversation.run_id} · {new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
+                <span><strong>{conversation.title}</strong><small>{new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
               </button>
             ))}
           </div>
@@ -387,42 +345,11 @@ export default function ChatPage() {
       <section className="conversation-canvas">
         <header className="conversation-toolbar">
           <button className="history-mobile-toggle icon-button" type="button" aria-label="Show conversations" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}><Icon name="menu" /></button>
-          <div className="conversation-heading"><span className="agent-symbol"><Icon name="spark" /></span><span><strong>GEO assistant</strong><small>{workflowRunId ? `Measurement run: ${workflowRunId}` : `${project.name} · project conversation`}</small></span></div>
+          <div className="conversation-heading"><span className="agent-symbol"><Icon name="spark" /></span><span><strong>GEO assistant</strong><small>{project.name}</small></span></div>
           <div className="conversation-toolbar-actions">
-            {workflowRunId && <Link className="button" href={controlPlaneHref}>View in Control Plane</Link>}
-            <Link className="button ghost" href={`/projects/${project.project_id}/measurements/new`}>Manual measurement</Link>
             <button className="button ghost" type="button" onClick={() => openSources(allSources)}><Icon name="sources" /><span>Sources</span></button>
           </div>
         </header>
-        <div className="agent-surfaces" aria-label="Grounding sources">
-          <span className="agent-surfaces-label">Grounding</span>
-          <span className="surface-badge">{runtimeLabel(runtime)}</span>
-          {agentLabel(runtime) && <span className="surface-badge">{agentLabel(runtime)}</span>}
-          <span className="surface-badge">Organisational retrieval unavailable</span>
-          {workflowRunId && <span className="surface-badge">Run {workflowRunId}</span>}
-          {boundRun && boundRun.run_id === workflowRunId && <span className="surface-badge">{pageUrl(boundRun)} · {boundRun.state} · evidence {boundRun.measurement ? "available" : "pending"}</span>}
-          <span className="surfaces-status">Project scoped</span>
-        </div>
-        {workflow && (
-          <div className="chat-run-notice">
-            <span>
-              <strong>Measurement {workflow.status}</strong>
-              {workflow.url || "Waiting for a valid project URL"}
-              {workflow.objective && <small>{workflow.objective}</small>}
-              {["preparing", "evaluating"].includes(workflow.status) && (
-                <>
-                  <small>
-                    {workflowProgress?.current_operation ? operationLabel(workflowProgress.current_operation) : "Waiting for saved progress"}
-                    {workflowTotals.planned > 0 ? ` · ${workflowTotals.resolved}/${workflowTotals.planned} operations resolved` : ""}
-                  </small>
-                  {workflowTotals.planned > 0 && <span className="chat-workflow-progress" aria-label={`${workflowTotals.percentage}% of measurement operations resolved`}><i style={{ width: `${workflowTotals.percentage}%` }} /></span>}
-                </>
-              )}
-              {workflow.error && <small className="error-text">{workflow.error}</small>}
-            </span>
-            {workflow.run_id && <Link className="button" href={controlPlaneHref}>Read-only run detail</Link>}
-          </div>
-        )}
 
         <div className={`conversation-stream ${!selected?.turns.length ? "welcome-stream" : ""}`} ref={streamRef}>
           {loading ? <LoadingState label="Loading conversations" /> : !selected?.turns.length ? (
@@ -438,7 +365,6 @@ export default function ChatPage() {
                   </button>
                 ))}
               </div>
-              <div className="welcome-grounding"><Icon name="lock" /> Server-side authentication. Grounding availability is shown above.</div>
             </div>
           ) : (
             <div className="thread">

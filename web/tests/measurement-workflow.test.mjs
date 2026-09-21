@@ -83,15 +83,15 @@ test("results are separated and unsafe evidence remains React text", () => {
   assert.doesNotMatch(results, /dangerouslySetInnerHTML/);
 });
 
-test("chat loads workflow run metadata and renders workflow insights without a user bubble", () => {
+test("chat renders workflow insights without exposing run metadata", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
   assert.match(chat, /measurement_workflow\?\.run_id/);
-  assert.match(chat, /api\.run\(project\.project_id, workflowRunId\)/);
   assert.match(chat, /turn\.origin !== "workflow"/);
   assert.match(chat, /Measurement insight/);
+  assert.doesNotMatch(chat, /agent-surfaces|chat-run-notice|Measurement run:/);
 });
 
-test("chat-first workflow polls saved state and links to a read-only control plane", () => {
+test("chat-first workflow polls saved conversation while control plane remains read only", () => {
   const control = read("app/projects/[projectId]/control-plane/page.tsx");
   const detail = read("app/projects/[projectId]/control-plane/[runId]/page.tsx");
   const chat = read("app/projects/[projectId]/chat/page.tsx");
@@ -103,8 +103,7 @@ test("chat-first workflow polls saved state and links to a read-only control pla
   assert.match(chat, /document\.visibilityState/);
   assert.match(chat, /attempts < 120/);
   assert.match(chat, /api\.conversation\(project\.project_id, conversationId\)/);
-  assert.match(chat, /api\.run\(project\.project_id, runId\)/);
-  assert.match(chat, /Manual measurement/);
+  assert.doesNotMatch(chat, /agent-surfaces|chat-run-notice|View in Control Plane|Manual measurement/);
   assert.match(chat, /Run-bound conversations/);
   assert.match(chat, /Project conversations/);
   assert.match(chat, /Measure a page/);
