@@ -87,6 +87,33 @@ test("results are separated and unsafe evidence remains React text", () => {
   assert.doesNotMatch(results, /dangerouslySetInnerHTML/);
 });
 
+test("control plane measurement detail provides accessible responsive section navigation", () => {
+  const controlPlaneDetail = read("app/projects/[projectId]/control-plane/[runId]/page.tsx");
+  const sectionNav = read("components/measurement/measurement-section-nav.tsx");
+  const styles = read("app/globals.css");
+  for (const [id, label] of [
+    ["brief", "Brief"],
+    ["query-plan", "Grounding Queries"],
+    ["model-answers", "LLM Provider Survey"],
+    ["citation-performance", "Citation Performance"],
+    ["brand-presence", "Brand Presence"],
+    ["recommendations", "Recommendations"],
+  ]) {
+    assert.match(sectionNav, new RegExp(`id: "${id}", label: "${label}"`));
+  }
+  assert.match(controlPlaneDetail, /id="brief"/);
+  assert.match(controlPlaneDetail, /<MeasurementSectionNav \/>/);
+  assert.match(sectionNav, /new IntersectionObserver/);
+  assert.match(sectionNav, /root: scrollRoot/);
+  assert.match(sectionNav, /aria-current=\{activeSection === section\.id \? "location"/);
+  assert.match(sectionNav, /aria-label="Measurement run sections"/);
+  assert.match(styles, /\.measurement-run-layout/);
+  assert.match(styles, /\.measurement-section-nav/);
+  assert.match(styles, /@media \(max-width: 1100px\)/);
+  assert.match(styles, /scroll-behavior: smooth/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+});
+
 test("chat renders workflow insights without exposing run metadata", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
   assert.match(chat, /measurement_workflow\?\.run_id/);

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useProject } from "@/components/project-context";
+import { MeasurementSectionNav } from "@/components/measurement/measurement-section-nav";
 import { RunProgressPanel } from "@/components/measurement/run-progress";
 import { EvidenceDrawer, MeasurementResultsView } from "@/components/measurement/results/measurement-results";
 import { useRunPolling } from "@/components/measurement/use-run-polling";
@@ -136,96 +137,101 @@ export default function ControlPlaneRunPage() {
       />
       {error && <UnavailableState title="Saved data unavailable" message={error} compact />}
 
-      <div className="grid two run-overview">
-        <section className="card">
-          <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
-          <dl className="scope-grid">
-            <div><dt>Project</dt><dd>{project.name}</dd></div>
-            <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
-            <div><dt>Run ID</dt><dd><code>{run.run_id}</code></dd></div>
-            <div><dt>Automation</dt><dd>{run.approval ? "Query plan bound automatically" : run.latest_job?.state === "failed" ? "Stopped before query binding" : "Preparing automatically"}</dd></div>
-            <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
-            <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
-          </dl>
-        </section>
-        <section className="card">
-          <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-          <RunProgressPanel progress={progress} />
-        </section>
-      </div>
+      <div className="measurement-run-layout">
+        <div className="measurement-run-content">
+          <div className="grid two run-overview" id="brief">
+            <section className="card">
+              <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
+              <dl className="scope-grid">
+                <div><dt>Project</dt><dd>{project.name}</dd></div>
+                <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
+                <div><dt>Run ID</dt><dd><code>{run.run_id}</code></dd></div>
+                <div><dt>Automation</dt><dd>{run.approval ? "Query plan bound automatically" : run.latest_job?.state === "failed" ? "Stopped before query binding" : "Preparing automatically"}</dd></div>
+                <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
+                <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
+              </dl>
+            </section>
+            <section className="card">
+              <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
+              <RunProgressPanel progress={progress} />
+            </section>
+          </div>
 
-      <MeasurementResultsView
-        run={run}
-        assessment={assessment}
-        strategy={strategy}
-        onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)}
-      />
+          <MeasurementResultsView
+            run={run}
+            assessment={assessment}
+            strategy={strategy}
+            onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)}
+          />
 
-      <section className="card">
-        <div className="card-heading"><h2>Saved downloads and audit</h2><span className="pill">GET only</span></div>
-        <div className="button-row">
-          {artifacts.map((artifact) => (
-            <button
-              className="button"
-              type="button"
-              key={artifact.artifact_id}
-              disabled={busy}
-              onClick={() => void download(
-                () => api.artifact(project.project_id, params.runId, artifact.artifact_id),
-                `geo-${params.runId}.zip`,
+          <section className="card">
+            <div className="card-heading"><h2>Saved downloads and audit</h2><span className="pill">GET only</span></div>
+            <div className="button-row">
+              {artifacts.map((artifact) => (
+                <button
+                  className="button"
+                  type="button"
+                  key={artifact.artifact_id}
+                  disabled={busy}
+                  onClick={() => void download(
+                    () => api.artifact(project.project_id, params.runId, artifact.artifact_id),
+                    `geo-${params.runId}.zip`,
+                  )}
+                >
+                  Download {artifact.artifact_id} ({Math.ceil(artifact.size / 1024)} KB)
+                </button>
+              ))}
+              {assessment?.assessment && assessment.brand_definition && (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void download(
+                    () => api.assessmentBundle(
+                      project.project_id,
+                      params.runId,
+                      assessment.brand_definition!.definition_version,
+                      typeof assessment.assessment?.measurement_hash === "string"
+                        ? assessment.assessment.measurement_hash : undefined,
+                    ),
+                    `geo-assessment-${params.runId}.zip`,
+                  )}
+                >
+                  Download brand assessment
+                </button>
               )}
-            >
-              Download {artifact.artifact_id} ({Math.ceil(artifact.size / 1024)} KB)
-            </button>
-          ))}
-          {assessment?.assessment && assessment.brand_definition && (
-            <button
-              className="button"
-              type="button"
-              disabled={busy}
-              onClick={() => void download(
-                () => api.assessmentBundle(
-                  project.project_id,
-                  params.runId,
-                  assessment.brand_definition!.definition_version,
-                  typeof assessment.assessment?.measurement_hash === "string"
-                    ? assessment.assessment.measurement_hash : undefined,
-                ),
-                `geo-assessment-${params.runId}.zip`,
+              {strategy?.status === "ready" && (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void download(
+                    () => api.contentStrategyBundle(
+                      project.project_id,
+                      params.runId,
+                      typeof strategy.report?.measurement_hash === "string"
+                        ? strategy.report.measurement_hash : undefined,
+                    ),
+                    `geo-content-strategy-${params.runId}.zip`,
+                  )}
+                >
+                  Download content strategy
+                </button>
               )}
-            >
-              Download brand assessment
-            </button>
-          )}
-          {strategy?.status === "ready" && (
-            <button
-              className="button"
-              type="button"
-              disabled={busy}
-              onClick={() => void download(
-                () => api.contentStrategyBundle(
-                  project.project_id,
-                  params.runId,
-                  typeof strategy.report?.measurement_hash === "string"
-                    ? strategy.report.measurement_hash : undefined,
-                ),
-                `geo-content-strategy-${params.runId}.zip`,
-              )}
-            >
-              Download content strategy
-            </button>
-          )}
+            </div>
+            {artifacts.length === 0 && <p className="small muted">No previously created artifacts are saved.</p>}
+            <details>
+              <summary>Saved jobs ({jobs.length})</summary>
+              <ol className="event-list">{jobs.map((job) => <li key={job.job_id}><strong>{job.job_type} · {job.state}</strong><span>{displayDate(job.updated_at)}</span></li>)}</ol>
+            </details>
+            <details>
+              <summary>Saved events ({events.length})</summary>
+              <ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol>
+            </details>
+          </section>
         </div>
-        {artifacts.length === 0 && <p className="small muted">No previously created artifacts are saved.</p>}
-        <details>
-          <summary>Saved jobs ({jobs.length})</summary>
-          <ol className="event-list">{jobs.map((job) => <li key={job.job_id}><strong>{job.job_type} · {job.state}</strong><span>{displayDate(job.updated_at)}</span></li>)}</ol>
-        </details>
-        <details>
-          <summary>Saved events ({events.length})</summary>
-          <ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol>
-        </details>
-      </section>
+        <MeasurementSectionNav />
+      </div>
 
       {drawerOpen && <EvidenceDrawer source={drawerSource} loading={drawerLoading} error={drawerError} onClose={() => setDrawerOpen(false)} />}
     </section>
