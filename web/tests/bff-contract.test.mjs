@@ -33,6 +33,24 @@ test("project-scoped BFF routes include projectId upstream", () => {
   }
 });
 
+test("project, conversation, and run routes proxy DELETE upstream", () => {
+  for (const route of [
+    "app/api/projects/[projectId]/route.ts",
+    "app/api/projects/[projectId]/conversations/[conversationId]/route.ts",
+    "app/api/projects/[projectId]/runs/[runId]/route.ts",
+  ]) {
+    const source = read(route);
+    assert.match(source, /export async function DELETE/);
+    assert.match(source, /method: "DELETE"/);
+  }
+  const browserApi = read("lib/api.ts");
+  assert.match(browserApi, /deleteProject/);
+  assert.match(browserApi, /deleteConversation/);
+  assert.match(browserApi, /deleteRun/);
+  assert.match(browserApi, /response\.status === 204/);
+  assert.match(read("lib/server-api.ts"), /response\.status === 204/);
+});
+
 test("project chat requires explicit runtime readiness and never claims organisational grounding", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
   assert.match(chat, /api\.chatStatus\(project\.project_id\)/);

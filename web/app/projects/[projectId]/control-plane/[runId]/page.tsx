@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useProject } from "@/components/project-context";
 import { MeasurementSectionNav } from "@/components/measurement/measurement-section-nav";
 import { RunProgressPanel } from "@/components/measurement/run-progress";
@@ -11,7 +10,7 @@ import { useRunPolling } from "@/components/measurement/use-run-polling";
 import { ScreenHeader } from "@/components/screen-header";
 import { LoadingState, UnavailableState } from "@/components/status-state";
 import { api, ApiError } from "@/lib/api";
-import { pageUrl, runObjective } from "@/lib/measurement-runtime";
+import { isRunActive, pageUrl, runObjective } from "@/lib/measurement-runtime";
 import type {
   ArtifactMetadata,
   BinaryArtifact,
@@ -44,6 +43,7 @@ function saveDownload(download: BinaryArtifact, fallback: string) {
 export default function ControlPlaneRunPage() {
   const { project } = useProject();
   const params = useParams<{ runId: string }>();
+  const router = useRouter();
   const [run, setRun] = useState<MeasurementRun | null>(null);
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [jobs, setJobs] = useState<WorkflowJob[]>([]);
@@ -58,6 +58,9 @@ export default function ControlPlaneRunPage() {
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerSource, setDrawerSource] = useState<EvidenceSource | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!project) return;
@@ -123,6 +126,20 @@ export default function ControlPlaneRunPage() {
     }
   };
 
+  const deleteRun = async () => {
+    if (!run || isRunActive(run) || busy || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteRun(project.project_id, run.run_id);
+      router.push(`/projects/${project.project_id}/control-plane`);
+    } catch (requestError) {
+      setDeleteError(requestError instanceof ApiError ? requestError.message : "The measurement run could not be deleted.");
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  };
+
   if (loading) return <section className="screen"><LoadingState label="Loading read-only run detail" /></section>;
   if (error && !run) return <section className="screen"><UnavailableState title="Run unavailable" message={error} /></section>;
   if (!run) return null;
@@ -131,31 +148,21 @@ export default function ControlPlaneRunPage() {
     <section className="screen measurement-run">
       <ScreenHeader
         eyebrow="Read-only control plane"
-        title={runObjective(run)}
-        description={`${pageUrl(run)} · revision ${run.revision}`}
-        actions={<Link className="button" href={`/projects/${project.project_id}/control-plane`}>Back to Control Plane</Link>}
+        title="Measurement run"
+        description={`Revision ${run.revision} · last saved ${displayDate(run.updated_at || run.created_at)}`}
+        backLink={{ href: `/projects/${project.project_id}/control-plane`, label: "Back to Control Plane" }}
       />
-      {error && <UnavailableState title="Saved data unavailable" message={error} compact />}
 
       <div className="measurement-run-layout">
         <div className="measurement-run-content">
-          <div className="grid two run-overview" id="brief">
-            <section className="card">
-              <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
-              <dl className="scope-grid">
-                <div><dt>Project</dt><dd>{project.name}</dd></div>
-                <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
-                <div><dt>Run ID</dt><dd><code>{run.run_id}</code></dd></div>
-                <div><dt>Automation</dt><dd>{run.approval ? "Query plan bound automatically" : run.latest_job?.state === "failed" ? "Stopped before query binding" : "Preparing automatically"}</dd></div>
-                <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
-                <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
-              </dl>
-            </section>
-            <section className="card">
-              <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-              <RunProgressPanel progress={progress} />
-            </section>
-          </div>
+          <section className="card run-brief" id="brief">
+            <div className="card-heading"><h2>Run brief</h2><span className="pill blue">{run.state}</span></div>
+            <dl className="scope-grid run-brief-grid">
+              <div><dt>Goal</dt><dd>{runObjective(run)}</dd></div>
+              <div><dt>Measured page</dt><dd>{pageUrl(run)}</dd></div>
+            </dl>
+          </section>
+          {error && <UnavailableState title="Saved data unavailable" message={error} compact />}
 
           <MeasurementResultsView
             run={run}
@@ -228,6 +235,79 @@ export default function ControlPlaneRunPage() {
               <summary>Saved events ({events.length})</summary>
               <ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol>
             </details>
+          </section>
+
+          <details className="card troubleshooting-panel">
+            <summary>
+              <span><strong>Troubleshooting details</strong><small>Run metadata, saved job state, and durable operation progress</small></span>
+              <span className="pill blue">{run.state}</span>
+            </summary>
+            <div className="grid two run-overview troubleshooting-content">
+              <section>
+                <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
+                <dl className="scope-grid">
+                  <div><dt>Project</dt><dd>{project.name}</dd></div>
+                  <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
+                  <div><dt>Run ID</dt><dd><code>{run.run_id}</code></dd></div>
+                  <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
+                  <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
+                </dl>
+              </section>
+              <section>
+                <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
+                <RunProgressPanel progress={progress} />
+              </section>
+            </div>
+          </details>
+
+          <section className="card danger-zone" id="danger-zone">
+            <div className="card-heading">
+              <div>
+                <p className="eyebrow danger-eyebrow">Danger zone</p>
+                <h2>Delete this measurement run</h2>
+              </div>
+              <span className="pill red">Permanent</span>
+            </div>
+            <p className="small muted">
+              Deleting removes the run, its saved evidence, scores, jobs, and exported files permanently.
+              This cannot be undone. Conversations that reference this run are retained, with references to it removed.
+            </p>
+            {isRunActive(run) && (
+              <p className="small muted">This run is still executing. Wait for it to finish or cancel it before deleting.</p>
+            )}
+            {deleteError && <p className="form-error">{deleteError}</p>}
+            {confirmingDelete ? (
+              <div className="button-row">
+                <button
+                  className="button danger"
+                  type="button"
+                  disabled={deleting || isRunActive(run)}
+                  onClick={() => void deleteRun()}
+                >
+                  {deleting ? "Deleting..." : "Yes, delete permanently"}
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="button-row">
+                <button
+                  className="button danger"
+                  type="button"
+                  disabled={busy || isRunActive(run)}
+                  title={isRunActive(run) ? "Active measurement runs must finish or be cancelled first." : undefined}
+                  onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}
+                >
+                  Delete measurement run
+                </button>
+              </div>
+            )}
           </section>
         </div>
         <MeasurementSectionNav />

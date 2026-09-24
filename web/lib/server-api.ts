@@ -27,6 +27,12 @@ export async function proxyFastApi(path: string, init?: RequestInit): Promise<Ne
       },
       cache: "no-store",
     });
+    if (response.status === 204) {
+      return new NextResponse(null, {
+        status: 204,
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
     const contentType = response.headers.get("content-type") || "";
     const body = contentType.includes("application/json")
       ? await response.json()

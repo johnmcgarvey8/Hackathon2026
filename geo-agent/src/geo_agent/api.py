@@ -15,6 +15,11 @@ from geo_agent.conversation import ChatRequest, ConversationAgent
 from geo_agent.evaluation import match_citations
 from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.live import BudgetedLiveWorkflow, LiveWorkflow
+from geo_agent.goal_summary import (
+    FallbackGoalSummaryProvider,
+    FoundryGoalSummaryProvider,
+    ProjectGoalSummaryService,
+)
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.measurement_api import OperatorPrincipal, create_measurement_router
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
@@ -86,9 +91,19 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         if measurement_policy is not None and measurement_policy.execution_mode == "mock"
         else UnavailableProjectAgent()
     )
+    goal_summary_provider = (
+        FoundryGoalSummaryProvider(project_foundry)
+        if project_foundry is not None
+        else FallbackGoalSummaryProvider()
+    )
+    goal_summaries = ProjectGoalSummaryService(
+        measurement_repository,
+        goal_summary_provider,
+    )
     project_chat_workflow = ProjectMeasurementChatWorkflow(
         measurement_repository,
         measurement_policy,
+        goal_summaries,
     )
 
     if measurement_policy is not None:
@@ -105,6 +120,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         authenticate_operator,
         measurement_artifacts,
         None,
+        goal_summaries,
     ))
     app.include_router(create_project_chat_router(
         ProjectChatService(

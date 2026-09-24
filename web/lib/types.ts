@@ -47,6 +47,27 @@ export interface MeasurementBriefRequest {
   audience: string;
   goal: string;
   locale: string;
+  raw_goal?: string;
+  goal_summary_operation_id?: string;
+}
+
+export interface MeasurementGoalSummaryRequest {
+  raw_goal: string;
+  url: string;
+  audience?: string;
+  desired_outcome?: string;
+  target_kind?: "page" | "domain";
+  idempotency_key: string;
+}
+
+export interface MeasurementGoalSummary {
+  operation_id: string;
+  input_hash: string;
+  summary: string;
+  fallback_used: boolean;
+  provider_response_id: string | null;
+  usage: Record<string, number>;
+  error_code: string | null;
 }
 
 export interface MeasurementBrief {
@@ -79,6 +100,9 @@ export interface QueryPlan {
 
 export interface EvidenceSource {
   evidence_id: string;
+  evidence_type?: "grounding-citation";
+  query_id?: string;
+  grounding_query?: string;
   url: string;
   excerpt: string;
   provenance: "synthetic" | "recorded" | "live";
@@ -359,7 +383,20 @@ export interface BrandEvidenceAssessment {
   assessment: {
     grounding: Record<string, unknown>;
     answer: Record<string, unknown>;
-    queries: Record<string, unknown>[];
+    queries: {
+      query_id: string;
+      grounding_query: string;
+      status: "completed" | "error" | "missing";
+      brand_status: "matched" | "ambiguous" | "absent" | "unknown" | "unconfigured";
+      sources: {
+        evidence_id: string;
+        title: string | null;
+        url: string;
+        brand: {
+          status: "matched" | "ambiguous" | "absent" | "unconfigured";
+        };
+      }[];
+    }[];
     answers: Record<string, unknown>[];
     limitations: string[];
     [key: string]: unknown;
@@ -428,11 +465,21 @@ export type SourceClass =
   | "work-context"
   | "model-knowledge";
 
+export type GeoEvidenceType =
+  | "measurement-run"
+  | "grounding-query"
+  | "grounding-citation"
+  | "test-answer";
+
 export interface ChatCitation {
   source_class: SourceClass;
+  geo_evidence_type?: GeoEvidenceType | null;
   source_id: string;
   title: string;
   url: string | null;
+  query_id?: string | null;
+  brand_name?: string | null;
+  brand_status?: "matched" | "ambiguous" | "absent" | "unknown" | "unconfigured" | null;
 }
 
 export interface ConversationTurn {
@@ -453,8 +500,14 @@ export interface ConversationTurn {
 }
 
 export interface MeasurementWorkflow {
-  status: "collecting" | "preparing" | "evaluating" | "completed" | "failed";
+  workflow_id: string;
+  status: "collecting" | "awaiting-confirmation" | "preparing" | "evaluating" | "completed" | "failed";
+  target_kind: "page" | "domain" | null;
   url: string | null;
+  goal: string | null;
+  audience: string | null;
+  desired_outcome: string | null;
+  pending_field: "target" | "target-kind" | "goal" | "audience" | "desired-outcome" | "confirmation" | null;
   objective: string | null;
   run_id: string | null;
   source_idempotency_key: string | null;
@@ -462,14 +515,17 @@ export interface MeasurementWorkflow {
 }
 
 export interface Conversation {
-  schema_version: "geo-project-conversation/v1";
+  schema_version: "geo-project-conversation/v1" | "geo-project-conversation/v2";
   conversation_id: string;
   project_id: string;
   run_id: string | null;
+  linked_run_ids: string[];
+  comparison_run_ids: string[];
   revision: number;
   title: string;
   turns: ConversationTurn[];
   measurement_workflow?: MeasurementWorkflow | null;
+  measurement_workflows?: MeasurementWorkflow[];
   created_at: string;
   updated_at: string;
 }

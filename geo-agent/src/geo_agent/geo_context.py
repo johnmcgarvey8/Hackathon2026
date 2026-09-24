@@ -1,4 +1,3 @@
-import json
 from typing import Any, Literal
 
 from pydantic import Field
@@ -8,19 +7,8 @@ from geo_agent.evaluation import answer_mentions_target, match_citations, measur
 from geo_agent.evidence_assessment import BrandDefinitionRecord, build_evidence_assessment
 from geo_agent.measurement_workflow import MeasurementRun
 from geo_agent.projects import Project
-from geo_agent.workflow import Conflict
 
 
-MAX_GEO_CONTEXT_BYTES = 24000
-GROUP_BYTE_BUDGETS = {
-    "query_plan": 3000,
-    "webiq_evidence": 5000,
-    "model_answers": 4500,
-    "citation_performance": 3000,
-    "brand_presence": 2200,
-    "recommendations": 3000,
-    "limitations_and_provenance": 2600,
-}
 RESULT_DISTINCTIONS = (
     "exact-page-citation",
     "same-domain-other-page-citation",
@@ -34,14 +22,24 @@ RESULT_DISTINCTIONS = (
 
 class GeoContextCitation(Contract):
     source_class: Literal["geo-evidence"] = "geo-evidence"
+    geo_evidence_type: Literal[
+        "measurement-run",
+        "grounding-query",
+        "grounding-citation",
+        "test-answer",
+    ]
     source_id: str = Field(min_length=1, max_length=500)
     title: str = Field(min_length=1, max_length=500)
     url: str | None = Field(default=None, max_length=2000)
+    query_id: str | None = None
+    brand_name: str | None = None
+    brand_status: Literal["matched", "ambiguous", "absent", "unknown", "unconfigured"] | None = None
 
 
 class GeoContextPacket(Contract):
     schema_version: Literal["geo-context/v2"] = "geo-context/v2"
     context_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    response_guidance: tuple[str, ...]
     project: dict[str, Any]
     run: dict[str, Any] | None
     query_plan: dict[str, Any]
@@ -54,47 +52,35 @@ class GeoContextPacket(Contract):
     truncation: dict[str, Any]
 
 
-def _size(value: object) -> int:
-    return len(json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-    ).encode("utf-8"))
-
-
-def _text(value: str | None, limit: int) -> str | None:
-    if value is None or len(value) <= limit:
-        return value
-    return value[:limit]
+def _text(value: str | None) -> str | None:
+    return value
 
 
 def _citation_id(run_id: str, record_type: str, *parts: str) -> str:
     return "-".join((run_id, record_type, *parts))
 
 
-def _bounded_group(
-    name: str,
+def _query_label(query_id: str) -> str:
+    suffix = query_id.removeprefix("q-")
+    return f"Query {suffix}" if suffix.isdigit() else query_id
+
+
+def _complete_group(
     item_key: str,
     items: list[dict],
     base: dict[str, Any] | None = None,
 ) -> dict:
-    retained = list(items)
-    total = len(items)
-    while True:
-        group = {
-            **(base or {}),
-            item_key: retained,
-            "total_items": total,
-            "included_items": len(retained),
-            "truncated": len(retained) != total,
-        }
-        if _size(group) <= GROUP_BYTE_BUDGETS[name]:
-            return group
-        if not retained:
-            raise Conflict(f"Saved {name.replace('_', ' ')} metadata exceeds its context budget")
-        retained.pop()
+    return {
+        **(base or {}),
+        item_key: list(items),
+        "total_items": len(items),
+        "included_items": len(items),
+        "truncated": False,
+    }
 
 
-def _empty_group(name: str, item_key: str, base: dict[str, Any] | None = None) -> dict:
-    return _bounded_group(name, item_key, [], base)
+def _empty_group(item_key: str, base: dict[str, Any] | None = None) -> dict:
+    return _complete_group(item_key, [], base)
 
 
 def build_geo_context_packet(
@@ -112,31 +98,29 @@ def build_geo_context_packet(
         "goal": project.active_goal,
     }
     citations: list[GeoContextCitation] = []
-    query_plan = _empty_group("query_plan", "queries", {"status": "unavailable"})
-    evidence = _empty_group("webiq_evidence", "sources", {"status": "unavailable"})
-    answers = _empty_group("model_answers", "answers", {
+    query_plan = _empty_group("queries", {"status": "unavailable"})
+    evidence = _empty_group("sources", {"status": "unavailable"})
+    answers = _empty_group("answers", {
         "status": "unavailable",
         "content_trust": "untrusted-evidence",
     })
     citation_performance = _empty_group(
-        "citation_performance",
         "answers",
         {"status": "unavailable", "result_distinctions": RESULT_DISTINCTIONS},
     )
-    brand_presence = _empty_group("brand_presence", "findings", {
+    brand_presence = _empty_group("findings", {
         "status": "unavailable",
         "interpretation": (
             "Literal presence only. It is not ranking, sentiment, endorsement, causality, "
             "or proof of absence from the page, site, search index, or web."
         ),
     })
-    recommendations = _empty_group("recommendations", "tasks", {
+    recommendations = _empty_group("tasks", {
         "status": "unavailable",
         "requires_human_review": True,
         "publish_permission": False,
     })
     limitations_and_provenance = _empty_group(
-        "limitations_and_provenance",
         "audit_identifiers",
         {
             "limitations": [
@@ -156,6 +140,7 @@ def build_geo_context_packet(
     if run is not None:
         run_citation_id = run.run_id
         citations.append(GeoContextCitation(
+            geo_evidence_type="measurement-run",
             source_id=run_citation_id,
             title=f"{context_project['name']} measurement run {run.run_id}",
             url=str(run.brief.url) if run.brief else None,
@@ -187,21 +172,23 @@ def build_geo_context_packet(
                     "query_id": query.query_id,
                     "priority": query.priority,
                     "branded": query.branded,
-                    "intent": _text(query.intent, 240),
-                    "rationale": _text(query.rationale, 240),
-                    "chat_query": _text(query.chat_query, 320),
-                    "grounding_query": _text(query.grounding_query, 320),
+                    "intent": _text(query.intent),
+                    "rationale": _text(query.rationale),
+                    "chat_query": _text(query.chat_query),
+                    "grounding_query": _text(query.grounding_query),
                     "page_evidence": [{
                         "evidence_id": item.evidence_id,
-                        "quote": _text(item.quote, 180),
+                        "quote": _text(item.quote),
                     } for item in query.evidence],
                 })
                 citations.append(GeoContextCitation(
+                    geo_evidence_type="grounding-query",
                     source_id=citation_id,
-                    title=f"Approved query {query.query_id}: {query.chat_query[:200]}",
+                    title=f"Grounding query {query.query_id}: {query.grounding_query[:200]}",
                     url=str(run.inputs.brief.url),
+                    query_id=query.query_id,
                 ))
-            query_plan = _bounded_group("query_plan", "queries", query_items, {
+            query_plan = _complete_group("queries", query_items, {
                 "status": "available",
                 "approval_hash": run.inputs.approval_hash,
             })
@@ -223,21 +210,21 @@ def build_geo_context_packet(
                         "query_id": retrieval.query_id,
                         "retrieval_status": retrieval.status,
                         "evidence_id": source.evidence_id,
-                        "title": _text(source.title, 180),
+                        "title": _text(source.title),
                         "url": str(source.url),
-                        "excerpt": _text(source.excerpt, 360),
+                        "excerpt": _text(source.excerpt),
                         "returned_position": source.returned_position,
                         "provenance": source.provenance.value,
                         "provider_trace_id": source.provider_trace_id,
                         "crawled_at": source.crawled_at,
                         "last_updated_at": source.last_updated_at,
                     })
-            evidence = _bounded_group("webiq_evidence", "sources", evidence_items, {
+            evidence = _complete_group("sources", evidence_items, {
                 "status": "available",
                 "retrievals": [{
                     "query_id": item.query_id,
                     "status": item.status,
-                    "error": _text(item.error, 240),
+                    "error": _text(item.error),
                     "provider_trace_id": item.provider_trace_id,
                 } for item in sorted(measurement.retrievals, key=lambda item: item.query_id)],
                 "content_trust": "untrusted-evidence",
@@ -247,9 +234,11 @@ def build_geo_context_packet(
             }
             for item in evidence["sources"]:
                 citations.append(GeoContextCitation(
+                    geo_evidence_type="grounding-citation",
                     source_id=item["citation_id"],
                     title=item["title"] or f"Saved evidence {item['evidence_id']}",
                     url=item["url"],
+                    query_id=item["query_id"],
                 ))
 
             answer_items = []
@@ -265,8 +254,8 @@ def build_geo_context_packet(
                     "query_id": result.query_id,
                     "profile_id": result.profile_id,
                     "status": result.status,
-                    "answer": _text(result.answer, 850),
-                    "error": _text(result.error, 240),
+                    "answer": _text(result.answer),
+                    "error": _text(result.error),
                     "cited_evidence": [
                         retained_evidence[evidence_id]["citation_id"]
                         for evidence_id in dict.fromkeys(result.citation_ids)
@@ -280,15 +269,17 @@ def build_geo_context_packet(
                     "model": result.model,
                     "response_id": result.response_id,
                 })
-            answers = _bounded_group("model_answers", "answers", answer_items, {
+            answers = _complete_group("answers", answer_items, {
                 "status": "available",
                 "content_trust": "untrusted-evidence",
             })
             for item in answers["answers"]:
                 citations.append(GeoContextCitation(
+                    geo_evidence_type="test-answer",
                     source_id=item["citation_id"],
                     title=f"Saved answer {item['query_id']} / {item['profile_id']}",
                     url=str(measurement.inputs.brief.url),
+                    query_id=item["query_id"],
                 ))
 
             outcomes = {
@@ -332,8 +323,7 @@ def build_geo_context_packet(
                             for item in matches
                         ],
                     })
-            citation_performance = _bounded_group(
-                "citation_performance",
+            citation_performance = _complete_group(
                 "answers",
                 citation_items,
                 {
@@ -358,27 +348,105 @@ def build_geo_context_packet(
                 run_id=run.run_id,
                 run_revision=run.revision,
             )
+            brand_name = assessment.definition.name if assessment.definition else None
+            query_brand_status = {
+                item["query_id"]: item["brand_status"] for item in assessment.queries
+            }
+            source_brand_status = {
+                source["evidence_id"]: source["brand"]["status"]
+                for item in assessment.queries
+                for source in item["sources"]
+            }
+            citations = [
+                citation.model_copy(update={
+                    "brand_name": brand_name,
+                    "brand_status": (
+                        query_brand_status.get(citation.query_id)
+                        if citation.geo_evidence_type == "grounding-query"
+                        else source_brand_status.get(
+                            citation.source_id.rsplit("-evidence-", 1)[-1],
+                        )
+                        if citation.geo_evidence_type == "grounding-citation"
+                        else None
+                    ),
+                })
+                if citation.geo_evidence_type in {
+                    "grounding-query",
+                    "grounding-citation",
+                } else citation
+                for citation in citations
+            ]
+            retained_answer_keys = {
+                (item["query_id"], item["profile_id"]) for item in answers["answers"]
+            }
             brand_findings = [
                 {
                     "record_type": "query",
                     "query_id": item["query_id"],
+                    "query_label": _query_label(item["query_id"]),
+                    "grounding_query": item["grounding_query"],
                     "status": item["status"],
-                    "brand_status": item["brand_status"],
+                    "brand_status": (
+                        item["brand_status"]
+                        if item["brand_status"] != "matched"
+                        or any(
+                            source["brand"]["status"] == "matched"
+                            and source["evidence_id"] in retained_evidence
+                            for source in item["sources"]
+                        )
+                        else "unknown"
+                    ),
+                    "matched_sources": [
+                        {
+                            "evidence_id": source["evidence_id"],
+                            "title": _text(source["title"]),
+                            "url": source["url"],
+                        }
+                        for source in item["sources"]
+                        if source["brand"]["status"] == "matched"
+                        and source["evidence_id"] in retained_evidence
+                    ],
+                    "detail_status": (
+                        "available"
+                        if item["brand_status"] != "matched"
+                        or any(
+                            source["brand"]["status"] == "matched"
+                            and source["evidence_id"] in retained_evidence
+                            for source in item["sources"]
+                        )
+                        else "not-retained"
+                    ),
                 }
                 for item in assessment.queries
             ] + [
                 {
                     "record_type": "answer",
                     "query_id": item["query_id"],
+                    "query_label": _query_label(item["query_id"]),
                     "profile_id": item["profile_id"],
                     "status": item["status"],
-                    "brand_status": item["brand"]["status"],
+                    "brand_status": (
+                        item["brand"]["status"]
+                        if (item["query_id"], item["profile_id"]) in retained_answer_keys
+                        else "unknown"
+                    ),
+                    "matched_terms": (
+                        list(dict.fromkeys(
+                            match["quote"] for match in item["brand"]["matches"]
+                        ))
+                        if (item["query_id"], item["profile_id"]) in retained_answer_keys
+                        else []
+                    ),
                     "exact_page_cited": item["exact_page_cited"],
+                    "detail_status": (
+                        "available"
+                        if (item["query_id"], item["profile_id"]) in retained_answer_keys
+                        else "not-retained"
+                    ),
                 }
                 for item in assessment.answers
             ]
-            brand_presence = _bounded_group(
-                "brand_presence",
+            brand_presence = _complete_group(
                 "findings",
                 brand_findings,
                 {
@@ -435,20 +503,19 @@ def build_geo_context_packet(
                     "task_id": task.task_id,
                     "priority": task.priority,
                     "query_id": task.query_id,
-                    "target_section": _text(task.target_section, 220),
-                    "title": _text(task.title, 180),
-                    "proposed_change": _text(task.proposed_change, 420),
-                    "rationale": _text(task.rationale, 360),
+                    "target_section": _text(task.target_section),
+                    "title": _text(task.title),
+                    "proposed_change": _text(task.proposed_change),
+                    "rationale": _text(task.rationale),
                     "confidence": task.confidence,
-                    "verification": _text(task.verification, 360),
+                    "verification": _text(task.verification),
                     "human_review": decisions.get(task.task_id, "pending"),
                     "page_evidence_ids": [item.evidence_id for item in task.page_evidence],
                     "comparison_evidence_ids": [
                         item.evidence_id for item in task.comparison_evidence
                     ],
                 })
-            recommendations = _bounded_group(
-                "recommendations",
+            recommendations = _complete_group(
                 "tasks",
                 recommendation_items,
                 {
@@ -456,11 +523,10 @@ def build_geo_context_packet(
                         run.recommendations.status if run.recommendations else "unavailable"
                     ),
                     "reason": _text(
-                        run.recommendations.reason if run.recommendations else None, 500,
+                        run.recommendations.reason if run.recommendations else None,
                     ),
                     "limitations": _text(
                         run.recommendations.limitations if run.recommendations else None,
-                        1000,
                     ),
                     "requires_human_review": True,
                     "review_status": "reviewed" if run.recommendation_review else "pending",
@@ -480,8 +546,7 @@ def build_geo_context_packet(
                 "snapshot_provider_trace_id": measurement.inputs.snapshot.provider_trace_id,
                 "captured_at": measurement.inputs.snapshot.captured_at.isoformat(),
             }]
-            limitations_and_provenance = _bounded_group(
-                "limitations_and_provenance",
+            limitations_and_provenance = _complete_group(
                 "audit_identifiers",
                 audit_identifiers,
                 {
@@ -501,15 +566,19 @@ def build_geo_context_packet(
     }
     draft = {
         "schema_version": "geo-context/v2",
+        "response_guidance": (
+            "Use 'grounding query results', never 'grounding packets'. Present IDs such as q-2 as 'query 2' in prose unless the exact audit ID is needed.",
+            "Answer with user-facing findings and evidence meaning. The complete saved run context is supplied; do not claim that application-level evidence was omitted.",
+            "If the complete saved detail cannot support a finding, state what remains unknown instead of inferring unsupported conclusions.",
+        ),
         "project": context_project,
         "run": run_payload,
         **groups,
         "truncation": {
-            "total_byte_limit": MAX_GEO_CONTEXT_BYTES,
-            "group_byte_budgets": GROUP_BYTE_BUDGETS,
+            "applied": False,
             "groups": {
                 name: {
-                    "truncated": group["truncated"],
+                    "truncated": False,
                     "total_items": group["total_items"],
                     "included_items": group["included_items"],
                 }
@@ -521,8 +590,6 @@ def build_geo_context_packet(
         **draft,
         context_hash=digest(draft),
     ).model_dump(mode="json")
-    if _size(packet) > MAX_GEO_CONTEXT_BYTES:
-        raise Conflict("Saved run context exceeds the total context packet limit")
 
     included_ids = {run.run_id} if run is not None else set()
     for group_name, key in (

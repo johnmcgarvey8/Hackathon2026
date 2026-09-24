@@ -18,6 +18,7 @@ function load(path) {
 }
 
 const runtime = load("lib/measurement-runtime.ts");
+const surveyModels = load("lib/survey-models.ts");
 
 test("measurement runtime uses explicit actions and saved operation totals", () => {
   assert.equal(runtime.actionAllowed(true), true);
@@ -45,8 +46,11 @@ test("measurement pages start one automatic live workflow", () => {
   assert.match(create, /project\.active_goal/);
   assert.match(create, /Exact in-scope page/);
   assert.match(create, /What do you want to learn/);
+  assert.match(create, /api\.summarizeMeasurementGoal/);
+  assert.match(create, /Confirm measurement goal/);
+  assert.match(create, /fallback_used/);
   assert.match(create, /api\.createMeasurement/);
-  assert.match(create, /Start live measurement/);
+  assert.match(create, /Confirm and start live measurement/);
   assert.match(create, /No synthetic provider or fixture fallback/);
   assert.match(detail, /running automatically/);
   assert.match(detail, /Live WebIQ \+ Foundry/);
@@ -64,12 +68,13 @@ test("polling is bounded, visibility aware, and GET only", () => {
   assert.doesNotMatch(polling, /prepareRun|startRun|cancelJob|method:\s*"POST"/);
 });
 
-test("results are separated and unsafe evidence remains React text", () => {
+test("results are grouped by query and provider answers use safe markdown", () => {
   const results = read("components/measurement/results/measurement-results.tsx");
   for (const heading of [
-    "Query plan",
-    "WebIQ evidence",
-    "Foundry answers",
+    "Grounding queries",
+    "Inference inputs",
+    "Grounding supplied to the LLM",
+    "LLM Provider Survey",
     "Citation performance",
     "Brand presence",
     "Recommendations",
@@ -81,13 +86,37 @@ test("results are separated and unsafe evidence remains React text", () => {
   assert.match(results, /Raw URL mention, not a citation/);
   assert.match(results, /Unsupported citation ID/);
   assert.match(results, /No citation/);
+  assert.match(results, /grounding citations supplied to the LLM during inference/);
+  assert.match(results, /Post-inference/);
+  assert.match(results, /post-inference provider responses/);
+  assert.match(results, /measurement-query-group/);
+  assert.match(results, /provider-survey-response/);
+  assert.ok(results.indexOf('id="model-answers"') > results.indexOf('id="query-plan"'));
+  assert.match(results, /query\?\.chat_query \|\| "Prompt unavailable"/);
+  assert.doesNotMatch(results, /providerSurveyLabel|Survey response #/);
+  assert.match(results, /surveyModelRoster/);
+  assert.match(results, /configured deployment/);
+  assert.match(results, /modelByProfile/);
+  assert.doesNotMatch(results, />\{answer\.profile_id\}/);
+  assert.match(results, /formatGroundingQueryTitle/);
+  assert.match(results, /Grounding citation/);
+  assert.match(results, /providerAnswerCitations/);
+  assert.match(results, /<AssistantMarkdown/);
+  assert.match(results, /content=\{answer\.answer\}/);
+  assert.match(results, /onCitationClick/);
+  assert.match(results, /Grounding query/);
+  assert.match(results, /Grounding query results/);
+  assert.match(results, /green check means/);
+  assert.match(results, /groundingMatchPresentation/);
+  assert.match(results, /View matching citation/);
+  assert.match(results, /finding\.brand_status === "matched"/);
   assert.match(results, /findingLabels\(finding\)\.join/);
   assert.match(results, /Results blocked/);
   assert.match(results, /non-live data/);
   assert.doesNotMatch(results, /dangerouslySetInnerHTML/);
 });
 
-test("control plane measurement detail provides accessible responsive section navigation", () => {
+test("measurement detail provides accessible responsive section navigation", () => {
   const controlPlaneDetail = read("app/projects/[projectId]/control-plane/[runId]/page.tsx");
   const sectionNav = read("components/measurement/measurement-section-nav.tsx");
   const styles = read("app/globals.css");
@@ -114,11 +143,35 @@ test("control plane measurement detail provides accessible responsive section na
   assert.match(styles, /prefers-reduced-motion: reduce/);
 });
 
-test("chat renders workflow insights without exposing run metadata", () => {
+test("chat renders query-centric workflow evidence without exposing internal IDs", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
-  assert.match(chat, /measurement_workflow\?\.run_id/);
+  assert.match(chat, /measurement_workflows/);
+  assert.match(chat, /linked_run_ids/);
   assert.match(chat, /turn\.origin !== "workflow"/);
   assert.match(chat, /Measurement insight/);
+  assert.match(chat, /evidencePresentation/);
+  assert.match(chat, /inferEvidenceType/);
+  assert.match(chat, /groupGroundingEvidence/);
+  assert.match(chat, /formatGroundingQueryTitle/);
+  assert.match(chat, /measurementRunEvidence/);
+  assert.match(chat, /api\.run\(project\.project_id, workflowRunId\)/);
+  assert.match(chat, /Loading complete measurement evidence/);
+  assert.match(chat, /Measurement run/);
+  assert.match(chat, /Grounding queries/);
+  assert.match(chat, /LLM Provider Survey/);
+  assert.match(chat, /<details className="grounding-query-group"/);
+  assert.match(chat, /source-card source-card-link/);
+  assert.match(chat, /Open in Control Plane/);
+  assert.match(chat, /control-plane\/\$\{encodeURIComponent\(workflowRunId\)\}/);
+  assert.match(chat, /className="source-url"/);
+  assert.match(chat, /title=\{sourceUrl\}/);
+  assert.match(chat, /source-subgroup-header/);
+  assert.match(chat, /✓ \{source\.brand_name\} found/);
+  assert.match(chat, /evidence.*record/);
+  assert.match(chat, /Saved evidence from the measurement run bound to this conversation/);
+  assert.doesNotMatch(chat, /<small>\{source\.source_id\}<\/small>/);
+  assert.match(chat, /hideLink source=\{source\}/);
+  assert.doesNotMatch(chat, /grounded \{turn\.citations\.length === 1/);
   assert.doesNotMatch(chat, /agent-surfaces|chat-run-notice|Measurement run:/);
 });
 
@@ -129,8 +182,9 @@ test("chat-first workflow polls saved conversation while control plane remains r
   assert.doesNotMatch(control, /width:\s*"55%"/);
   assert.match(control, /operationTotals/);
   assert.doesNotMatch(control, /cancelJob|New measurement|Create measurement/);
+  assert.doesNotMatch(control, />Automation</);
   assert.match(control, /control-plane\/\$\{run\.run_id\}/);
-  assert.match(chat, /shouldPollMeasurementWorkflow/);
+  assert.match(chat, /shouldPollMeasurementWorkflows/);
   assert.match(chat, /document\.visibilityState/);
   assert.match(chat, /attempts < 120/);
   assert.match(chat, /api\.conversation\(project\.project_id, conversationId\)/);
@@ -139,8 +193,28 @@ test("chat-first workflow polls saved conversation while control plane remains r
   assert.match(chat, /Project conversations/);
   assert.match(chat, /Measure a page/);
   assert.match(detail, /MeasurementResultsView/);
+  assert.match(detail, /troubleshooting-panel/);
+  assert.match(detail, /Troubleshooting details/);
+  assert.ok(detail.indexOf("troubleshooting-panel") > detail.indexOf("<MeasurementResultsView"));
+  assert.doesNotMatch(detail, /Query plan bound automatically|<dt>Automation<\/dt>/);
   assert.match(detail, /api\.runProgress/);
   assert.match(detail, /api\.evidenceAssessment/);
   assert.match(detail, /api\.artifacts/);
   assert.doesNotMatch(detail, /prepareRun|startRun|cancelJob|exportRun|reviewRecommendations|createConversation/);
+});
+
+test("survey model labels combine friendly and exact model identities", () => {
+  const roster = surveyModels.surveyModelRoster({
+    profiles: [{
+      profile_id: "chatgpt-style",
+      provider: "openai-responses",
+      deployment: "gpt-5.6",
+    }],
+  }, [{
+    profile_id: "chatgpt-style",
+    model: "gpt-5.6-2026-09-01",
+  }]);
+  assert.equal(roster[0].label, "ChatGPT · gpt-5.6-2026-09-01");
+  assert.equal(roster[0].provider, "openai-responses");
+  assert.equal(roster[0].deployment, "gpt-5.6");
 });

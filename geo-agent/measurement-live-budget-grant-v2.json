@@ -1,0 +1,23 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "project-live-measurement-2026-09-18-v2-grant",
+  "policy_id": "project-live-measurement-2026-09-18-v2",
+  "policy_hash": "671b8355667145271ab0cbb3a361e37ec1dee138d7301d371c59f4182db5f90d",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 1,
+    "page_analysis_model": 1,
+    "paired_query_plan": 1,
+    "webiq_search": 5,
+    "profile_evaluator": 5,
+    "recommendation_model": 1
+  },
+  "maximum_authorized_cost_usd": "25.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "On 2026-09-18 the user explicitly requested that the queued Clarity measurement execute and asked for the approval and save workflow to be fixed. This grant authorizes one complete project-bound live measurement with one evaluator profile, one optional recommendation call, no automatic retries, and a maximum authorization ceiling of USD 25.00.",
+  "approved_at": "2026-09-18T15:31:21+01:00"
+}

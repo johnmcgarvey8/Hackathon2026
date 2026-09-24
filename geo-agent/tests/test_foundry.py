@@ -188,7 +188,7 @@ def test_paired_planner_removes_unsupported_navigation_marker_from_exact_quote()
     assert plan.queries[0].evidence[0].quote == "Local places"
 
 
-@pytest.mark.parametrize("problem", ["count", "id", "priority", "order", "chat", "grounding", "quote", "passage", "rationale"])
+@pytest.mark.parametrize("problem", ["count", "id", "priority", "order", "chat", "grounding", "rationale"])
 def test_paired_planner_rejects_invalid_plans(problem):
     proposal = paired_proposal()
     queries = proposal["queries"]
@@ -204,10 +204,6 @@ def test_paired_planner_rejects_invalid_plans(problem):
         queries[1]["chat_query"] = " WHERE  CAN I FIND OPTION 1? "
     elif problem == "grounding":
         queries[1]["grounding_query"] = " LOCAL  OPTION 1 "
-    elif problem == "quote":
-        queries[0]["evidence"][0]["quote"] = "Fabricated words"
-    elif problem == "passage":
-        queries[0]["evidence"][0]["evidence_id"] = "page-11"
     else:
         queries[0]["rationale"] = "x" * 501
     calls = []
@@ -220,9 +216,43 @@ def test_paired_planner_rejects_invalid_plans(problem):
     with pytest.raises(ProviderError) as caught:
         provider.propose_pairs(*planning_inputs())
     assert len(calls) == 1
-    expected = (ProviderFailure.PLAN_ORDER if problem == "order" else
-                ProviderFailure.PLAN_EVIDENCE if problem in {"quote", "passage"} else ProviderFailure.SCHEMA)
+    expected = ProviderFailure.PLAN_ORDER if problem == "order" else ProviderFailure.SCHEMA
     assert caught.value.code == expected
+
+
+def test_paired_planner_discards_unverifiable_page_evidence_without_failing():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["quote"] = "Fabricated words"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence == ()
+    assert all(query.evidence for query in plan.queries[1:])
+
+
+def test_paired_planner_reassigns_valid_quote_to_its_actual_passage():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["evidence_id"] = "page-11"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence[0].evidence_id == "page-1"
 
 
 @pytest.mark.parametrize("reason,code", [("max_output_tokens", ProviderFailure.OUTPUT_LIMIT),

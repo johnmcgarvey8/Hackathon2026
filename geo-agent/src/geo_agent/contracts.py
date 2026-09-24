@@ -186,7 +186,7 @@ class QueryPair(Contract):
     branded: bool = False
     chat_query: str = Field(min_length=1, max_length=500)
     grounding_query: str = Field(min_length=1, max_length=500)
-    evidence: tuple[EvidenceQuote, ...] = Field(min_length=1, max_length=2)
+    evidence: tuple[EvidenceQuote, ...] = Field(max_length=2)
 
     def as_query(self, *, grounding: bool = False) -> Query:
         return Query(query_id=self.query_id, text=self.grounding_query if grounding else self.chat_query,

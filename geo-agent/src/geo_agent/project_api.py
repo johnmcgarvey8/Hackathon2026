@@ -11,6 +11,11 @@ from geo_agent.contracts import Brief, Contract, MeasurementInputs, Provenance, 
 from geo_agent.evaluation_workflow import EvaluationRequest, EvaluatorRecoveryRequest
 from geo_agent.evidence_assessment import BrandDefinition, build_evidence_assessment
 from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.goal_summary import (
+    GoalSummaryInput,
+    GoalSummaryRequest,
+    ProjectGoalSummaryService,
+)
 from geo_agent.jobs import JobService, JobType
 from geo_agent.measurement_api import (
     ApproveQueriesRequest,
@@ -40,6 +45,11 @@ from geo_agent.workflow import Conflict, NotFound
 
 class ProjectBriefRequest(Brief):
     pass
+
+
+class ConfirmedProjectMeasurementRequest(ProjectBriefRequest):
+    raw_goal: str | None = Field(default=None, min_length=1, max_length=1000)
+    goal_summary_operation_id: str | None = None
 
 
 class ArchiveProjectRequest(Contract):
@@ -85,6 +95,7 @@ def create_project_router(
     authenticate: Callable[..., OperatorPrincipal],
     artifact_storage: ArtifactStorage,
     run_pending_jobs: Callable[[], None] | None = None,
+    goal_summaries: ProjectGoalSummaryService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["projects"])
     coordinator = MeasurementCoordinator(repository)
@@ -153,6 +164,16 @@ def create_project_router(
     ) -> dict:
         return _project_view(repository.get_project(project_id, owner), repository, owner, policy)
 
+    @router.delete("/projects/{project_id}", status_code=204)
+    def delete_project(
+        project_id: str,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> Response:
+        storage_keys = repository.delete_project(project_id, owner)
+        for storage_key in storage_keys:
+            artifact_storage.delete(storage_key)
+        return Response(status_code=204)
+
     @router.patch("/projects/{project_id}")
     def update_project(
         project_id: str,
@@ -190,6 +211,17 @@ def create_project_router(
     ) -> dict:
         return run_view(scoped_run(project_id, run_id, owner), project_id)
 
+    @router.delete("/projects/{project_id}/runs/{run_id}", status_code=204)
+    def delete_project_run(
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> Response:
+        storage_keys = repository.delete_project_run(project_id, run_id, owner)
+        for storage_key in storage_keys:
+            artifact_storage.delete(storage_key)
+        return Response(status_code=204)
+
     @router.post("/projects/{project_id}/briefs", status_code=201)
     def create_project_brief(
         project_id: str,
@@ -219,12 +251,30 @@ def create_project_router(
     @router.post("/projects/{project_id}/measurements", status_code=202)
     def create_automatic_measurement(
         project_id: str,
-        body: ProjectBriefRequest,
+        body: ConfirmedProjectMeasurementRequest,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
         execution_policy = require_measurement_policy()
         project = repository.get_project(project_id, owner)
-        brief = Brief.model_validate(body.model_dump())
+        if body.goal_summary_operation_id is not None:
+            if goal_summaries is None or body.raw_goal is None:
+                raise HTTPException(503, "Goal summarisation is not configured")
+            saved_summary = goal_summaries.get(
+                project_id,
+                owner,
+                body.goal_summary_operation_id,
+            )
+            expected_input = GoalSummaryInput(
+                raw_goal=body.raw_goal,
+                url=str(body.url),
+                audience=body.audience,
+                target_kind="page",
+            )
+            if saved_summary.input_hash != expected_input.input_hash:
+                raise Conflict("Goal summary does not match the measurement inputs")
+        brief = Brief.model_validate(body.model_dump(
+            exclude={"raw_goal", "goal_summary_operation_id"},
+        ))
         try:
             job, run = automatic.start(
                 project,
@@ -238,6 +288,31 @@ def create_project_router(
             "job": job_view(job),
             "capacity": measurement_capacity_view(owner, execution_policy),
         }
+
+    @router.post("/projects/{project_id}/measurement-goal-summaries")
+    async def summarize_measurement_goal(
+        project_id: str,
+        body: GoalSummaryRequest,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        if goal_summaries is None:
+            raise HTTPException(503, "Goal summarisation is not configured")
+        project = repository.get_project(project_id, owner)
+        if project.archived:
+            raise Conflict("Archived projects cannot create measurement runs")
+        preview_brief = Brief(
+            url=body.url,
+            audience=body.audience or body.raw_goal,
+            goal=body.raw_goal,
+            locale=project.default_locale,
+        )
+        if preview_brief.url.host not in project.domains and not any(
+            preview_brief.url.host.endswith(f".{domain}")
+            for domain in project.domains
+        ):
+            raise HTTPException(422, "Goal summary URL must belong to the project")
+        result = await goal_summaries.summarize(project, owner, body)
+        return result.model_dump(mode="json")
 
     @router.get("/projects/{project_id}/measurement-capacity")
     def get_measurement_capacity(
@@ -519,7 +594,12 @@ def create_project_router(
             for retrieval in run.measurement.retrievals:
                 for source in retrieval.sources:
                     if source.evidence_id == evidence_id:
-                        return source.model_dump(mode="json")
+                        return {
+                            **source.model_dump(mode="json"),
+                            "evidence_type": "grounding-citation",
+                            "query_id": retrieval.query_id,
+                            "grounding_query": retrieval.grounding_query,
+                        }
         raise NotFound("Evidence not found")
 
     @router.get("/projects/{project_id}/runs/{run_id}/jobs")

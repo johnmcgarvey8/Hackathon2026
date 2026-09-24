@@ -1,0 +1,24 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "project-live-evaluator-recovery-2026-09-18-grant",
+  "purpose": "failed-evaluator-recovery",
+  "policy_id": "project-live-evaluator-recovery-2026-09-18",
+  "policy_hash": "46e9d31b774be80b37bef10f2f8f10077b23911644ac4d0241eea1abfebe9dc5",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 0,
+    "page_analysis_model": 0,
+    "paired_query_plan": 0,
+    "webiq_search": 0,
+    "profile_evaluator": 5,
+    "recommendation_model": 0
+  },
+  "maximum_authorized_cost_usd": "10.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "On 2026-09-18 the user explicitly instructed the implementation to continue after the first live evaluator batch failed. This recovery grant authorizes five evaluator calls against the already-saved approved queries and WebIQ evidence. It authorizes no page retrieval, search, preparation, recommendation, retry loop, publishing action, or customer-specific scope.",
+  "approved_at": "2026-09-18T15:09:39+01:00"
+}

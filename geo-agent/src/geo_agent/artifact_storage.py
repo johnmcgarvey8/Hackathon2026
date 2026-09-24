@@ -30,6 +30,8 @@ class ArtifactStorage(Protocol):
 
     def get(self, storage_key: str) -> bytes: ...
 
+    def delete(self, storage_key: str) -> None: ...
+
 
 class ArtifactRepository(Protocol):
     def get_brand_definition(self, run_id: str, owner: OwnerIdentity,
@@ -112,6 +114,13 @@ class LocalArtifactStorage:
             return self._io_path(self._path(storage_key)).read_bytes()
         except FileNotFoundError as error:
             raise NotFound("Artifact content not found") from error
+
+    def delete(self, storage_key: str) -> None:
+        target = self._io_path(self._path(storage_key))
+        target.unlink(missing_ok=True)
+        parent = target.parent
+        if parent != self._io_path(self.root) and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
 
 
 class ArtifactService:

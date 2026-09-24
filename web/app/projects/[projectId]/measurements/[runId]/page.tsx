@@ -239,8 +239,8 @@ export default function MeasurementRunPage() {
     <section className="screen measurement-run">
       <ScreenHeader
         eyebrow="Saved project measurement"
-        title={runObjective(run)}
-        description={`${pageUrl(run)} · revision ${run.revision}`}
+        title="Measurement run"
+        description={`Revision ${run.revision} · last saved ${displayDate(run.updated_at || run.created_at)}`}
         actions={<>
           <button className="button" type="button" disabled={busy !== null} onClick={() => void refresh()}>Reload saved state</button>
           <button className="button primary" type="button" disabled={!actionAllowed(discussAction) || busy !== null} title={actionReason(discussAction) || undefined} onClick={() => void discuss()}>Discuss this run</button>
@@ -254,55 +254,62 @@ export default function MeasurementRunPage() {
         </div>
       )}
 
-      <div className="grid two run-overview">
-        <section className="card">
-          <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
-          <dl className="scope-grid">
-            <div><dt>Project</dt><dd>{project.name}</dd></div>
-            <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
-            <div><dt>Locale</dt><dd>{run.brief?.locale || project.default_locale}</dd></div>
-            <div><dt>Execution</dt><dd>Live WebIQ + Foundry</dd></div>
-            <div><dt>Query binding</dt><dd>{run.approval_hash ? "Saved automatically" : "Pending preparation"}</dd></div>
-            <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
-            <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
-            <div><dt>Live capacity</dt><dd>{capacity?.unlimited ? "No application limit" : "Provider availability applies"}</dd></div>
-          </dl>
-        </section>
-        <section className="card">
-          <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-          <RunProgressPanel progress={progress} />
-        </section>
-      </div>
+          <section className="card run-brief">
+            <div className="card-heading"><h2>Run brief</h2><span className="pill blue">{run.state}</span></div>
+            <dl className="scope-grid run-brief-grid">
+              <div><dt>Goal</dt><dd>{runObjective(run)}</dd></div>
+              <div><dt>Measured page</dt><dd>{pageUrl(run)}</dd></div>
+            </dl>
+          </section>
 
-      {actionAllowed(cancelAction) && (
-        <section className="card">
-          <div className="card-heading"><h2>Run control</h2><span className="pill amber">Optional</span></div>
-          <p>Leave this page open or return later. The saved worker continues independently.</p>
-          <button className="button" type="button" disabled={!cancellableJob || busy !== null} title={actionReason(cancelAction) || undefined} onClick={() => void cancel()}>Cancel live measurement</button>
-        </section>
-      )}
+          <div className="grid two run-overview">
+            <section className="card">
+              <div className="card-heading"><h2>Run state</h2><span className="pill blue">{run.state}</span></div>
+              <dl className="scope-grid">
+                <div><dt>Project</dt><dd>{project.name}</dd></div>
+                <div><dt>Exact page</dt><dd>{pageUrl(run)}</dd></div>
+                <div><dt>Locale</dt><dd>{run.brief?.locale || project.default_locale}</dd></div>
+                <div><dt>Execution</dt><dd>Live WebIQ + Foundry</dd></div>
+                <div><dt>Latest job</dt><dd>{run.latest_job ? `${run.latest_job.job_type} · ${run.latest_job.state}` : "None"}</dd></div>
+                <div><dt>Last saved</dt><dd>{displayDate(run.updated_at || run.created_at)}</dd></div>
+                <div><dt>Live capacity</dt><dd>{capacity?.unlimited ? "No application limit" : "Provider availability applies"}</dd></div>
+              </dl>
+            </section>
+            <section className="card">
+              <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
+              <RunProgressPanel progress={progress} />
+            </section>
+          </div>
 
-      <MeasurementResultsView run={run} assessment={assessment} strategy={strategy} onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)} />
+          {actionAllowed(cancelAction) && (
+            <section className="card">
+              <div className="card-heading"><h2>Run control</h2><span className="pill amber">Optional</span></div>
+              <p>Leave this page open or return later. The saved worker continues independently.</p>
+              <button className="button" type="button" disabled={!cancellableJob || busy !== null} title={actionReason(cancelAction) || undefined} onClick={() => void cancel()}>Cancel live measurement</button>
+            </section>
+          )}
 
-      {run.recommendations?.tasks.length && !run.recommendation_review ? (
-        <section className="card">
-          <div className="card-heading"><h2>Human recommendation review</h2><span className="pill amber">No publishing permission</span></div>
-          {run.recommendations.tasks.map((task) => (
-            <label className="review-row" key={task.task_id}><strong>{task.title}</strong><select value={recommendationDecisions[task.task_id] || "rejected"} onChange={(event) => setRecommendationDecisions((items) => ({ ...items, [task.task_id]: event.target.value as "accepted" | "rejected" }))}><option value="accepted">Accept for follow-up</option><option value="rejected">Reject</option></select></label>
-          ))}
-          <button className="button" type="button" disabled={!actionAllowed(reviewAction) || busy !== null} title={actionReason(reviewAction) || undefined} onClick={() => void reviewRecommendations()}>Save human review</button>
-        </section>
-      ) : null}
+          <MeasurementResultsView run={run} assessment={assessment} strategy={strategy} onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)} />
 
-      <section className="card">
-        <div className="card-heading"><h2>Artifacts and audit</h2><button className="button" type="button" disabled={!actionAllowed(exportAction) || busy !== null} title={actionReason(exportAction) || undefined} onClick={() => void exportRun()}>Create deterministic export</button></div>
-        <div className="button-row">
-          {artifacts.map((artifact) => <button className="button" type="button" key={artifact.artifact_id} disabled={busy !== null} onClick={() => void downloadArtifact(artifact)}>Download {artifact.artifact_id} ({Math.ceil(artifact.size / 1024)} KB)</button>)}
-          {assessment?.assessment && assessment.brand_definition && <button className="button" type="button" disabled={busy !== null} onClick={() => void downloadAssessment()}>Download brand assessment</button>}
-          {strategy?.status === "ready" && <button className="button" type="button" disabled={busy !== null} onClick={() => void downloadStrategy()}>Download content strategy</button>}
-        </div>
-        <details><summary>Saved events ({events.length})</summary><ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol></details>
-      </section>
+          {run.recommendations?.tasks.length && !run.recommendation_review ? (
+            <section className="card">
+              <div className="card-heading"><h2>Human recommendation review</h2><span className="pill amber">No publishing permission</span></div>
+              {run.recommendations.tasks.map((task) => (
+                <label className="review-row" key={task.task_id}><strong>{task.title}</strong><select value={recommendationDecisions[task.task_id] || "rejected"} onChange={(event) => setRecommendationDecisions((items) => ({ ...items, [task.task_id]: event.target.value as "accepted" | "rejected" }))}><option value="accepted">Accept for follow-up</option><option value="rejected">Reject</option></select></label>
+              ))}
+              <button className="button" type="button" disabled={!actionAllowed(reviewAction) || busy !== null} title={actionReason(reviewAction) || undefined} onClick={() => void reviewRecommendations()}>Save human review</button>
+            </section>
+          ) : null}
+
+          <section className="card">
+            <div className="card-heading"><h2>Artifacts and audit</h2><button className="button" type="button" disabled={!actionAllowed(exportAction) || busy !== null} title={actionReason(exportAction) || undefined} onClick={() => void exportRun()}>Create deterministic export</button></div>
+            <div className="button-row">
+              {artifacts.map((artifact) => <button className="button" type="button" key={artifact.artifact_id} disabled={busy !== null} onClick={() => void downloadArtifact(artifact)}>Download {artifact.artifact_id} ({Math.ceil(artifact.size / 1024)} KB)</button>)}
+              {assessment?.assessment && assessment.brand_definition && <button className="button" type="button" disabled={busy !== null} onClick={() => void downloadAssessment()}>Download brand assessment</button>}
+              {strategy?.status === "ready" && <button className="button" type="button" disabled={busy !== null} onClick={() => void downloadStrategy()}>Download content strategy</button>}
+            </div>
+            <details><summary>Saved events ({events.length})</summary><ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol></details>
+          </section>
 
       {drawerOpen && <EvidenceDrawer source={drawerSource} loading={drawerLoading} error={drawerError} onClose={() => setDrawerOpen(false)} />}
     </section>

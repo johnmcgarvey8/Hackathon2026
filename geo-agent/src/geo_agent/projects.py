@@ -180,6 +180,14 @@ class ProjectRepository(Protocol):
         self, run_id: str, owner: OwnerIdentity,
     ) -> str | None: ...
 
+    def delete_project_run(
+        self, project_id: str, run_id: str, owner: OwnerIdentity,
+    ) -> tuple[str, ...]: ...
+
+    def delete_project(
+        self, project_id: str, owner: OwnerIdentity,
+    ) -> tuple[str, ...]: ...
+
 
 class ProjectMeasurementRepository(
     ProjectRepository,

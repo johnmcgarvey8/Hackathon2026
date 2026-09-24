@@ -20,6 +20,7 @@ function load(path, imports = {}) {
 }
 
 const labels = load("lib/chat-runtime.ts");
+const evidence = load("lib/evidence-presentation.ts");
 const runtime = {
   mode: "foundry", can_send: true, organisational_context_available: false,
   detail: "Configured, unverified.",
@@ -43,6 +44,14 @@ test("chat workflow polling is limited to active backend workflow states", () =>
   assert.equal(labels.shouldPollMeasurementWorkflow({ status: "completed" }), false);
   assert.equal(labels.shouldPollMeasurementWorkflow({ status: "failed" }), false);
   assert.equal(labels.shouldPollMeasurementWorkflow(null), false);
+  assert.equal(labels.shouldPollMeasurementWorkflows([
+    { status: "completed" },
+    { status: "evaluating" },
+  ]), true);
+  assert.equal(labels.shouldPollMeasurementWorkflows([
+    { status: "collecting" },
+    { status: "completed" },
+  ]), false);
 });
 
 function harness(overrides = {}) {
@@ -73,11 +82,13 @@ function harness(overrides = {}) {
   const { default: ChatPage } = load("app/projects/[projectId]/chat/page.tsx", {
     react, "@/lib/api": { api, ApiError: class extends Error {} },
     "@/lib/chat-runtime": labels,
+    "@/lib/evidence-presentation": evidence,
     "@/lib/measurement-runtime": {
       pageUrl: () => "https://example.com/page",
       operationLabel: () => "Model evaluation",
       operationTotals: () => ({ planned: 0, resolved: 0, percentage: 0 }),
     },
+    "next/link": { default: ({ children, ...props }) => ({ type: "a", props: { ...props, children } }) },
     "next/navigation": { useSearchParams: () => ({ get: () => null }) },
     "@/components/project-context": { useProject: () => ({ project: { project_id: "project-one", name: "Project", primary_domain: "example.com", active_goal: null } }) },
     "@/components/icons": { Icon: () => null },

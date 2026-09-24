@@ -13,6 +13,8 @@ import type {
   JobMutationResponse,
   MeasurementCapacity,
   MeasurementBriefRequest,
+  MeasurementGoalSummary,
+  MeasurementGoalSummaryRequest,
   MeasurementRun,
   Project,
   QueryPair,
@@ -47,6 +49,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) throw await errorFrom(response);
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -73,12 +76,24 @@ export const api = {
   createProject: (body: CreateProjectRequest) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
   project: (projectId: string) => request<Project>(projectPath(projectId)),
+  deleteProject: (projectId: string) =>
+    request<void>(projectPath(projectId), { method: "DELETE" }),
   runs: (projectId: string) => request<MeasurementRun[]>(`${projectPath(projectId)}/runs`),
+  deleteRun: (projectId: string, runId: string) =>
+    request<void>(runPath(projectId, runId), { method: "DELETE" }),
   createMeasurement: (projectId: string, body: MeasurementBriefRequest) =>
     request<AutomaticMeasurementResponse>(`${projectPath(projectId)}/measurements`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  summarizeMeasurementGoal: (
+    projectId: string,
+    body: MeasurementGoalSummaryRequest,
+  ) =>
+    request<MeasurementGoalSummary>(
+      `${projectPath(projectId)}/measurement-goal-summaries`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   measurementCapacity: (projectId: string) =>
     request<MeasurementCapacity>(`${projectPath(projectId)}/measurement-capacity`),
   run: (projectId: string, runId: string) => request<MeasurementRun>(runPath(projectId, runId)),
@@ -183,6 +198,11 @@ export const api = {
   conversation: (projectId: string, conversationId: string) =>
     request<Conversation>(
       `${projectPath(projectId)}/conversations/${encodeURIComponent(conversationId)}`,
+    ),
+  deleteConversation: (projectId: string, conversationId: string) =>
+    request<void>(
+      `${projectPath(projectId)}/conversations/${encodeURIComponent(conversationId)}`,
+      { method: "DELETE" },
     ),
   sendMessage: (projectId: string, conversationId: string, body: SendMessageRequest) =>
     request<Conversation>(

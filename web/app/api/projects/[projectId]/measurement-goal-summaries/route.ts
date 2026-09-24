@@ -7,7 +7,7 @@ interface Context {
 export async function POST(request: Request, context: Context) {
   const { projectId } = await context.params;
   return proxyFastApi(
-    `/api/v2/projects/${encodeURIComponent(projectId)}/measurements`,
+    `/api/v2/projects/${encodeURIComponent(projectId)}/measurement-goal-summaries`,
     { method: "POST", body: await request.text() },
   );
 }

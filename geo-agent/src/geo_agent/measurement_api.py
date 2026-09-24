@@ -349,7 +349,12 @@ def create_measurement_router(
             for retrieval in run.measurement.retrievals:
                 for source in retrieval.sources:
                     if source.evidence_id == evidence_id:
-                        return source.model_dump(mode="json")
+                        return {
+                            **source.model_dump(mode="json"),
+                            "evidence_type": "grounding-citation",
+                            "query_id": retrieval.query_id,
+                            "grounding_query": retrieval.grounding_query,
+                        }
         raise NotFound("Evidence not found")
 
     @router.post("/runs/{run_id}/exports", status_code=201)

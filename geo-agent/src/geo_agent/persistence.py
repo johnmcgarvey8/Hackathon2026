@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete as sql_delete,
     event,
     inspect,
     insert,
@@ -95,12 +96,69 @@ project_conversations = Table(
     Index("ix_project_conversations_project_updated", "project_id", "owner_key", "updated_at"),
 )
 
+project_conversation_runs = Table(
+    "project_conversation_runs",
+    metadata,
+    Column(
+        "conversation_id",
+        String(64),
+        ForeignKey("project_conversations.conversation_id"),
+        primary_key=True,
+    ),
+    Column(
+        "run_id",
+        String(64),
+        ForeignKey("measurement_runs.run_id"),
+        primary_key=True,
+    ),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("owner_key", String(64), nullable=False),
+    Column("linked_at", String(40), nullable=False),
+    Index(
+        "ix_project_conversation_runs_project",
+        "project_id",
+        "owner_key",
+        "linked_at",
+    ),
+)
+
 project_agent_budgets = Table(
     "project_agent_budgets",
     metadata,
     Column("owner_key", String(64), primary_key=True),
     Column("request_limit", Integer, nullable=False),
     Column("used", Integer, nullable=False),
+)
+
+project_llm_operations = Table(
+    "project_llm_operations",
+    metadata,
+    Column("operation_id", String(64), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("owner_key", String(64), nullable=False),
+    Column("operation_type", String(64), nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("input_hash", String(64), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("summary", Text),
+    Column("provider_response_id", String(500)),
+    Column("fallback_used", Integer, nullable=False),
+    Column("usage_payload", Text, nullable=False),
+    Column("error_code", String(100)),
+    Column("created_at", String(40), nullable=False),
+    Column("completed_at", String(40)),
+    UniqueConstraint(
+        "owner_key",
+        "operation_type",
+        "idempotency_key",
+        name="uq_project_llm_operations_owner_type_key",
+    ),
+    Index(
+        "ix_project_llm_operations_project_created",
+        "project_id",
+        "owner_key",
+        "created_at",
+    ),
 )
 
 run_brand_definitions = Table(
@@ -235,6 +293,13 @@ agent_capabilities = Table(
 
 
 class SQLAlchemyMeasurementRepository(MeasurementRepository):
+    _ACTIVE_DELETION_STATES = frozenset({
+        MeasurementState.PREPARING,
+        MeasurementState.QUEUED,
+        MeasurementState.EVALUATING,
+        MeasurementState.RECOMMENDING,
+    })
+
     def __init__(self, database_url: str, *, initialize_schema: bool = False):
         self.engine = create_engine(database_url)
         self._measurement_budget_binding: tuple[str, str, str] | None = None
@@ -481,6 +546,222 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     project_runs.c.owner_key == owner.key,
                 )
             ).scalar_one_or_none()
+
+    @staticmethod
+    def _reconcile_conversations_for_deleted_run(
+        connection: Connection,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        from geo_agent.project_chat import ProjectConversation
+
+        rows = connection.execute(select(project_conversations).where(
+            project_conversations.c.project_id == project_id,
+            project_conversations.c.owner_key == owner.key,
+        )).all()
+        for row in rows:
+            current = ProjectConversation.model_validate_json(row.payload)
+            if (
+                current.run_id != run_id
+                and run_id not in current.linked_run_ids
+                and run_id not in current.comparison_run_ids
+                and run_id not in current.bound_run_contexts
+                and all(
+                    workflow.run_id != run_id
+                    for workflow in current.measurement_workflows
+                )
+            ):
+                continue
+            active_run_id = None if current.run_id == run_id else current.run_id
+            contexts = {
+                linked_run_id: context
+                for linked_run_id, context in current.bound_run_contexts.items()
+                if linked_run_id != run_id
+            }
+            workflows = tuple(
+                workflow
+                for workflow in current.measurement_workflows
+                if workflow.run_id != run_id
+            )
+            updated = current.model_copy(update={
+                "run_id": active_run_id,
+                "linked_run_ids": tuple(
+                    linked_run_id
+                    for linked_run_id in current.linked_run_ids
+                    if linked_run_id != run_id
+                ),
+                "comparison_run_ids": tuple(
+                    comparison_run_id
+                    for comparison_run_id in current.comparison_run_ids
+                    if comparison_run_id != run_id
+                ),
+                "measurement_workflow": (
+                    None
+                    if (
+                        current.measurement_workflow is not None
+                        and current.measurement_workflow.run_id == run_id
+                    )
+                    else current.measurement_workflow
+                ),
+                "measurement_workflows": workflows,
+                "bound_project_context": (
+                    contexts.get(active_run_id)
+                    if active_run_id is not None
+                    else None
+                ),
+                "bound_run_contexts": contexts,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            })
+            changed = connection.execute(update(project_conversations).where(
+                project_conversations.c.conversation_id == current.conversation_id,
+                project_conversations.c.project_id == project_id,
+                project_conversations.c.owner_key == owner.key,
+                project_conversations.c.revision == current.revision,
+            ).values(
+                run_id=active_run_id,
+                revision=updated.revision,
+                payload=updated.model_dump_json(),
+                updated_at=updated.updated_at.isoformat(),
+            ))
+            if changed.rowcount != 1:
+                raise Conflict("Conversation changed concurrently; reload it")
+        connection.execute(sql_delete(project_conversation_runs).where(
+            project_conversation_runs.c.project_id == project_id,
+            project_conversation_runs.c.run_id == run_id,
+            project_conversation_runs.c.owner_key == owner.key,
+        ))
+
+    def _delete_run_rows(
+        self,
+        connection: Connection,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+        *,
+        reconcile_conversations: bool,
+    ) -> tuple[str, ...]:
+        run = self._read(connection, run_id, owner)
+        if run.state in self._ACTIVE_DELETION_STATES:
+            raise Conflict("Active measurement runs cannot be deleted")
+        storage_keys = tuple(connection.execute(select(artifacts.c.storage_key).where(
+            artifacts.c.run_id == run_id,
+            artifacts.c.owner_key == owner.key,
+        )).scalars())
+        if reconcile_conversations:
+            self._reconcile_conversations_for_deleted_run(
+                connection, project_id, run_id, owner,
+            )
+        connection.execute(sql_delete(measurement_budget_consumptions).where(
+            measurement_budget_consumptions.c.claim_id.in_(
+                select(operation_claims.c.claim_id).where(
+                    operation_claims.c.run_id == run_id,
+                )
+            )
+        ))
+        connection.execute(sql_delete(operation_claims).where(
+            operation_claims.c.run_id == run_id,
+        ))
+        connection.execute(sql_delete(workflow_jobs).where(
+            workflow_jobs.c.run_id == run_id,
+            workflow_jobs.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(agent_capabilities).where(
+            agent_capabilities.c.conversation_id.in_(
+                select(agent_conversations.c.conversation_id).where(
+                    agent_conversations.c.run_id == run_id,
+                    agent_conversations.c.owner_key == owner.key,
+                )
+            )
+        ))
+        connection.execute(sql_delete(agent_conversations).where(
+            agent_conversations.c.run_id == run_id,
+            agent_conversations.c.owner_key == owner.key,
+        ))
+        for table in (
+            artifacts,
+            approvals,
+            run_events,
+            run_brand_definitions,
+        ):
+            connection.execute(sql_delete(table).where(table.c.run_id == run_id))
+        connection.execute(sql_delete(project_runs).where(
+            project_runs.c.project_id == project_id,
+            project_runs.c.run_id == run_id,
+            project_runs.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(measurement_runs).where(
+            measurement_runs.c.run_id == run_id,
+            measurement_runs.c.owner_key == owner.key,
+        ))
+        return storage_keys
+
+    def delete_project_run(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> tuple[str, ...]:
+        with self.engine.begin() as connection:
+            self._read_project(connection, project_id, owner)
+            mapped = connection.execute(select(project_runs.c.run_id).where(
+                project_runs.c.project_id == project_id,
+                project_runs.c.run_id == run_id,
+                project_runs.c.owner_key == owner.key,
+            )).scalar_one_or_none()
+            if mapped is None:
+                raise NotFound("Measurement run not found in project")
+            return self._delete_run_rows(
+                connection,
+                project_id,
+                run_id,
+                owner,
+                reconcile_conversations=True,
+            )
+
+    def delete_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+    ) -> tuple[str, ...]:
+        with self.engine.begin() as connection:
+            self._read_project(connection, project_id, owner)
+            run_ids = tuple(connection.execute(select(project_runs.c.run_id).where(
+                project_runs.c.project_id == project_id,
+                project_runs.c.owner_key == owner.key,
+            )).scalars())
+            runs = tuple(self._read(connection, run_id, owner) for run_id in run_ids)
+            if any(run.state in self._ACTIVE_DELETION_STATES for run in runs):
+                raise Conflict("Projects with active measurement runs cannot be deleted")
+            connection.execute(sql_delete(project_conversation_runs).where(
+                project_conversation_runs.c.project_id == project_id,
+                project_conversation_runs.c.owner_key == owner.key,
+            ))
+            connection.execute(sql_delete(project_conversations).where(
+                project_conversations.c.project_id == project_id,
+                project_conversations.c.owner_key == owner.key,
+            ))
+            connection.execute(sql_delete(project_llm_operations).where(
+                project_llm_operations.c.project_id == project_id,
+                project_llm_operations.c.owner_key == owner.key,
+            ))
+            storage_keys: list[str] = []
+            for run_id in run_ids:
+                storage_keys.extend(self._delete_run_rows(
+                    connection,
+                    project_id,
+                    run_id,
+                    owner,
+                    reconcile_conversations=False,
+                ))
+            deleted = connection.execute(sql_delete(projects).where(
+                projects.c.project_id == project_id,
+                projects.c.owner_key == owner.key,
+            ))
+            if deleted.rowcount != 1:
+                raise Conflict("Project changed concurrently; reload it")
+            return tuple(storage_keys)
 
     def create(
         self,

@@ -3,13 +3,18 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import Literal, Protocol
+from urllib.parse import urlsplit
 
-from pydantic import Field
-from sqlalchemy import insert, select, update
+from pydantic import Field, model_validator
+from sqlalchemy import delete as sql_delete, insert, select, update
 
 from geo_agent.contracts import Contract, identifier, utc_now
 from geo_agent.measurement_workflow import OwnerIdentity
-from geo_agent.persistence import SQLAlchemyMeasurementRepository, project_conversations
+from geo_agent.persistence import (
+    SQLAlchemyMeasurementRepository,
+    project_conversation_runs,
+    project_conversations,
+)
 from geo_agent.projects import Project
 from geo_agent.workflow import Conflict, NotFound
 
@@ -19,9 +24,18 @@ logger = logging.getLogger(__name__)
 
 class ProjectChatCitation(Contract):
     source_class: Literal["geo-evidence", "org-knowledge", "work-context", "model-knowledge"]
+    geo_evidence_type: Literal[
+        "measurement-run",
+        "grounding-query",
+        "grounding-citation",
+        "test-answer",
+    ] | None = None
     source_id: str = Field(min_length=1, max_length=500)
     title: str = Field(min_length=1, max_length=500)
     url: str | None = Field(default=None, max_length=2000)
+    query_id: str | None = None
+    brand_name: str | None = None
+    brand_status: Literal["matched", "ambiguous", "absent", "unknown", "unconfigured"] | None = None
 
 
 class ProjectAgentReply(Contract):
@@ -43,12 +57,48 @@ class ProjectChatRequest(Contract):
 
 
 class ProjectMeasurementWorkflow(Contract):
-    status: Literal["collecting", "preparing", "evaluating", "completed", "failed"]
+    workflow_id: str = Field(default_factory=identifier)
+    status: Literal[
+        "collecting",
+        "awaiting-confirmation",
+        "preparing",
+        "evaluating",
+        "completed",
+        "failed",
+    ]
+    target_kind: Literal["page", "domain"] | None = None
     url: str | None = Field(default=None, max_length=2000)
+    goal: str | None = Field(default=None, max_length=1000)
+    raw_goal: str | None = Field(default=None, max_length=1000)
+    summarised_goal: str | None = Field(default=None, max_length=1000)
+    goal_summary_operation_id: str | None = None
+    goal_summary_fallback_used: bool = False
+    audience: str | None = Field(default=None, max_length=1000)
+    desired_outcome: str | None = Field(default=None, max_length=1000)
+    pending_field: Literal[
+        "target",
+        "target-kind",
+        "goal",
+        "audience",
+        "desired-outcome",
+        "confirmation",
+    ] | None = None
     objective: str | None = Field(default=None, max_length=1000)
     run_id: str | None = None
     source_idempotency_key: str
     error: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def backfill_legacy_objective(self) -> "ProjectMeasurementWorkflow":
+        if self.goal is None and self.objective is not None:
+            object.__setattr__(self, "goal", self.objective)
+        if self.raw_goal is None and self.goal is not None:
+            object.__setattr__(self, "raw_goal", self.goal)
+        if self.target_kind is None and self.url is not None:
+            parsed = urlsplit(self.url)
+            if parsed.path not in {"", "/"} or parsed.query:
+                object.__setattr__(self, "target_kind", "page")
+        return self
 
 
 class BoundProjectContext(Contract):
@@ -84,18 +134,48 @@ class ProjectConversationTurn(Contract):
 
 
 class ProjectConversation(Contract):
-    schema_version: Literal["geo-project-conversation/v1"] = "geo-project-conversation/v1"
+    schema_version: Literal[
+        "geo-project-conversation/v1",
+        "geo-project-conversation/v2",
+    ] = "geo-project-conversation/v2"
     conversation_id: str = Field(default_factory=identifier)
     project_id: str
     run_id: str | None = None
+    linked_run_ids: tuple[str, ...] = ()
+    comparison_run_ids: tuple[str, ...] = ()
     measurement_workflow: ProjectMeasurementWorkflow | None = None
+    measurement_workflows: tuple[ProjectMeasurementWorkflow, ...] = ()
     bound_project_context: BoundProjectContext | None = None
+    bound_run_contexts: dict[str, BoundProjectContext] = Field(default_factory=dict)
     owner: OwnerIdentity
     revision: int = Field(default=0, ge=0)
     title: str = "New conversation"
     turns: tuple[ProjectConversationTurn, ...] = ()
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def backfill_legacy_fields(self) -> "ProjectConversation":
+        linked = list(dict.fromkeys(self.linked_run_ids))
+        if self.run_id is not None and self.run_id not in linked:
+            linked.append(self.run_id)
+        workflows = self.measurement_workflows
+        if self.measurement_workflow is not None and all(
+            item.workflow_id != self.measurement_workflow.workflow_id
+            for item in workflows
+        ):
+            workflows = (*workflows, self.measurement_workflow)
+        contexts = dict(self.bound_run_contexts)
+        if (
+            self.run_id is not None
+            and self.bound_project_context is not None
+            and self.run_id not in contexts
+        ):
+            contexts[self.run_id] = self.bound_project_context
+        object.__setattr__(self, "linked_run_ids", tuple(linked))
+        object.__setattr__(self, "measurement_workflows", workflows)
+        object.__setattr__(self, "bound_run_contexts", contexts)
+        return self
 
 
 class ProjectAgent(Protocol):
@@ -110,7 +190,7 @@ class ProjectAgent(Protocol):
 
 
 class ProjectChatWorkflowHandler(Protocol):
-    def handle(
+    async def handle(
         self,
         project: Project,
         conversation: ProjectConversation,
@@ -181,6 +261,7 @@ class MockProjectAgent:
             citations = (
                 ProjectChatCitation(
                     source_class="geo-evidence",
+                    geo_evidence_type="measurement-run",
                     source_id=run.run_id,
                     title=f"{project.name} measurement run",
                 ),
@@ -262,18 +343,39 @@ class ProjectConversationStore:
         self,
         conversation: ProjectConversation,
     ) -> ProjectConversation:
-        if conversation.run_id is None or conversation.bound_project_context is not None:
+        missing = tuple(
+            run_id
+            for run_id in conversation.linked_run_ids
+            if run_id not in conversation.bound_run_contexts
+        )
+        active_context_missing = (
+            conversation.run_id is not None
+            and conversation.bound_project_context is None
+            and conversation.run_id in conversation.bound_run_contexts
+        )
+        if not missing and not active_context_missing:
             return conversation
-        try:
-            bound_context = self._bound_context(
-                conversation.project_id,
-                conversation.run_id,
-                conversation.owner,
-            )
-        except NotFound:
-            return conversation
+        contexts = dict(conversation.bound_run_contexts)
+        for run_id in missing:
+            try:
+                contexts[run_id] = self._bound_context(
+                    conversation.project_id,
+                    run_id,
+                    conversation.owner,
+                )
+            except NotFound:
+                continue
+        if contexts == conversation.bound_run_contexts:
+            return conversation.model_copy(update={
+                "bound_project_context": contexts.get(conversation.run_id),
+            })
         updated = conversation.model_copy(update={
-            "bound_project_context": bound_context,
+            "bound_project_context": (
+                contexts.get(conversation.run_id)
+                if conversation.run_id is not None
+                else None
+            ),
+            "bound_run_contexts": contexts,
         })
         with self.repository.engine.begin() as connection:
             result = connection.execute(update(project_conversations).where(
@@ -285,6 +387,30 @@ class ProjectConversationStore:
             if result.rowcount != 1:
                 return conversation
         return updated
+
+    @staticmethod
+    def _insert_run_links(
+        connection,
+        conversation: ProjectConversation,
+        run_ids: tuple[str, ...],
+    ) -> None:
+        for run_id in run_ids:
+            exists = connection.execute(select(
+                project_conversation_runs.c.run_id,
+            ).where(
+                project_conversation_runs.c.conversation_id
+                == conversation.conversation_id,
+                project_conversation_runs.c.run_id == run_id,
+                project_conversation_runs.c.owner_key == conversation.owner.key,
+            )).scalar_one_or_none()
+            if exists is None:
+                connection.execute(insert(project_conversation_runs).values(
+                    conversation_id=conversation.conversation_id,
+                    run_id=run_id,
+                    project_id=conversation.project_id,
+                    owner_key=conversation.owner.key,
+                    linked_at=utc_now().isoformat(),
+                ))
 
     def create(
         self,
@@ -313,6 +439,8 @@ class ProjectConversationStore:
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
             ))
+            if run_id is not None:
+                self._insert_run_links(connection, conversation, (run_id,))
         return conversation
 
     def get(
@@ -353,21 +481,57 @@ class ProjectConversationStore:
             for conversation in conversations
         )
 
+    def delete(
+        self,
+        project_id: str,
+        conversation_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        with self.repository.engine.begin() as connection:
+            exists = connection.execute(select(
+                project_conversations.c.conversation_id,
+            ).where(
+                project_conversations.c.conversation_id == conversation_id,
+                project_conversations.c.project_id == project_id,
+                project_conversations.c.owner_key == owner.key,
+            )).scalar_one_or_none()
+            if exists is None:
+                raise NotFound("Project conversation not found")
+            connection.execute(sql_delete(project_conversation_runs).where(
+                project_conversation_runs.c.conversation_id == conversation_id,
+                project_conversation_runs.c.project_id == project_id,
+                project_conversation_runs.c.owner_key == owner.key,
+            ))
+            connection.execute(sql_delete(project_conversations).where(
+                project_conversations.c.conversation_id == conversation_id,
+                project_conversations.c.project_id == project_id,
+                project_conversations.c.owner_key == owner.key,
+            ))
+
     def find_workflow_by_run(
         self,
         run_id: str,
         owner: OwnerIdentity,
     ) -> ProjectConversation | None:
         with self.repository.engine.connect() as connection:
-            rows = connection.execute(select(project_conversations).where(
-                project_conversations.c.run_id == run_id,
-                project_conversations.c.owner_key == owner.key,
-            ).order_by(project_conversations.c.created_at.asc())).all()
+            rows = connection.execute(
+                select(project_conversations)
+                .select_from(project_conversation_runs.join(
+                    project_conversations,
+                    project_conversation_runs.c.conversation_id
+                    == project_conversations.c.conversation_id,
+                ))
+                .where(
+                    project_conversation_runs.c.run_id == run_id,
+                    project_conversation_runs.c.owner_key == owner.key,
+                )
+                .order_by(project_conversations.c.created_at.asc())
+            ).all()
         for row in rows:
             conversation = self._read_payload(row)
-            if (
-                conversation.measurement_workflow is not None
-                and conversation.measurement_workflow.run_id == run_id
+            if any(
+                workflow.run_id == run_id
+                for workflow in conversation.measurement_workflows
             ):
                 return conversation
         return None
@@ -378,24 +542,61 @@ class ProjectConversationStore:
         *,
         workflow: ProjectMeasurementWorkflow | None = None,
         run_id: str | None = None,
+        linked_run_ids: tuple[str, ...] = (),
+        comparison_run_ids: tuple[str, ...] | None = None,
     ) -> ProjectConversation:
         effective_run_id = run_id if run_id is not None else conversation.run_id
-        bound_context = conversation.bound_project_context
-        if effective_run_id is not None and effective_run_id != conversation.run_id:
-            bound_context = self._bound_context(
+        effective_linked = tuple(dict.fromkeys((
+            *conversation.linked_run_ids,
+            *linked_run_ids,
+            *((effective_run_id,) if effective_run_id is not None else ()),
+        )))
+        contexts = dict(conversation.bound_run_contexts)
+        for linked_run_id in effective_linked:
+            if linked_run_id in contexts:
+                continue
+            contexts[linked_run_id] = self._bound_context(
                 conversation.project_id,
-                effective_run_id,
+                linked_run_id,
                 conversation.owner,
             )
+        workflows = conversation.measurement_workflows
+        if workflow is not None:
+            workflows = tuple(
+                workflow if item.workflow_id == workflow.workflow_id else item
+                for item in workflows
+            )
+            if all(item.workflow_id != workflow.workflow_id for item in workflows):
+                workflows = (*workflows, workflow)
         updated = conversation.model_copy(update={
             "run_id": effective_run_id,
-            "bound_project_context": bound_context,
+            "linked_run_ids": effective_linked,
+            "comparison_run_ids": (
+                conversation.comparison_run_ids
+                if comparison_run_ids is None
+                else comparison_run_ids
+            ),
+            "bound_project_context": (
+                contexts.get(effective_run_id)
+                if effective_run_id is not None
+                else None
+            ),
+            "bound_run_contexts": contexts,
             "measurement_workflow": (
                 workflow if workflow is not None else conversation.measurement_workflow
             ),
+            "measurement_workflows": workflows,
             "updated_at": utc_now(),
         })
         with self.repository.engine.begin() as connection:
+            self._insert_run_links(
+                connection,
+                updated,
+                tuple(
+                    item for item in effective_linked
+                    if item not in conversation.linked_run_ids
+                ),
+            )
             result = connection.execute(update(project_conversations).where(
                 project_conversations.c.conversation_id == conversation.conversation_id,
                 project_conversations.c.project_id == conversation.project_id,
@@ -417,7 +618,19 @@ class ProjectConversationStore:
     ) -> ProjectConversation:
         updated = conversation.model_copy(update={
             "revision": conversation.revision + 1,
-            "measurement_workflow": workflow,
+            "measurement_workflow": (
+                workflow
+                if (
+                    conversation.measurement_workflow is None
+                    or conversation.measurement_workflow.workflow_id
+                    == workflow.workflow_id
+                )
+                else conversation.measurement_workflow
+            ),
+            "measurement_workflows": tuple(
+                workflow if item.workflow_id == workflow.workflow_id else item
+                for item in conversation.measurement_workflows
+            ),
             "updated_at": utc_now(),
         })
         with self.repository.engine.begin() as connection:
@@ -438,8 +651,16 @@ class ProjectConversationStore:
         self,
         conversation: ProjectConversation,
     ) -> ProjectConversation:
+        active_workflow = conversation.measurement_workflow
         updated = conversation.model_copy(update={
             "measurement_workflow": None,
+            "measurement_workflows": tuple(
+                workflow for workflow in conversation.measurement_workflows
+                if (
+                    active_workflow is None
+                    or workflow.workflow_id != active_workflow.workflow_id
+                )
+            ),
             "updated_at": utc_now(),
         })
         with self.repository.engine.begin() as connection:
@@ -610,9 +831,16 @@ class ProjectChatService:
             project = self.repository.get_project(project_id, owner)
             if project.archived:
                 raise Conflict("This project is archived")
+            if (
+                request.use_organisational_context
+                and not self.agent.status(project)["organisational_context_available"]
+            ):
+                raise Conflict(
+                    "Organisational context is not enabled; disable it before sending"
+                )
             reply = None
             if self.workflow is not None:
-                conversation, reply = self.workflow.handle(
+                conversation, reply = await self.workflow.handle(
                     project, conversation, request,
                 )
             if reply is None:

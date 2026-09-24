@@ -10,3 +10,11 @@ export async function GET(_request: Request, context: Context) {
     `/api/v2/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}`,
   );
 }
+
+export async function DELETE(_request: Request, context: Context) {
+  const { projectId, runId } = await context.params;
+  return proxyFastApi(
+    `/api/v2/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+}

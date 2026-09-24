@@ -40,8 +40,13 @@ def test_local_artifact_storage_is_idempotent_and_path_safe(tmp_path):
     storage.put("owner/run/hash.zip", b"immutable bundle")
 
     assert storage.get("owner/run/hash.zip") == b"immutable bundle"
+    storage.delete("owner/run/hash.zip")
+    storage.delete("owner/run/hash.zip")
+    with pytest.raises(NotFound, match="not found"):
+        storage.get("owner/run/hash.zip")
     with pytest.raises(Conflict, match="different content"):
-        storage.put("owner/run/hash.zip", b"changed bundle")
+        storage.put("owner/run/other.zip", b"changed bundle")
+        storage.put("owner/run/other.zip", b"different content")
     with pytest.raises(ValueError, match="safe relative"):
         storage.put("../outside.zip", b"content")
     with pytest.raises(NotFound, match="not found"):

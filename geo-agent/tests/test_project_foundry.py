@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from geo_agent.api import create_app
 from geo_agent.contracts import Brief
 from geo_agent.evidence_assessment import BrandDefinition
-from geo_agent.geo_context import MAX_GEO_CONTEXT_BYTES, RESULT_DISTINCTIONS
+from geo_agent.geo_context import RESULT_DISTINCTIONS
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
     MeasurementEvent,
@@ -23,11 +23,13 @@ from geo_agent.persistence import (
     project_conversations,
 )
 from geo_agent.project_chat import (
+    ProjectAgentReply,
+    ProjectChatCitation,
     ProjectChatRequest,
     ProjectChatService,
     ProjectConversationStore,
 )
-from geo_agent.project_foundry import MAX_INPUT_BYTES, HostedProjectAgent, ProjectFoundrySettings
+from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
 from geo_agent.projects import FoundryProjectBinding, ProjectCreate, ProjectUpdate
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict
@@ -90,7 +92,6 @@ def send(service, project, owner, conversation, text="What can you help with?", 
 
 
 def test_environment_extracts_agent_and_defaults_without_deployment_or_knowledge():
-    assert MAX_INPUT_BYTES == 512_000
     result = ProjectFoundrySettings.from_environment({
         "GEO_FOUNDRY_AGENT_ENDPOINT": f"{ENDPOINT}/agents/shared-geo/endpoint/protocols/openai/responses",
         "GEO_FOUNDRY_AGENT_NAME": "shared-geo",
@@ -108,6 +109,15 @@ def test_environment_extracts_agent_and_defaults_without_deployment_or_knowledge
     assert ProjectFoundrySettings.from_environment({}) is None
     with pytest.raises(ValueError, match="together"):
         ProjectFoundrySettings.from_environment({"GEO_FOUNDRY_AGENT_NAME": "shared-geo"})
+
+
+def test_non_geo_chat_citations_do_not_require_a_geo_evidence_type():
+    citation = ProjectChatCitation(
+        source_class="org-knowledge",
+        source_id="approved-document",
+        title="Approved organisational document",
+    )
+    assert citation.geo_evidence_type is None
 
 
 @pytest.mark.parametrize("endpoint", [
@@ -254,7 +264,85 @@ def test_shared_agent_keeps_each_project_context_and_history_separate(workspace)
     assert "Second Brand" in second_wire
 
 
-def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
+def test_restart_rehydrates_completed_foundry_and_workflow_turns(tmp_path):
+    database = tmp_path / "rehydrated-history.sqlite3"
+    repository = SQLiteMeasurementRepository(database)
+    owner = OwnerIdentity(tenant_id="local", object_id="operator")
+    project = repository.create_project(
+        owner,
+        ProjectCreate(name="History Brand", primary_domain="history.example"),
+    )
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=completed_response())
+
+    service = service_for(repository, handler)
+    conversation = service.store.create(project.project_id, owner)
+    conversation = send(
+        service,
+        project,
+        owner,
+        conversation,
+        text="First persisted Foundry question",
+    )
+    workflow_request = ProjectChatRequest(
+        message="Confirm the saved measurement",
+        expected_revision=conversation.revision,
+        idempotency_key="workflow-turn",
+    )
+    claimed, created = service.store.claim(
+        project.project_id,
+        conversation.conversation_id,
+        owner,
+        workflow_request,
+        origin="workflow",
+    )
+    assert created is True
+    conversation = service.store.finish(
+        project.project_id,
+        conversation.conversation_id,
+        owner,
+        workflow_request.idempotency_key,
+        ProjectAgentReply(
+            answer="The saved measurement is confirmed.",
+            mode="workflow",
+            agent_name="GEO workflow coordinator",
+        ),
+        None,
+    )
+
+    restarted_repository = SQLiteMeasurementRepository(database)
+    restarted = service_for(restarted_repository, handler)
+    restored = restarted.store.get(
+        project.project_id,
+        conversation.conversation_id,
+        owner,
+    )
+    send(
+        restarted,
+        project,
+        owner,
+        restored,
+        text="Continue after restart",
+        key="after-restart",
+    )
+
+    history_message = next(
+        item["content"]
+        for item in requests[-1]["input"]
+        if "CONVERSATION_HISTORY" in item["content"]
+    )
+    history = json.loads(history_message)["CONVERSATION_HISTORY"]
+    assert [turn["mode"] for turn in history["turns"]] == ["foundry", "workflow"]
+    assert [turn["origin"] for turn in history["turns"]] == ["user", "workflow"]
+    assert "First persisted Foundry question" in history_message
+    assert "The saved measurement is confirmed." in history_message
+    assert "Continue after restart" not in history_message
+
+
+def test_context_v2_is_deterministic_complete_and_bound_to_one_run(tmp_path):
     repository = SQLiteMeasurementRepository(tmp_path / "context-v2.sqlite3")
     owner = OwnerIdentity(tenant_id="local", object_id="operator")
     project = repository.create_project(
@@ -334,8 +422,15 @@ def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
     assert after_project_changes == first
     assert changed_citations == citations
     assert first["schema_version"] == "geo-context/v2"
+    assert "grounding query results" in first["response_guidance"][0]
+    assert "complete saved run context is supplied" in first["response_guidance"][1]
     assert len(first["context_hash"]) == 64
-    assert len(json.dumps(first, sort_keys=True).encode()) <= MAX_GEO_CONTEXT_BYTES
+    assert all(
+        group["included_items"] == group["total_items"]
+        and group["truncated"] is False
+        for group in first["truncation"]["groups"].values()
+    )
+    assert first["truncation"]["applied"] is False
     assert tuple(first["citation_performance"]["result_distinctions"]) == RESULT_DISTINCTIONS
     assert {
         "query_plan",
@@ -347,6 +442,20 @@ def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
         "limitations_and_provenance",
     }.issubset(first)
     assert first["run"]["run_id"] == ready.run_id
+    available_brand_findings = [
+        finding for finding in first["brand_presence"]["findings"]
+        if finding["detail_status"] == "available"
+    ]
+    assert all(
+        finding["brand_status"] != "matched"
+        or finding.get("matched_sources")
+        or finding.get("matched_terms")
+        for finding in available_brand_findings
+    )
+    assert all(
+        finding["query_label"].startswith("Query ")
+        for finding in first["brand_presence"]["findings"]
+    )
     assert "Unrelated Private Project" not in json.dumps(first)
     assert "private.example/secret" not in json.dumps(first)
     assert {citation.source_id for citation in citations} >= {
@@ -355,6 +464,20 @@ def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
         f"{ready.run_id}-answer-q-1-chatgpt-style",
         f"{ready.run_id}-evidence-q-1-target",
     }
+    citation_types = {
+        citation.source_id: citation.geo_evidence_type for citation in citations
+    }
+    assert citation_types[ready.run_id] == "measurement-run"
+    assert citation_types[f"{ready.run_id}-query-q-1"] == "grounding-query"
+    assert citation_types[f"{ready.run_id}-answer-q-1-chatgpt-style"] == "test-answer"
+    assert citation_types[f"{ready.run_id}-evidence-q-1-target"] == "grounding-citation"
+    query_citation = next(
+        citation for citation in citations
+        if citation.source_id == f"{ready.run_id}-query-q-1"
+    )
+    assert query_citation.query_id == "q-1"
+    assert query_citation.brand_name == project.name
+    assert query_citation.brand_status in {"matched", "ambiguous", "absent"}
     referenced = {
         f"{ready.run_id}-query-q-1",
         f"{ready.run_id}-evidence-q-1-target",
@@ -372,6 +495,9 @@ def test_context_v2_is_deterministic_bounded_and_bound_to_one_run(tmp_path):
     )
     result = send(service, project, owner, conversation)
     assert {item.source_id for item in result.turns[-1].citations} == referenced
+    assert {
+        item.geo_evidence_type for item in result.turns[-1].citations
+    } == {"grounding-query", "grounding-citation"}
     assert result.turns[-1].context_hash == first["context_hash"]
 
 
@@ -426,7 +552,10 @@ def test_legacy_run_bound_conversation_backfills_and_persists_context(workspace)
     )
     store = ProjectConversationStore(repository)
     conversation = store.create(project.project_id, owner, run.run_id)
-    legacy = conversation.model_copy(update={"bound_project_context": None})
+    legacy = conversation.model_copy(update={
+        "bound_project_context": None,
+        "bound_run_contexts": {},
+    })
     with repository.engine.begin() as connection:
         connection.execute(project_conversations.update().where(
             project_conversations.c.conversation_id == conversation.conversation_id,

@@ -19,3 +19,9 @@ export function shouldPollMeasurementWorkflow(
 ): boolean {
   return Boolean(workflow && pollableWorkflowStatuses.has(workflow.status));
 }
+
+export function shouldPollMeasurementWorkflows(
+  workflows: MeasurementWorkflow[] | null | undefined,
+): boolean {
+  return Boolean(workflows?.some(shouldPollMeasurementWorkflow));
+}

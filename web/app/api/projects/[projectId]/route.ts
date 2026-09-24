@@ -8,3 +8,11 @@ export async function GET(_request: Request, context: Context) {
   const { projectId } = await context.params;
   return proxyFastApi(`/api/v2/projects/${encodeURIComponent(projectId)}`);
 }
+
+export async function DELETE(_request: Request, context: Context) {
+  const { projectId } = await context.params;
+  return proxyFastApi(
+    `/api/v2/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+  );
+}

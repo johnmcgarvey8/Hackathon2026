@@ -365,26 +365,31 @@ class Foundry:
         plan = QueryPlan.model_validate(response.output_parsed)
         if [query.priority for query in plan.queries] != list(range(1, 6)):
             raise ProviderError("Foundry generated an invalid query plan order", code=ProviderFailure.PLAN_ORDER)
-        try:
-            passage_lookup = {passage["evidence_id"]: passage["text"] for passage in passages}
-            anchored_queries = []
-            for query in plan.queries:
-                anchored_evidence = []
-                for reference in query.evidence:
-                    anchored_quote = _anchor_page_quote(
-                        passage_lookup.get(reference.evidence_id, ""),
-                        reference.quote,
-                    )
-                    if anchored_quote is None:
-                        raise ValueError
-                    anchored_evidence.append(reference.model_copy(update={"quote": anchored_quote}))
-                anchored_queries.append(query.model_copy(update={"evidence": tuple(anchored_evidence)}))
-            plan = plan.model_copy(update={"queries": tuple(anchored_queries)})
-            plan.validate_evidence(snapshot)
-        except ValueError:
-            raise ProviderError("Foundry generated an invalid query plan or unsupported page evidence",
-                                code=ProviderFailure.PLAN_EVIDENCE,
-                                safe_detail="Foundry query evidence could not be anchored exactly to the live page") from None
+        passage_lookup = {passage["evidence_id"]: passage["text"] for passage in passages}
+        anchored_queries = []
+        for query in plan.queries:
+            anchored_evidence = []
+            for reference in query.evidence:
+                evidence_id = reference.evidence_id
+                anchored_quote = _anchor_page_quote(
+                    passage_lookup.get(evidence_id, ""),
+                    reference.quote,
+                )
+                if anchored_quote is None:
+                    for candidate_id, passage in passage_lookup.items():
+                        anchored_quote = _anchor_page_quote(passage, reference.quote)
+                        if anchored_quote is not None:
+                            evidence_id = candidate_id
+                            break
+                if anchored_quote is None:
+                    continue
+                anchored_evidence.append(reference.model_copy(update={
+                    "evidence_id": evidence_id,
+                    "quote": anchored_quote,
+                }))
+            anchored_queries.append(query.model_copy(update={"evidence": tuple(anchored_evidence)}))
+        plan = plan.model_copy(update={"queries": tuple(anchored_queries)})
+        plan.validate_evidence(snapshot)
         return plan, self.metadata(response)
 
     def analyse_page(self, snapshot: PageSnapshot, passages: list[dict]) -> tuple[PageAnalysis, dict]:

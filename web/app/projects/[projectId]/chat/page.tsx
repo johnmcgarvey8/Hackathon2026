@@ -1,10 +1,19 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import { shouldPollMeasurementWorkflow } from "@/lib/chat-runtime";
-import type { ChatCitation, ChatStatus, Conversation, SourceClass } from "@/lib/types";
+import { shouldPollMeasurementWorkflows } from "@/lib/chat-runtime";
+import {
+  deduplicateCitations,
+  evidencePresentation,
+  formatGroundingQueryTitle,
+  groupGroundingEvidence,
+  inferEvidenceType,
+  measurementRunEvidence,
+} from "@/lib/evidence-presentation";
+import type { ChatCitation, ChatStatus, Conversation, GeoEvidenceType, SourceClass } from "@/lib/types";
 import { Icon } from "@/components/icons";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { useProject } from "@/components/project-context";
@@ -25,10 +34,15 @@ const sourceLabels: Record<SourceClass, string> = {
 };
 
 function groupSources(citations: ChatCitation[]) {
-  return citations.reduce<Partial<Record<SourceClass, ChatCitation[]>>>((groups, citation) => {
+  return deduplicateCitations(citations).reduce<Partial<Record<SourceClass, ChatCitation[]>>>((groups, citation) => {
     (groups[citation.source_class] ||= []).push(citation);
     return groups;
   }, {});
+}
+
+function sourcesOfType(sources: ChatCitation[], type: GeoEvidenceType) {
+  return sources.filter((source) =>
+    inferEvidenceType(source.geo_evidence_type, source.source_id, source.title) === type);
 }
 
 function safeCitationUrl(value: string | null) {
@@ -39,6 +53,142 @@ function safeCitationUrl(value: string | null) {
   } catch {
     return null;
   }
+}
+
+function SourceCard({
+  source,
+  grouped = false,
+  hideLink = false,
+}: {
+  source: ChatCitation;
+  grouped?: boolean;
+  hideLink?: boolean;
+}) {
+  const sourceUrl = safeCitationUrl(source.url);
+  const url = hideLink ? null : sourceUrl;
+  const evidenceType = source.source_class === "geo-evidence"
+    ? inferEvidenceType(source.geo_evidence_type, source.source_id, source.title)
+    : null;
+  const presentation = evidenceType ? evidencePresentation(evidenceType) : null;
+  const displayTitle = evidenceType === "measurement-run"
+    ? "Measurement run"
+    : evidenceType === "grounding-query"
+      ? formatGroundingQueryTitle(source.title, source.query_id)
+      : source.title;
+  return (
+    <article className="source-card">
+      {(!grouped || source.brand_status === "matched") && (
+        <div className="source-card-badges">
+          {!grouped && (presentation
+            ? <span className={`pill evidence-kind ${presentation.pillClass}`}>{presentation.label}</span>
+            : <span className="source-type">{sourceLabels[source.source_class]}</span>)}
+          {source.brand_status === "matched" && source.brand_name && (
+            <span className="pill green">✓ {source.brand_name} found</span>
+          )}
+        </div>
+      )}
+      <strong>{displayTitle}</strong>
+      {!grouped && presentation && <p>{presentation.description}</p>}
+      {evidenceType === "grounding-citation" && sourceUrl && (
+        <span className="source-url" title={sourceUrl}>{sourceUrl}</span>
+      )}
+      {url && <a href={url} target="_blank" rel="noreferrer">Open source</a>}
+    </article>
+  );
+}
+
+function GeoEvidenceSources({
+  sources,
+  runUrl,
+}: {
+  sources: ChatCitation[];
+  runUrl: string | null;
+}) {
+  const measurementSources = sourcesOfType(sources, "measurement-run");
+  const groundingGroups = groupGroundingEvidence(sources);
+  const testAnswerSources = sourcesOfType(sources, "test-answer");
+  const measurementPresentation = evidencePresentation("measurement-run");
+  const testAnswerPresentation = evidencePresentation("test-answer");
+
+  return (
+    <>
+      <div className="source-group-header">
+        <h3>GEO evidence</h3>
+      </div>
+      <p className="source-group-description">
+        Saved evidence from the measurement run bound to this conversation.
+      </p>
+
+      {measurementSources.length > 0 && (
+        <section className="source-subgroup compact">
+          <div className="source-subgroup-header">
+            <h4>Measurement run</h4>
+            <span className={`pill ${measurementPresentation.pillClass}`}>{measurementSources.length}</span>
+          </div>
+          {measurementSources.map((source) => runUrl ? (
+            <Link
+              className="source-card source-card-link"
+              href={runUrl}
+              key={`${source.source_class}-${source.source_id}`}
+            >
+              <strong>Measurement run</strong>
+              <span>Open in Control Plane</span>
+            </Link>
+          ) : (
+            <SourceCard grouped hideLink source={source} key={`${source.source_class}-${source.source_id}`} />
+          ))}
+        </section>
+      )}
+
+      {groundingGroups.length > 0 && (
+        <section className="source-subgroup">
+          <div className="source-subgroup-header">
+            <h4>Grounding queries</h4>
+            <span className="pill amber">{groundingGroups.length}</span>
+          </div>
+          <div className="grounding-query-groups">
+            {groundingGroups.map((group) => {
+              const title = group.query
+                ? formatGroundingQueryTitle(group.query.title, group.queryId)
+                : group.queryId
+                  ? formatGroundingQueryTitle("", group.queryId)
+                  : "Other grounding citations";
+              return (
+                <details className="grounding-query-group" key={group.key}>
+                  <summary>
+                    <strong>{title}</strong>
+                    <span>{group.citations.length} {group.citations.length === 1 ? "citation" : "citations"}</span>
+                  </summary>
+                  <div className="grounding-query-content">
+                    {group.query?.brand_status === "matched" && group.query.brand_name && (
+                      <span className="pill green">✓ {group.query.brand_name} found</span>
+                    )}
+                    {group.citations.length > 0 ? group.citations.map((source) => (
+                      <SourceCard grouped hideLink source={source} key={`${source.source_class}-${source.source_id}`} />
+                    )) : (
+                      <p className="small muted">No returned citations are included in this response.</p>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {testAnswerSources.length > 0 && (
+        <section className="source-subgroup compact">
+          <div className="source-subgroup-header">
+            <h4>LLM Provider Survey</h4>
+            <span className={`pill ${testAnswerPresentation.pillClass}`}>{testAnswerSources.length}</span>
+          </div>
+          {testAnswerSources.map((source) => (
+            <SourceCard grouped hideLink source={source} key={`${source.source_class}-${source.source_id}`} />
+          ))}
+        </section>
+      )}
+    </>
+  );
 }
 
 function suggestedMeasurementUrl(domain?: string) {
@@ -68,6 +218,9 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSources, setDrawerSources] = useState<ChatCitation[]>([]);
+  const [runSources, setRunSources] = useState<ChatCitation[]>([]);
+  const [runSourcesLoading, setRunSourcesLoading] = useState(false);
+  const [runSourcesError, setRunSourcesError] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const recoveryKey = useRef<string | null>(null);
@@ -111,9 +264,36 @@ export default function ChatPage() {
     return () => { active = false; };
   }, [project, requestedConversationId]);
 
-  const workflowRunId = selected?.measurement_workflow?.run_id || selected?.run_id || null;
+  const workflows = selected?.measurement_workflows?.length
+    ? selected.measurement_workflows
+    : selected?.measurement_workflow ? [selected.measurement_workflow] : [];
+  const workflowRunId = selected?.run_id || selected?.measurement_workflow?.run_id || null;
   const selectedConversationId = selected?.conversation_id || null;
-  const workflowPollingRequired = shouldPollMeasurementWorkflow(selected?.measurement_workflow);
+  const workflowPollingRequired = shouldPollMeasurementWorkflows(workflows);
+
+  useEffect(() => {
+    if (!project || !workflowRunId) {
+      setRunSources([]);
+      setRunSourcesError(null);
+      setRunSourcesLoading(false);
+      return;
+    }
+    let active = true;
+    setRunSources([]);
+    setRunSourcesError(null);
+    setRunSourcesLoading(true);
+    api.run(project.project_id, workflowRunId)
+      .then((run) => {
+        if (active) setRunSources(measurementRunEvidence(run, project.name));
+      })
+      .catch(() => {
+        if (active) setRunSourcesError("Complete measurement evidence could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setRunSourcesLoading(false);
+      });
+    return () => { active = false; };
+  }, [project, workflowRunId]);
 
   useEffect(() => {
     if (!project || !selectedConversationId || !workflowPollingRequired) return;
@@ -162,12 +342,18 @@ export default function ChatPage() {
     () => selected?.turns.flatMap((turn) => turn.citations) || [],
     [selected],
   );
+  const visibleDrawerSources = useMemo(
+    () => deduplicateCitations(
+      drawerSources.length > 0 ? drawerSources : runSources,
+    ),
+    [runSources, drawerSources],
+  );
 
   if (!project) return null;
   const projectUrl = suggestedMeasurementUrl(project.primary_domain);
   const projectSuggestions = [
-    `Measure ${projectUrl} for ${project.active_goal || "AI search visibility"}`,
-    `Start a measurement of ${projectUrl} and identify citation gaps`,
+    `Help me plan a measurement for ${projectUrl}`,
+    `Check whether any of my brand URLs appear for ${project.primary_domain}`,
     "Explain how chat-first measurement works",
     "What URL and objective should I use for a measurement?",
   ];
@@ -204,6 +390,33 @@ export default function ChatPage() {
       setMessage("");
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "A new conversation could not be created.");
+    } finally {
+      busyRef.current = false;
+      setChangingConversation(false);
+    }
+  };
+
+  const deleteConversation = async (conversation: Conversation) => {
+    if (busyRef.current || interactionLocked) return;
+    if (!window.confirm(`Delete "${conversation.title}"? Measurement run data will be retained.`)) return;
+    busyRef.current = true;
+    setChangingConversation(true);
+    setError(null);
+    try {
+      await api.deleteConversation(project.project_id, conversation.conversation_id);
+      const remaining = conversations.filter(
+        (item) => item.conversation_id !== conversation.conversation_id,
+      );
+      setConversations(remaining);
+      if (selected?.conversation_id === conversation.conversation_id) {
+        setSelected(remaining[0] || null);
+        setMessage("");
+        setRecoveryId(null);
+      }
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError ? requestError.message : "The conversation could not be deleted.",
+      );
     } finally {
       busyRef.current = false;
       setChangingConversation(false);
@@ -308,34 +521,54 @@ export default function ChatPage() {
         <nav aria-label="Saved conversations">
           <div className="history-group">
             <h3>Run-bound conversations</h3>
-            {filtered.filter((conversation) => conversation.run_id || conversation.measurement_workflow?.run_id).map((conversation) => (
-              <button
-                className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
-                type="button"
-                key={conversation.conversation_id}
-                disabled={interactionLocked}
-                onClick={() => void openConversation(conversation.conversation_id)}
-                aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
-              >
-                <Icon name="chat" />
-                <span><strong>{conversation.title}</strong><small>{new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
-              </button>
+            {filtered.filter((conversation) => conversation.run_id || conversation.linked_run_ids?.length || conversation.measurement_workflow?.run_id).map((conversation) => (
+              <div className="chat-history-row" key={conversation.conversation_id}>
+                <button
+                  className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
+                  type="button"
+                  disabled={interactionLocked}
+                  onClick={() => void openConversation(conversation.conversation_id)}
+                  aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
+                >
+                  <Icon name="chat" />
+                  <span><strong>{conversation.title}</strong><small>{new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
+                </button>
+                <button
+                  className="icon-button chat-delete"
+                  type="button"
+                  aria-label={`Delete ${conversation.title}`}
+                  disabled={interactionLocked || conversation.turns.some((turn) => turn.status === "running")}
+                  onClick={() => void deleteConversation(conversation)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
             ))}
           </div>
           <div className="history-group">
             <h3>Project conversations</h3>
-            {filtered.filter((conversation) => !conversation.run_id && !conversation.measurement_workflow?.run_id).map((conversation) => (
-              <button
-                className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
-                type="button"
-                key={conversation.conversation_id}
-                disabled={interactionLocked}
-                onClick={() => void openConversation(conversation.conversation_id)}
-                aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
-              >
-                <Icon name="chat" />
-                <span><strong>{conversation.title}</strong><small>{new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
-              </button>
+            {filtered.filter((conversation) => !conversation.run_id && !conversation.linked_run_ids?.length && !conversation.measurement_workflow?.run_id).map((conversation) => (
+              <div className="chat-history-row" key={conversation.conversation_id}>
+                <button
+                  className={`chat-history-item ${selected?.conversation_id === conversation.conversation_id ? "selected" : ""}`}
+                  type="button"
+                  disabled={interactionLocked}
+                  onClick={() => void openConversation(conversation.conversation_id)}
+                  aria-current={selected?.conversation_id === conversation.conversation_id ? "true" : undefined}
+                >
+                  <Icon name="chat" />
+                  <span><strong>{conversation.title}</strong><small>{new Date(conversation.updated_at).toLocaleDateString("en-GB")}</small></span>
+                </button>
+                <button
+                  className="icon-button chat-delete"
+                  type="button"
+                  aria-label={`Delete ${conversation.title}`}
+                  disabled={interactionLocked || conversation.turns.some((turn) => turn.status === "running")}
+                  onClick={() => void deleteConversation(conversation)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
             ))}
           </div>
         </nav>
@@ -348,6 +581,18 @@ export default function ChatPage() {
           <button className="history-mobile-toggle icon-button" type="button" aria-label="Show conversations" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}><Icon name="menu" /></button>
           <div className="conversation-heading"><span className="agent-symbol"><Icon name="spark" /></span><span><strong>GEO assistant</strong><small>{project.name}</small></span></div>
           <div className="conversation-toolbar-actions">
+            {(selected?.linked_run_ids || []).map((runId) => (
+              <button
+                className={`pill ${runId === selected?.run_id ? "blue" : ""}`}
+                type="button"
+                key={runId}
+                disabled={interactionLocked || pendingTurn}
+                title={runId}
+                onClick={() => void submit(undefined, `Use run ${runId}`)}
+              >
+                {runId === selected?.run_id ? "Active " : ""}{runId.slice(0, 8)}
+              </button>
+            ))}
             <button className="button ghost" type="button" onClick={() => openSources(allSources)}><Icon name="sources" /><span>Sources</span></button>
           </div>
         </header>
@@ -357,7 +602,7 @@ export default function ChatPage() {
             <div className="chat-welcome">
               <span className="welcome-project">{project.name} workspace</span>
               <h1>Measure a page<br />from Chat</h1>
-              <p>{workflowRunId ? "Discuss the saved evidence for this measurement run." : "Send a measurement request with an in-scope project URL and objective. The run starts automatically and returns an insight here."}</p>
+              <p>{workflowRunId ? "Discuss the active run, paste another project run ID, or compare historic measurements." : "Share a project URL or domain. The assistant will clarify the goal, audience, and desired outcome before asking you to confirm the run."}</p>
               <div className="welcome-suggestions">
                 {suggestions.map((suggestion, index) => (
                   <button className="suggestion-card" type="button" key={suggestion} disabled={!runtime?.can_send || interactionLocked || pendingTurn} onClick={() => void submit(undefined, suggestion)}>
@@ -385,7 +630,7 @@ export default function ChatPage() {
                       )}
                       {turn.citations.length > 0 && (
                         <button className="source-summary-button" type="button" onClick={() => openSources(turn.citations)}>
-                          <Icon name="sources" /> {turn.citations.length} grounded {turn.citations.length === 1 ? "source" : "sources"}
+                          <Icon name="sources" /> {turn.citations.length} evidence {turn.citations.length === 1 ? "record" : "records"}
                         </button>
                       )}
                     </div>
@@ -402,7 +647,7 @@ export default function ChatPage() {
           {(recoveryId || pendingTurn) && <button className="button ghost" type="button" disabled={sending || changingConversation} onClick={() => void recover()}>Reload saved conversation</button>}
           <form className="prompt-composer" onSubmit={(event) => void submit(event)}>
             <label className="sr-only" htmlFor="chat-input">Message the GEO assistant</label>
-            <textarea id="chat-input" maxLength={4000} placeholder={`Measure ${projectUrl} for ${project.active_goal || "AI search visibility"}...`} value={message} disabled={interactionLocked || pendingTurn || !runtime?.can_send} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
+            <textarea id="chat-input" maxLength={4000} placeholder={`Plan a measurement for ${projectUrl}...`} value={message} disabled={interactionLocked || pendingTurn || !runtime?.can_send} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
@@ -422,14 +667,26 @@ export default function ChatPage() {
       <aside className={`drawer ${drawerOpen ? "open" : ""}`} aria-modal="true" role="dialog" aria-labelledby="source-drawer-title">
         <div className="drawer-header"><div><p className="eyebrow">Grounding</p><h2 id="source-drawer-title">Sources</h2></div><button className="icon-button" type="button" aria-label="Close sources" onClick={() => setDrawerOpen(false)}><Icon name="close" /></button></div>
         <div className="drawer-content">
-          {drawerSources.length === 0 ? <UnavailableState title="No sources yet" message="Sources will appear when the assistant returns grounded citations." compact /> : (
-            Object.entries(groupSources(drawerSources)).map(([sourceClass, sources]) => (
+          {runSourcesLoading && <LoadingState label="Loading complete measurement evidence" />}
+          {runSourcesError && <UnavailableState title="Complete evidence unavailable" message={runSourcesError} compact />}
+          {visibleDrawerSources.length === 0 ? <UnavailableState title="No sources yet" message="Sources will appear when the assistant returns grounded citations." compact /> : (
+            Object.entries(groupSources(visibleDrawerSources)).map(([sourceClass, sources]) => (
               <section className="source-group" key={sourceClass}>
-                <h3>{sourceLabels[sourceClass as SourceClass]}</h3>
-                {sources?.map((source) => {
-                  const url = safeCitationUrl(source.url);
-                  return <article className="source-card" key={`${source.source_class}-${source.source_id}`}><span className="source-type">{sourceLabels[source.source_class]}</span><strong>{source.title}</strong><small>{source.source_id}</small>{url && <a href={url} target="_blank" rel="noreferrer">Open source</a>}</article>;
-                })}
+                {sourceClass === "geo-evidence"
+                  ? <GeoEvidenceSources
+                      sources={sources || []}
+                      runUrl={workflowRunId
+                        ? `/projects/${project.project_id}/control-plane/${encodeURIComponent(workflowRunId)}`
+                        : null}
+                    />
+                  : (
+                    <>
+                      <h3>{sourceLabels[sourceClass as SourceClass]}</h3>
+                      {sources?.map((source) => (
+                        <SourceCard source={source} key={`${source.source_class}-${source.source_id}`} />
+                      ))}
+                    </>
+                  )}
               </section>
             ))
           )}

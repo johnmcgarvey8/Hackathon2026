@@ -36,6 +36,10 @@ def alice_headers() -> dict[str, str]:
     return {"Authorization": "Bearer " + ALICE_TOKEN}
 
 
+def bob_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer " + BOB_TOKEN}
+
+
 def policy() -> MeasurementExecutionPolicy:
     return MeasurementExecutionPolicy(
         policy_id="project-tests",
@@ -70,6 +74,42 @@ def project_payload(name: str = "Example Brand", domain: str = "example.com") ->
         "active_goal": "Improve grounded discovery",
         "colour": "#0067b8",
     }
+
+
+def send_chat(client, route: str, conversation: dict, message: str, key: str) -> dict:
+    response = client.post(route, json={
+        "message": message,
+        "expected_revision": conversation["revision"],
+        "idempotency_key": key,
+        "use_organisational_context": False,
+    })
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def start_chat_measurement(
+    client,
+    route: str,
+    conversation: dict,
+    *,
+    url: str,
+    goal: str,
+    audience: str,
+    outcome: str,
+    key: str,
+) -> dict:
+    conversation = send_chat(
+        client, route, conversation, f"Measure {url} for {goal}", f"{key}-start",
+    )
+    conversation = send_chat(
+        client, route, conversation, audience, f"{key}-audience",
+    )
+    conversation = send_chat(
+        client, route, conversation, outcome, f"{key}-outcome",
+    )
+    return send_chat(
+        client, route, conversation, "Confirm", f"{key}-confirm",
+    )
 
 
 def project_grant(execution_policy, owner, *, grant_id=None, runs=1):
@@ -295,6 +335,68 @@ def test_automatic_measurement_command_enqueues_live_preparation_and_reports_cap
         }
 
 
+def test_direct_measurement_confirms_persisted_goal_summary_with_fallback(tmp_path):
+    database = tmp_path / "confirmed-goal-summary.sqlite3"
+    execution_policy = policy()
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    repository = SQLiteMeasurementRepository(database)
+    repository.bind_measurement_budget(
+        project_grant(execution_policy, owner),
+        execution_policy,
+    )
+    app = create_app(
+        database,
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=execution_policy,
+    )
+
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        raw_goal = "Understand whether enterprise buyers can find this page in AI answers"
+        summary = client.post(
+            f"/api/v2/projects/{project['project_id']}/measurement-goal-summaries",
+            json={
+                "raw_goal": raw_goal,
+                "url": "https://example.com/category/",
+                "audience": raw_goal,
+                "target_kind": "page",
+                "idempotency_key": "direct-summary",
+            },
+        )
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["summary"] == raw_goal
+        assert summary.json()["fallback_used"] is True
+
+        created = client.post(
+            f"/api/v2/projects/{project['project_id']}/measurements",
+            json={
+                "url": "https://example.com/category/",
+                "audience": raw_goal,
+                "goal": "Evaluate AI visibility for enterprise buyers.",
+                "locale": "en-GB",
+                "raw_goal": raw_goal,
+                "goal_summary_operation_id": summary.json()["operation_id"],
+            },
+        )
+        assert created.status_code == 202, created.text
+        assert created.json()["run"]["brief"]["goal"] == (
+            "Evaluate AI visibility for enterprise buyers."
+        )
+
+        mismatch = client.post(
+            f"/api/v2/projects/{project['project_id']}/measurements",
+            json={
+                "url": "https://example.com/other/",
+                "audience": raw_goal,
+                "goal": "Mismatched summary",
+                "locale": "en-GB",
+                "raw_goal": raw_goal,
+                "goal_summary_operation_id": summary.json()["operation_id"],
+            },
+        )
+        assert mismatch.status_code == 409
+
+
 def test_project_repository_rejects_synthetic_inputs_and_results(tmp_path):
     repository = SQLiteMeasurementRepository(tmp_path / "project-live-invariant.sqlite3")
     owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
@@ -332,19 +434,33 @@ def test_application_does_not_start_a_mock_measurement_worker(tmp_path):
         conversation = client.post(
             f"/api/v2/projects/{project['project_id']}/conversations",
         ).json()
-        response = client.post(
-            (
-                f"/api/v2/projects/{project['project_id']}/conversations/"
-                f"{conversation['conversation_id']}/messages"
-            ),
-            json={
-                "message": "Measure https://example.com/category/ for grounded discovery",
-                "expected_revision": conversation["revision"],
-                "idempotency_key": "agentic-measurement-one",
-                "use_organisational_context": False,
-            },
+        route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
         )
-        assert response.status_code == 200, response.text
+        conversation = send_chat(
+            client,
+            route,
+            conversation,
+            "Measure https://example.com/category/ for grounded discovery",
+            "agentic-measurement-one",
+        )
+        assert conversation["run_id"] is None
+        assert conversation["measurement_workflow"]["pending_field"] == "audience"
+        conversation = send_chat(
+            client, route, conversation, "Category shoppers", "agentic-audience",
+        )
+        conversation = send_chat(
+            client,
+            route,
+            conversation,
+            "Identify AI visibility and citation gaps",
+            "agentic-outcome",
+        )
+        assert conversation["measurement_workflow"]["status"] == "awaiting-confirmation"
+        conversation = send_chat(
+            client, route, conversation, "Confirm", "agentic-confirm",
+        )
         saved = client.get(
             (
                 f"/api/v2/projects/{project['project_id']}/conversations/"
@@ -352,8 +468,9 @@ def test_application_does_not_start_a_mock_measurement_worker(tmp_path):
             ),
         ).json()
         assert saved["run_id"] is not None
-        assert saved["turns"][0]["status"] == "completed"
-        assert "has started" in saved["turns"][0]["answer"]
+        assert saved["linked_run_ids"] == [saved["run_id"]]
+        assert saved["turns"][-1]["status"] == "completed"
+        assert "has started" in saved["turns"][-1]["answer"]
         runs = client.get(f"/api/v2/projects/{project['project_id']}/runs").json()
         assert len(runs) == 1
         assert runs[0]["state"] == "preparing"
@@ -382,12 +499,22 @@ def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
             f"/api/v2/projects/{project['project_id']}/conversations/"
             f"{original['conversation_id']}/messages"
         )
-        started = client.post(route, json={
-            "message": "Measure https://example.com/category/ for pricing coverage",
-            "expected_revision": original["revision"],
-            "idempotency_key": "agentic-binding-start",
-            "use_organisational_context": False,
-        }).json()
+        started = send_chat(
+            client,
+            route,
+            original,
+            "Measure https://example.com/category/ for pricing coverage",
+            "agentic-binding-start",
+        )
+        started = send_chat(
+            client, route, started, "Retail decision makers", "agentic-binding-audience",
+        )
+        started = send_chat(
+            client, route, started, "Find missing citations", "agentic-binding-outcome",
+        )
+        started = send_chat(
+            client, route, started, "Confirm", "agentic-binding-confirm",
+        )
         run_id = started["run_id"]
         second = client.post(
             f"/api/v2/projects/{project['project_id']}/conversations?run_id={run_id}",
@@ -462,7 +589,13 @@ def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
             ),
         ).json()
         assert saved_original["measurement_workflow"]["status"] == "completed"
-        assert [turn["origin"] for turn in saved_original["turns"]] == ["user", "workflow"]
+        assert [turn["origin"] for turn in saved_original["turns"]] == [
+            "user",
+            "user",
+            "user",
+            "user",
+            "workflow",
+        ]
         assert saved_second["turns"] == []
         repository.close()
 
@@ -501,6 +634,197 @@ def test_collecting_measurement_can_be_cancelled(tmp_path):
         assert cancelled.status_code == 200, cancelled.text
         assert cancelled.json()["measurement_workflow"] is None
         assert "cancelled" in cancelled.json()["turns"][-1]["answer"].lower()
+
+
+def test_domain_only_measurement_requires_scope_goal_audience_outcome_and_confirmation(tmp_path):
+    app = create_app(
+        tmp_path / "domain-chat.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post(
+            "/api/v2/projects",
+            json=project_payload(),
+        ).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+        ).json()
+        route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
+        )
+        conversation = send_chat(
+            client, route, conversation, "example.com", "domain-target",
+        )
+        assert conversation["run_id"] is None
+        assert conversation["measurement_workflow"]["pending_field"] == "target-kind"
+        conversation = send_chat(
+            client,
+            route,
+            conversation,
+            "A domain-level check for any of our brand URLs",
+            "domain-scope",
+        )
+        conversation = send_chat(
+            client, route, conversation, "Evaluate AI visibility", "domain-goal",
+        )
+        conversation = send_chat(
+            client, route, conversation, "Enterprise buyers", "domain-audience",
+        )
+        conversation = send_chat(
+            client,
+            route,
+            conversation,
+            "Establish whether owned URLs appear",
+            "domain-outcome",
+        )
+        assert conversation["measurement_workflow"]["status"] == "awaiting-confirmation"
+        assert client.get(
+            f"/api/v2/projects/{project['project_id']}/runs",
+        ).json() == []
+        conversation = send_chat(
+            client, route, conversation, "Confirm", "domain-confirm",
+        )
+        run = client.get(
+            f"/api/v2/projects/{project['project_id']}/runs",
+        ).json()[0]
+        assert conversation["run_id"] == run["run_id"]
+        assert run["brief"]["audience"] == "Enterprise buyers"
+        assert "Domain-level brand URL visibility" in run["brief"]["goal"]
+        assert "Establish whether owned URLs appear" in run["brief"]["goal"]
+        assert (
+            conversation["measurement_workflow"]["desired_outcome"]
+            == "Establish whether owned URLs appear"
+        )
+
+
+def test_complete_initial_prompt_parses_bare_domain_and_context_upfront(tmp_path):
+    app = create_app(
+        tmp_path / "upfront-domain-chat.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post(
+            "/api/v2/projects",
+            json=project_payload("Halfords", "www.halfords.com"),
+        ).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+        ).json()
+        route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
+        )
+        conversation = send_chat(
+            client,
+            route,
+            conversation,
+            (
+                "Please evaluate halfords.com - I'm looking to see if any of my "
+                "pages show up for any queries related to car enthusiasts."
+            ),
+            "upfront-domain-context",
+        )
+        workflow = conversation["measurement_workflow"]
+        assert workflow["status"] == "awaiting-confirmation"
+        assert workflow["url"] == "https://halfords.com/"
+        assert workflow["target_kind"] == "domain"
+        assert workflow["goal"] == "Evaluate AI visibility"
+        assert workflow["audience"] == "car enthusiasts"
+        assert workflow["desired_outcome"] == (
+            "See if any of my pages show up for any queries related to car enthusiasts"
+        )
+        assert "Please confirm this measurement setup" in conversation["turns"][-1]["answer"]
+
+
+def test_one_conversation_links_and_switches_between_project_runs(tmp_path):
+    app = create_app(
+        tmp_path / "multi-run-chat.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        first = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=inputs().brief.model_dump(mode="json"),
+        ).json()
+        second = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json={
+                **inputs().brief.model_dump(mode="json"),
+                "url": "https://example.com/other/",
+            },
+        ).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+            params={"run_id": first["run_id"]},
+        ).json()
+        route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
+        )
+        switched = send_chat(
+            client, route, conversation, second["run_id"], "switch-run",
+        )
+        assert switched["run_id"] == second["run_id"]
+        assert switched["linked_run_ids"] == [first["run_id"], second["run_id"]]
+
+
+def test_one_conversation_can_create_multiple_measurement_runs(tmp_path):
+    app = create_app(
+        tmp_path / "multi-created-run-chat.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+        ).json()
+        route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
+        )
+        conversation = start_chat_measurement(
+            client,
+            route,
+            conversation,
+            url="https://example.com/first/",
+            goal="Evaluate AI visibility",
+            audience="Enterprise buyers",
+            outcome="Find citation gaps",
+            key="first-run",
+        )
+        first_run_id = conversation["run_id"]
+        conversation = start_chat_measurement(
+            client,
+            route,
+            conversation,
+            url="https://example.com/second/",
+            goal="Evaluate crawlability",
+            audience="Technical evaluators",
+            outcome="Find crawlability blockers",
+            key="second-run",
+        )
+        second_run_id = conversation["run_id"]
+        assert second_run_id != first_run_id
+        assert conversation["linked_run_ids"] == [first_run_id, second_run_id]
+        assert len(conversation["measurement_workflows"]) == 2
+        assert len(client.get(
+            f"/api/v2/projects/{project['project_id']}/runs",
+        ).json()) == 2
+
+        compared = send_chat(
+            client,
+            route,
+            conversation,
+            f"Compare {first_run_id} and {second_run_id}",
+            "compare-runs",
+        )
+        assert compared["comparison_run_ids"] == [first_run_id, second_run_id]
 
 
 def test_new_chat_accepts_project_run_id_and_replay_does_not_duplicate(tmp_path):
@@ -757,9 +1081,13 @@ def test_project_scoped_results_reviews_and_artifacts_are_isolated(tmp_path):
         assert detail["available_actions"]["review_recommendations"] is True
         assert detail["available_actions"]["export"] is True
         assert client.get(f"{route}/events").status_code == 200
-        assert client.get(
+        evidence = client.get(
             f"{route}/evidence/q-1-alternative",
-        ).json()["evidence_id"] == "q-1-alternative"
+        ).json()
+        assert evidence["evidence_id"] == "q-1-alternative"
+        assert evidence["evidence_type"] == "grounding-citation"
+        assert evidence["query_id"] == "q-1"
+        assert evidence["grounding_query"] == "fixture search 1"
         assert client.get(
             f"{route}/evidence-assessment",
         ).json()["status"] == "ready"
@@ -810,6 +1138,13 @@ def test_project_scoped_results_reviews_and_artifacts_are_isolated(tmp_path):
         assert client.get(
             f"{wrong}/artifacts/{artifact['artifact_id']}",
         ).status_code == 404
+        artifact_files = list(
+            (database.parent / "measurement-artifacts" / ready.run_id).glob("*.zip")
+        )
+        assert len(artifact_files) == 1
+        assert client.delete(route).status_code == 204
+        assert not artifact_files[0].exists()
+        assert client.get(route).status_code == 404
 
 
 def test_project_chat_is_scoped_persistent_and_idempotent(tmp_path):
@@ -844,7 +1179,7 @@ def test_project_chat_is_scoped_persistent_and_idempotent(tmp_path):
         result = first.json()
         assert result["revision"] == 2
         assert result["turns"][0]["status"] == "failed"
-        assert "Foundry chat is not configured" in result["turns"][0]["error"]
+        assert "Organisational context is not enabled" in result["turns"][0]["error"]
         assert client.post(route, json=request).json() == result
         assert client.post(route, json={**request, "message": "Different"}).status_code == 409
 
@@ -854,6 +1189,160 @@ def test_project_chat_is_scoped_persistent_and_idempotent(tmp_path):
             f"{conversations}/{conversation['conversation_id']}",
             headers=bob_headers,
         ).status_code == 404
+
+
+def test_deleting_project_chat_retains_measurement_run(tmp_path):
+    app = create_app(
+        tmp_path / "delete-chat.sqlite3",
+        {ALICE_TOKEN: "alice", BOB_TOKEN: "bob"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        run = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=inputs().brief.model_dump(mode="json"),
+        ).json()
+        conversations = f"/api/v2/projects/{project['project_id']}/conversations"
+        conversation = client.post(
+            conversations,
+            params={"run_id": run["run_id"]},
+        ).json()
+        route = f"{conversations}/{conversation['conversation_id']}"
+
+        assert client.delete(
+            route,
+            headers=bob_headers(),
+        ).status_code == 404
+        assert client.delete(route).status_code == 204
+        assert client.get(route).status_code == 404
+        assert client.get(
+            f"/api/v2/projects/{project['project_id']}/runs/{run['run_id']}",
+        ).status_code == 200
+        assert client.delete(route).status_code == 404
+
+
+def test_deleting_measurement_run_reconciles_retained_chat(tmp_path):
+    app = create_app(
+        tmp_path / "delete-run.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        first = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=inputs().brief.model_dump(mode="json"),
+        ).json()
+        second = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json={
+                **inputs().brief.model_dump(mode="json"),
+                "url": "https://example.com/second/",
+            },
+        ).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+            params={"run_id": first["run_id"]},
+        ).json()
+        message_route = (
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}/messages"
+        )
+        conversation = send_chat(
+            client,
+            message_route,
+            conversation,
+            second["run_id"],
+            "switch-before-delete",
+        )
+        assert conversation["run_id"] == second["run_id"]
+
+        run_route = (
+            f"/api/v2/projects/{project['project_id']}/runs/{second['run_id']}"
+        )
+        assert client.delete(run_route).status_code == 204
+        assert client.get(run_route).status_code == 404
+        retained = client.get(
+            f"/api/v2/projects/{project['project_id']}/conversations/"
+            f"{conversation['conversation_id']}"
+        ).json()
+        assert retained["run_id"] is None
+        assert retained["linked_run_ids"] == [first["run_id"]]
+        assert second["run_id"] not in retained["bound_run_contexts"]
+        assert all(
+            workflow["run_id"] != second["run_id"]
+            for workflow in retained["measurement_workflows"]
+        )
+        assert client.get(
+            f"/api/v2/projects/{project['project_id']}/runs/{first['run_id']}",
+        ).status_code == 200
+
+
+def test_active_run_and_project_deletion_are_blocked(tmp_path):
+    database = tmp_path / "active-delete.sqlite3"
+    repository = SQLAlchemyMeasurementRepository(
+        f"sqlite:///{database}",
+        initialize_schema=True,
+    )
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    project = repository.create_project(
+        owner,
+        ProjectCreate.model_validate(project_payload()),
+    )
+    run = repository.create(owner, brief=inputs().brief, project_id=project.project_id)
+    repository.mutate(
+        run.run_id,
+        owner,
+        run.revision,
+        lambda current: current.model_copy(update={
+            "state": MeasurementState.PREPARING,
+            "events": (*current.events, MeasurementEvent(
+                sequence=len(current.events) + 1,
+                event_type="preparation-started",
+            )),
+        }),
+    )
+    app = create_app(database, {ALICE_TOKEN: "alice"}, measurement_policy=policy())
+
+    with TestClient(app, headers=alice_headers()) as client:
+        run_route = f"/api/v2/projects/{project.project_id}/runs/{run.run_id}"
+        assert client.delete(run_route).status_code == 409
+        assert client.delete(f"/api/v2/projects/{project.project_id}").status_code == 409
+        assert client.get(run_route).status_code == 200
+        assert client.get(f"/api/v2/projects/{project.project_id}").status_code == 200
+
+
+def test_deleting_project_cascades_chats_and_measurements(tmp_path):
+    database = tmp_path / "delete-project.sqlite3"
+    app = create_app(
+        database,
+        {ALICE_TOKEN: "alice", BOB_TOKEN: "bob"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post("/api/v2/projects", json=project_payload()).json()
+        run = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=inputs().brief.model_dump(mode="json"),
+        ).json()
+        conversation = client.post(
+            f"/api/v2/projects/{project['project_id']}/conversations",
+            params={"run_id": run["run_id"]},
+        ).json()
+        project_route = f"/api/v2/projects/{project['project_id']}"
+
+        assert client.delete(
+            project_route,
+            headers=bob_headers(),
+        ).status_code == 404
+        assert client.delete(project_route).status_code == 204
+        assert client.get(project_route).status_code == 404
+        assert client.get(f"{project_route}/runs/{run['run_id']}").status_code == 404
+        assert client.get(
+            f"{project_route}/conversations/{conversation['conversation_id']}",
+        ).status_code == 404
+        assert client.delete(project_route).status_code == 404
 
 
 def test_project_chat_persists_unexpected_agent_failure(tmp_path):
