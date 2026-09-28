@@ -20,7 +20,7 @@ from geo_agent.project_chat import (
     ProjectConversationStore,
     ProjectMeasurementWorkflow,
 )
-from geo_agent.projects import Project
+from geo_agent.projects import Project, host_in_domains
 from geo_agent.workflow import Conflict, NotFound
 
 
@@ -62,19 +62,12 @@ PAGE_SCOPE_PATTERN = re.compile(
 
 def _in_project(url: str, project: Project) -> bool:
     parsed = urlsplit(url)
-    host = (parsed.hostname or "").lower().rstrip(".").removeprefix("www.")
     return (
         parsed.scheme in {"http", "https"}
         and parsed.username is None
         and parsed.password is None
         and parsed.fragment == ""
-        and any(
-            host == domain.casefold().rstrip(".").removeprefix("www.")
-            or host.endswith(
-                f".{domain.casefold().rstrip('.').removeprefix('www.')}"
-            )
-            for domain in project.domains
-        )
+        and host_in_domains(parsed.hostname or "", project.domains)
     )
 
 
@@ -482,14 +475,26 @@ class ProjectMeasurementChatWorkflow:
             goal=goal,
             locale=project.default_locale,
         )
-        _, run = self.orchestrator.start(
-            project,
-            brief,
-            idempotency_key=(
-                f"chat-{conversation.conversation_id}-"
-                f"{existing.source_idempotency_key}-prepare"
-            ),
-        )
+        try:
+            _, run = self.orchestrator.start(
+                project,
+                brief,
+                idempotency_key=(
+                    f"chat-{conversation.conversation_id}-"
+                    f"{existing.source_idempotency_key}-prepare"
+                ),
+            )
+        except ValueError as failure:
+            workflow = existing.model_copy(update={
+                "status": "collecting",
+                "pending_field": "target",
+                "error": str(failure),
+            })
+            conversation = self.store.update_active(conversation, workflow=workflow)
+            return conversation, self._workflow_reply(
+                f"The measurement could not be started: {failure}. "
+                "Please provide a different page and confirm again."
+            )
         workflow = existing.model_copy(update={
             "status": "preparing",
             "url": str(brief.url),

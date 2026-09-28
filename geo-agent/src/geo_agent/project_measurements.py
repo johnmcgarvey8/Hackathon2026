@@ -9,7 +9,11 @@ from geo_agent.measurement_workflow import (
     MeasurementState,
 )
 from geo_agent.preparation import PreparationRequest
-from geo_agent.projects import Project, ProjectMeasurementRepository
+from geo_agent.projects import (
+    Project,
+    ProjectMeasurementRepository,
+    host_in_domains,
+)
 from geo_agent.workflow import Conflict
 
 
@@ -35,10 +39,8 @@ class ProjectMeasurementOrchestrator:
             raise Conflict("Archived projects cannot create measurement runs")
         if brief.locale != project.default_locale:
             raise ValueError("Brief locale must match the project locale")
-        host = (brief.url.host or "").casefold()
-        if host not in project.domains and not any(
-            host.endswith(f".{domain}") for domain in project.domains
-        ):
+        host = brief.url.host or ""
+        if not host_in_domains(host, project.domains):
             raise ValueError("Brief URL must belong to the project")
         policy.validate_brief(brief, project_bound=True)
 

@@ -861,7 +861,7 @@ class ProjectChatService:
             )
             raise
         except Exception:
-            logger.error(
+            logger.exception(
                 "Project agent request failed for conversation %s",
                 conversation_id,
             )

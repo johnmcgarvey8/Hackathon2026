@@ -36,7 +36,13 @@ from geo_agent.measurement_workflow import (
     OwnerIdentity,
 )
 from geo_agent.preparation import PreparationRequest
-from geo_agent.projects import Project, ProjectCreate, ProjectMeasurementRepository, ProjectUpdate
+from geo_agent.projects import (
+    Project,
+    ProjectCreate,
+    ProjectMeasurementRepository,
+    ProjectUpdate,
+    host_in_domains,
+)
 from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.recommendations import build_content_strategy
 from geo_agent.run_view import build_run_view, job_view
@@ -235,9 +241,7 @@ def create_project_router(
         brief = Brief.model_validate(body.model_dump())
         if brief.locale != project.default_locale:
             raise HTTPException(422, "Brief locale must match the project locale")
-        if brief.url.host not in project.domains and not any(
-            brief.url.host.endswith(f".{domain}") for domain in project.domains
-        ):
+        if not host_in_domains(brief.url.host or "", project.domains):
             raise HTTPException(422, "Brief URL must belong to the project")
         execution_policy.validate_brief(brief, project_bound=True)
         run = repository.create(
@@ -306,10 +310,7 @@ def create_project_router(
             goal=body.raw_goal,
             locale=project.default_locale,
         )
-        if preview_brief.url.host not in project.domains and not any(
-            preview_brief.url.host.endswith(f".{domain}")
-            for domain in project.domains
-        ):
+        if not host_in_domains(preview_brief.url.host or "", project.domains):
             raise HTTPException(422, "Goal summary URL must belong to the project")
         result = await goal_summaries.summarize(project, owner, body)
         return result.model_dump(mode="json")

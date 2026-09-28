@@ -29,6 +29,21 @@ def normalize_domain(value: str) -> str:
     return parsed.hostname.rstrip(".")
 
 
+def canonical_host(value: str) -> str:
+    return value.strip().casefold().rstrip(".").removeprefix("www.")
+
+
+def host_in_domains(host: str, domains: tuple[str, ...]) -> bool:
+    candidate = canonical_host(host)
+    if not candidate:
+        return False
+    return any(
+        candidate == normalized or candidate.endswith(f".{normalized}")
+        for normalized in (canonical_host(domain) for domain in domains)
+        if normalized
+    )
+
+
 class FoundryProjectBinding(Contract):
     project_endpoint: str = Field(min_length=1, max_length=1000)
     agent_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")

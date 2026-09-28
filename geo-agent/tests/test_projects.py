@@ -233,6 +233,43 @@ def test_project_briefs_bind_runs_and_prevent_cross_project_access(tmp_path):
         assert wrong_domain.json()["detail"] == "Brief URL must belong to the project"
 
 
+def test_brief_domain_matching_ignores_www_prefix_and_host_casing(tmp_path):
+    app = create_app(
+        tmp_path / "project-www.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        project = client.post(
+            "/api/v2/projects",
+            json=project_payload("WWW Brand", "www.example.com"),
+        ).json()
+        brief = inputs().brief.model_dump(mode="json")
+        brief["url"] = "https://Example.com/visit"
+
+        created = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=brief,
+        )
+        assert created.status_code == 201, created.text
+
+        subdomain = inputs().brief.model_dump(mode="json")
+        subdomain["url"] = "https://shop.example.com/visit"
+        assert client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=subdomain,
+        ).status_code == 201
+
+        unrelated = inputs().brief.model_dump(mode="json")
+        unrelated["url"] = "https://notexample.com/visit"
+        rejected = client.post(
+            f"/api/v2/projects/{project['project_id']}/briefs",
+            json=unrelated,
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"] == "Brief URL must belong to the project"
+
+
 def test_project_bound_policy_derives_scope_from_each_saved_project(tmp_path):
     app = create_app(
         tmp_path / "project-bound-policy.sqlite3",
