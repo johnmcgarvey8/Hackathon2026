@@ -105,7 +105,10 @@ def test_mock_preparation_runs_exactly_three_claimed_operations(tmp_path, manual
     if manual:
         assert record.definition == manual_definition and record.source == "manual"
     elif infer_brand:
-        assert record.definition == saved.page_analysis.brand.definition
+        assert (
+            record.definition.model_dump(mode="json")
+            == saved.page_analysis.brand.definition.model_dump(mode="json")
+        )
         assert record.source == "page-analysis" and record.definition_version == 1
     else:
         assert record is None
@@ -188,3 +191,36 @@ def test_live_policy_fails_closed_without_budget_and_roster():
     base = policy().model_dump()
     with pytest.raises(ValidationError, match="approved budget and a one- or three-profile roster"):
         MeasurementExecutionPolicy.model_validate({**base, "execution_mode": "live"})
+
+
+def test_project_preparation_rejects_mock_policy_before_any_provider_call(tmp_path):
+    prepared = inputs()
+    repository = SQLiteMeasurementRepository(tmp_path / "project-mock-rejected.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    request = PreparationRequest(
+        brief=prepared.brief,
+        confirm_preparation_calls=True,
+        project_bound=True,
+    )
+    draft = repository.create(owner, brief=prepared.brief)
+    JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "project-mock-rejected",
+        request,
+    )
+    browse = FakeBrowse(prepared.snapshot)
+    foundry = FakeFoundry(prepared.query_plan)
+
+    job, run = Worker(
+        repository,
+        "worker-a",
+        {JobType.PREPARE: PreparationHandler(policy(), browse, foundry, foundry)},
+    ).run_once()
+
+    assert job.state == JobState.FAILED
+    assert job.error_code == "Conflict"
+    assert run.state == MeasurementState.NEEDS_REVIEW
+    assert (browse.calls, foundry.analysis_calls, foundry.plan_calls) == (0, 0, 0)

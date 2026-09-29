@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 import httpx
 from anthropic import APIError, AnthropicError, AnthropicFoundry
 
-from geo_agent.contracts import EvaluationResult, Provenance, Query, SimulationProfile, Source
+from geo_agent.contracts import EvaluationResult, EvaluatorProfile, Provenance, Query, Source
 from geo_agent.foundry import Answer, EVALUATOR_PROMPT, Foundry, azure_cli_token, model_base_url
 from geo_agent.webiq import ProviderError
 
@@ -30,20 +30,20 @@ COPILOT_GAP_CLOSING_INSTRUCTIONS = (
 )
 
 
-def simulation_instructions(style: Literal["chatgpt-style", "claude-backed", "copilot-style"]) -> str:
+def evaluator_instructions(style: Literal["chatgpt-style", "claude-backed", "copilot-style"]) -> str:
     styles = {
         "chatgpt-style": "Use a direct, conversational answer with brief practical comparisons.",
         "claude-backed": "Use a careful explanatory answer, making uncertainty explicit.",
         "copilot-style": COPILOT_GAP_CLOSING_INSTRUCTIONS,
     }
     if style not in styles:
-        raise ProviderError("Unsupported simulation style")
+        raise ProviderError("Unsupported evaluator style")
     return f"{EVALUATOR_PROMPT}\n\n{styles[style]}\n\n{EVALUATION_GUARD}"
 
 
-def validate_simulation_profile(profile: SimulationProfile) -> SimulationProfile:
+def validate_evaluator_profile(profile: EvaluatorProfile) -> EvaluatorProfile:
     try:
-        validated = SimulationProfile.model_validate(profile.model_dump())
+        validated = EvaluatorProfile.model_validate(profile.model_dump())
         if validated != profile or not profile.instructions.endswith(f"\n\n{EVALUATION_GUARD}"):
             raise ValueError
         parsed = urlsplit(profile.endpoint)
@@ -56,8 +56,13 @@ def validate_simulation_profile(profile: SimulationProfile) -> SimulationProfile
         if profile.provider == "openai-responses" and model_base_url(profile.endpoint) != profile.endpoint:
             raise ValueError
     except (AttributeError, TypeError, ValueError):
-        raise ProviderError("Invalid simulation profile: require matching provider, canonical endpoint and approved evaluation guard") from None
+        raise ProviderError("Invalid evaluator profile: require matching provider, canonical endpoint and approved evaluation guard") from None
     return profile
+
+
+# Backwards-compatible names for saved integrations and isolated tests.
+simulation_instructions = evaluator_instructions
+validate_simulation_profile = validate_evaluator_profile
 
 
 def _evaluation_payload(query: Query, locale: str, sources: tuple[Source, ...]) -> dict:
@@ -92,7 +97,7 @@ def _safe_token_provider(provider: Callable[[], str]) -> Callable[[], str]:
     return acquire
 
 
-def _result(profile: SimulationProfile, query: Query, sources: tuple[Source, ...], answer: Answer,
+def _result(profile: EvaluatorProfile, query: Query, sources: tuple[Source, ...], answer: Answer,
             metadata: dict) -> EvaluationResult:
     try:
         if not metadata["model"] or not metadata["response_id"]:
@@ -110,22 +115,22 @@ def _result(profile: SimulationProfile, query: Query, sources: tuple[Source, ...
 
 class Evaluator(Protocol):
     @property
-    def profile(self) -> SimulationProfile: ...
+    def profile(self) -> EvaluatorProfile: ...
 
     def evaluate(self, query: Query, locale: str, sources: tuple[Source, ...]) -> EvaluationResult: ...
 
 
 class OpenAIResponsesEvaluator:
-    def __init__(self, profile: SimulationProfile, *, token_provider: Callable[[], str] = azure_cli_token,
+    def __init__(self, profile: EvaluatorProfile, *, token_provider: Callable[[], str] = azure_cli_token,
                  transport: httpx.BaseTransport | None = None):
-        self._profile = validate_simulation_profile(profile)
+        self._profile = validate_evaluator_profile(profile)
         if profile.provider != "openai-responses":
             raise ProviderError("OpenAI evaluator requires an openai-responses profile")
         self._foundry = Foundry(profile.endpoint, profile.deployment,
                                 token_provider=_safe_token_provider(token_provider), transport=transport)
 
     @property
-    def profile(self) -> SimulationProfile:
+    def profile(self) -> EvaluatorProfile:
         return self._profile
 
     def evaluate(self, query: Query, locale: str, sources: tuple[Source, ...]) -> EvaluationResult:
@@ -147,16 +152,16 @@ class OpenAIResponsesEvaluator:
 
 
 class ClaudeMessagesEvaluator:
-    def __init__(self, profile: SimulationProfile, *, token_provider: Callable[[], str] = azure_cli_token,
+    def __init__(self, profile: EvaluatorProfile, *, token_provider: Callable[[], str] = azure_cli_token,
                  transport: httpx.BaseTransport | None = None):
-        self._profile = validate_simulation_profile(profile)
+        self._profile = validate_evaluator_profile(profile)
         if profile.provider != "anthropic-messages":
             raise ProviderError("Claude evaluator requires an anthropic-messages profile")
         self._token_provider = _safe_token_provider(token_provider)
         self._transport = transport
 
     @property
-    def profile(self) -> SimulationProfile:
+    def profile(self) -> EvaluatorProfile:
         return self._profile
 
     def evaluate(self, query: Query, locale: str, sources: tuple[Source, ...]) -> EvaluationResult:
@@ -192,9 +197,9 @@ class ClaudeMessagesEvaluator:
             raise ProviderError("Claude output or client configuration failed validation") from None
 
 
-def create_evaluator(profile: SimulationProfile, *, token_provider: Callable[[], str] = azure_cli_token,
+def create_evaluator(profile: EvaluatorProfile, *, token_provider: Callable[[], str] = azure_cli_token,
                      transport: httpx.BaseTransport | None = None) -> Evaluator:
-    validate_simulation_profile(profile)
+    validate_evaluator_profile(profile)
     if profile.provider == "openai-responses":
         return OpenAIResponsesEvaluator(profile, token_provider=token_provider, transport=transport)
     return ClaudeMessagesEvaluator(profile, token_provider=token_provider, transport=transport)

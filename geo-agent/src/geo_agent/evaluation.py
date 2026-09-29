@@ -133,6 +133,7 @@ def measurement_scores(measurement: MeasurementResults) -> dict:
                 "status": outcome.status if outcome is not None else "missing",
                 "exact_page_cited": any(match.kind == "exact-page" for match in matches) if completed else None,
                 "same_domain_citation_count": sum(match.kind == "same-domain-other-page" for match in matches),
+                "other_page_citation_count": sum(match.kind == "other-page" for match in matches),
                 "unsupported_citation_ids": [match.evidence_id for match in matches if match.kind == "unsupported"],
                 "raw_url_mentioned": answer_mentions_target(outcome.answer, target) if completed else False,
             })

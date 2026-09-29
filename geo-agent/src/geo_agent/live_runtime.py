@@ -4,7 +4,7 @@ import httpx
 
 from geo_agent.evaluation_workflow import EvaluationHandler
 from geo_agent.execution_policy import MeasurementExecutionPolicy
-from geo_agent.foundry import Foundry, azure_cli_token
+from geo_agent.foundry import Foundry, azure_cli_token, model_base_url
 from geo_agent.jobs import JobType
 from geo_agent.measurement_budget import MeasurementBudgetGrant
 from geo_agent.persistence import SQLAlchemyMeasurementRepository
@@ -21,7 +21,8 @@ class LiveMeasurementRuntime:
         repository: SQLAlchemyMeasurementRepository,
         policy: MeasurementExecutionPolicy,
         *,
-        budget_grant: MeasurementBudgetGrant,
+        budget_grant: MeasurementBudgetGrant | tuple[MeasurementBudgetGrant, ...],
+        enforce_budget: bool = True,
         webiq_api_key: str,
         preparation_endpoint: str,
         preparation_deployment: str,
@@ -30,10 +31,22 @@ class LiveMeasurementRuntime:
         foundry_transport: httpx.BaseTransport | None = None,
         webiq_url_validator: Callable[[str], str] | None = None,
         worker_id: str = "local-live-worker",
+        on_job_finished=None,
     ):
         if policy.execution_mode != "live":
             raise ValueError("The live measurement runtime requires a live execution policy")
-        repository.bind_measurement_budget(budget_grant, policy)
+        preparation_base_url = model_base_url(preparation_endpoint)
+        if any(
+            profile.provider == "openai-responses"
+            and profile.endpoint != preparation_base_url
+            for profile in policy.profiles
+        ):
+            raise ValueError(
+                "OpenAI evaluator profiles must use the environment-configured Azure OpenAI endpoint"
+            )
+        grants = budget_grant if isinstance(budget_grant, tuple) else (budget_grant,)
+        repository.bind_measurement_budgets(grants, policy)
+        repository.set_measurement_budget_enforcement(enforce_budget)
         webiq_options = {"url_validator": webiq_url_validator} if webiq_url_validator is not None else {}
         webiq = WebIQ(webiq_api_key, transport=webiq_transport, **webiq_options)
         preparation = Foundry(

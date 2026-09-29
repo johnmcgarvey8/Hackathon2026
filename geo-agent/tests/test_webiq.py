@@ -28,6 +28,58 @@ def test_browse_contract_and_provenance():
     assert snapshot.provider_trace_id == "trace-browse"
 
 
+def test_browse_accepts_apex_to_www_canonicalisation():
+    easyjet_brief = Brief(
+        url="https://easyjet.com/",
+        audience="Travellers",
+        goal="Book a flight",
+        locale="en-GB",
+    )
+    provider = WebIQ(
+        "dummy-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "url": "https://www.easyjet.com/",
+                    "content": "Live airline page evidence",
+                },
+            )
+        ),
+        url_validator=lambda value: value,
+    )
+
+    snapshot = provider.browse(easyjet_brief)
+
+    assert str(snapshot.url) == "https://easyjet.com/"
+
+
+def test_browse_accepts_removed_tracking_query_but_not_content_query():
+    tracked_brief = Brief(
+        url="https://www.easyjet.com/flights?msockid=tracking-value",
+        audience="Travellers",
+        goal="Book a flight",
+        locale="en-GB",
+    )
+    provider = WebIQ(
+        "dummy-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"url": "https://www.easyjet.com/flights", "content": "Live flights"},
+            )
+        ),
+        url_validator=lambda value: value,
+    )
+    assert provider.browse(tracked_brief).provenance == "live"
+
+    content_brief = tracked_brief.model_copy(
+        update={"url": "https://www.easyjet.com/flights?destination=majorca"}
+    )
+    with pytest.raises(ProviderError, match="different page"):
+        provider.browse(content_brief)
+
+
 def test_search_uses_bounded_passages_and_trace():
     def handler(request):
         assert str(request.url) == SEARCH_ENDPOINT

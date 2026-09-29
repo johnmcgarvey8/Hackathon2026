@@ -349,7 +349,8 @@ def test_measurement_compares_only_common_completed_queries():
                    if (item["query_id"], item["profile_id"]) == ("q-4", "copilot-style"))
     assert missing == {
         "query_id": "q-4", "profile_id": "copilot-style", "status": "missing", "exact_page_cited": None,
-        "same_domain_citation_count": 0, "unsupported_citation_ids": [], "raw_url_mentioned": False,
+        "same_domain_citation_count": 0, "other_page_citation_count": 0,
+        "unsupported_citation_ids": [], "raw_url_mentioned": False,
     }
 
 
@@ -455,11 +456,37 @@ def test_measurement_answer_details_separate_citations_and_raw_mentions(
     scores = measurement_scores(measurement)
     assert scores["by_answer"][0] == {
         "query_id": "q-1", "profile_id": "chatgpt-style", "status": "completed", "exact_page_cited": exact,
-        "same_domain_citation_count": same_domain, "unsupported_citation_ids": unsupported, "raw_url_mentioned": mentioned,
+        "same_domain_citation_count": same_domain, "other_page_citation_count": 0,
+        "unsupported_citation_ids": unsupported, "raw_url_mentioned": mentioned,
     }
     assert scores["overall"]["numerator"] == int(exact)
     assert scores["overall"]["score"] == (7 if exact else 0)
     assert measurement.model_dump(mode="json") == before
+
+
+def test_measurement_answer_details_report_other_domain_citations():
+    measurement = measurement_fixture(
+        cited_queries=(),
+        source_urls={
+            "q-1": (
+                TARGET,
+                HttpUrl("https://other.example/page"),
+            ),
+        },
+    )
+    changed = measurement.results[0].model_copy(
+        update={"citation_ids": ("q-1-source-2",)},
+    )
+    measurement = measurement.model_copy(
+        update={"results": (changed, *measurement.results[1:])},
+    )
+
+    finding = measurement_scores(measurement)["by_answer"][0]
+
+    assert finding["exact_page_cited"] is False
+    assert finding["same_domain_citation_count"] == 0
+    assert finding["other_page_citation_count"] == 1
+    assert finding["unsupported_citation_ids"] == []
 
 
 @pytest.mark.parametrize("answer", [

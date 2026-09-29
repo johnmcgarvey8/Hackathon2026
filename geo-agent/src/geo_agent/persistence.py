@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete as sql_delete,
     event,
     func,
     insert,
@@ -52,11 +53,24 @@ from geo_agent.measurement_workflow import (
     Mutation,
     OwnerIdentity,
 )
+from geo_agent.projects import Project, ProjectCreate, ProjectUpdate
 from geo_agent.workflow import Conflict, NotFound
 
 
 metadata = MetaData()
 LATEST_SCHEMA_REVISION = "0005_nullable_export_reservations"
+
+projects = Table(
+    "projects",
+    metadata,
+    Column("project_id", String(64), primary_key=True),
+    Column("owner_key", String(64), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Index("ix_projects_owner_updated", "owner_key", "updated_at"),
+)
 
 measurement_runs = Table(
     "measurement_runs",
@@ -70,6 +84,96 @@ measurement_runs = Table(
     Column("summary_payload", Text, nullable=False),
     Column("payload", Text, nullable=False),
     Index("ix_measurement_runs_owner_updated", "owner_key", "updated_at", "run_id"),
+)
+
+project_runs = Table(
+    "project_runs",
+    metadata,
+    Column("project_id", String(64), ForeignKey("projects.project_id"), primary_key=True),
+    Column("run_id", String(64), ForeignKey("measurement_runs.run_id"), primary_key=True),
+    Column("owner_key", String(64), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    UniqueConstraint("run_id", name="uq_project_runs_run"),
+    Index("ix_project_runs_project", "project_id", "created_at"),
+)
+
+project_conversations = Table(
+    "project_conversations",
+    metadata,
+    Column("conversation_id", String(64), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("run_id", String(64), ForeignKey("measurement_runs.run_id")),
+    Column("owner_key", String(64), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Index("ix_project_conversations_project_updated", "project_id", "owner_key", "updated_at"),
+)
+
+project_conversation_runs = Table(
+    "project_conversation_runs",
+    metadata,
+    Column(
+        "conversation_id",
+        String(64),
+        ForeignKey("project_conversations.conversation_id"),
+        primary_key=True,
+    ),
+    Column(
+        "run_id",
+        String(64),
+        ForeignKey("measurement_runs.run_id"),
+        primary_key=True,
+    ),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("owner_key", String(64), nullable=False),
+    Column("linked_at", String(40), nullable=False),
+    Index(
+        "ix_project_conversation_runs_project",
+        "project_id",
+        "owner_key",
+        "linked_at",
+    ),
+)
+
+project_agent_budgets = Table(
+    "project_agent_budgets",
+    metadata,
+    Column("owner_key", String(64), primary_key=True),
+    Column("request_limit", Integer, nullable=False),
+    Column("used", Integer, nullable=False),
+)
+
+project_llm_operations = Table(
+    "project_llm_operations",
+    metadata,
+    Column("operation_id", String(64), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.project_id"), nullable=False),
+    Column("owner_key", String(64), nullable=False),
+    Column("operation_type", String(64), nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("input_hash", String(64), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("summary", Text),
+    Column("provider_response_id", String(500)),
+    Column("fallback_used", Integer, nullable=False),
+    Column("usage_payload", Text, nullable=False),
+    Column("error_code", String(100)),
+    Column("created_at", String(40), nullable=False),
+    Column("completed_at", String(40)),
+    UniqueConstraint(
+        "owner_key",
+        "operation_type",
+        "idempotency_key",
+        name="uq_project_llm_operations_owner_type_key",
+    ),
+    Index(
+        "ix_project_llm_operations_project_created",
+        "project_id",
+        "owner_key",
+        "created_at",
+    ),
 )
 
 run_brand_definitions = Table(
@@ -288,9 +392,17 @@ agent_capabilities = Table(
 
 
 class SQLAlchemyMeasurementRepository(MeasurementRepository):
+    _ACTIVE_DELETION_STATES = frozenset({
+        MeasurementState.PREPARING,
+        MeasurementState.QUEUED,
+        MeasurementState.EVALUATING,
+        MeasurementState.RECOMMENDING,
+    })
+
     def __init__(self, database_url: str, *, initialize_schema: bool = False):
         self.engine = create_engine(database_url)
         self._measurement_budget_binding: tuple[str, str, str] | None = None
+        self._measurement_budget_enforced = True
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", self._enable_sqlite_foreign_keys)
         if initialize_schema:
@@ -331,6 +443,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         inputs: MeasurementInputs | None = None,
         brief: Brief | None = None,
         brand_definition: BrandDefinition | None = None,
+        project_id: str | None = None,
     ) -> MeasurementRun:
         created_event = self._event("awaiting-query-approval" if inputs else "draft")
         run = MeasurementRun(
@@ -341,6 +454,10 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             events=(created_event,),
         )
         with self.engine.begin() as connection:
+            if project_id is not None:
+                self._read_project(connection, project_id, owner)
+                if inputs is not None:
+                    self._require_live_project_run(run)
             connection.execute(insert(measurement_runs).values(
                 run_id=run.run_id,
                 owner_key=owner.key,
@@ -350,6 +467,13 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             if brand_definition is not None:
                 self._insert_brand_definition(connection, owner, BrandDefinitionRecord(
                     run_id=run.run_id, definition_version=1, definition=brand_definition))
+            if project_id is not None:
+                connection.execute(insert(project_runs).values(
+                    project_id=project_id,
+                    run_id=run.run_id,
+                    owner_key=owner.key,
+                    created_at=run.created_at.isoformat(),
+                ))
         return run
 
     def create_idempotent(
@@ -965,6 +1089,10 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             raise Conflict("The repository owns measurement revisions")
         if candidate.events[:len(current.events)] != current.events:
             raise Conflict("Measurement events are append-only")
+        if inspect(connection).has_table(project_runs.name) and connection.execute(
+            select(project_runs.c.run_id).where(project_runs.c.run_id == current.run_id)
+        ).scalar_one_or_none() is not None:
+            self._require_live_project_run(candidate)
         updated = MeasurementRun.model_validate({
             **candidate.model_dump(),
             "revision": current.revision + 1,
@@ -1156,13 +1284,19 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             if current.revision != revision:
                 raise Conflict("Stale measurement revision; reload the run")
             if job_type == JobType.PREPARE:
-                if current.state != MeasurementState.DRAFT:
-                    raise Conflict("Preparation can only be queued for a draft run")
+                recoverable_failure = (
+                    current.state == MeasurementState.NEEDS_REVIEW
+                    and current.inputs is None
+                )
+                if current.state != MeasurementState.DRAFT and not recoverable_failure:
+                    raise Conflict(
+                        "Preparation can only be queued for a draft or recoverable failed run"
+                    )
                 next_state = MeasurementState.PREPARING
                 event_type = "preparation-queued"
-            else:
+            elif job_type == JobType.EVALUATE:
                 if current.state != MeasurementState.AWAITING_APPROVAL or current.approval is None:
-                    raise Conflict("Evaluation requires current human query approval")
+                    raise Conflict("Evaluation requires the current automatic query binding")
                 next_state = MeasurementState.QUEUED
                 event_type = "evaluation-queued"
             self._lock_admission(connection)
@@ -1414,7 +1548,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             run = self._read(connection, job.run_id, job.owner)
             if run.revision != job.run_revision:
                 raise Conflict("Queued job is bound to a stale measurement revision")
-            if job.job_type == JobType.EVALUATE:
+            if job.job_type in {JobType.EVALUATE, JobType.RECOVER_EVALUATORS}:
                 run = self._mutate_run(
                     connection,
                     run,
@@ -1564,9 +1698,9 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         policy: MeasurementExecutionPolicy,
     ) -> None:
         grant.validate_for(policy)
-        binding = (grant.grant_id, grant.policy_id, grant.policy_hash)
+        binding = (grant.policy_id, grant.policy_hash, grant.owner.key)
         if self._measurement_budget_binding not in {None, binding}:
-            raise Conflict("Repository is already bound to a different measurement budget")
+            raise Conflict("Repository is already bound to a different measurement policy or owner")
         with self.engine.begin() as connection:
             mutated_policy = connection.execute(
                 select(measurement_budget_grants.c.grant_id).where(
@@ -1605,37 +1739,127 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 ])
         self._measurement_budget_binding = binding
 
+    def bind_measurement_budgets(
+        self,
+        grants: tuple[MeasurementBudgetGrant, ...],
+        policy: MeasurementExecutionPolicy,
+    ) -> None:
+        if not grants:
+            raise Conflict("At least one measurement budget grant is required")
+        for grant in grants:
+            self.bind_measurement_budget(grant, policy)
+
+    def set_measurement_budget_enforcement(self, enforced: bool) -> None:
+        self._measurement_budget_enforced = enforced
+
+    def measurement_capacity(
+        self,
+        owner: OwnerIdentity,
+        policy: MeasurementExecutionPolicy,
+    ) -> MeasurementCapacity:
+        totals = {
+            operation_type: {"allowance": 0, "consumed": 0}
+            for operation_type, _ in MeasurementOperationAllowances().items()
+        }
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(
+                    measurement_budget_usage.c.operation_type,
+                    measurement_budget_usage.c.allowance,
+                    measurement_budget_usage.c.consumed,
+                )
+                .select_from(
+                    measurement_budget_usage.join(
+                        measurement_budget_grants,
+                        measurement_budget_usage.c.grant_id
+                        == measurement_budget_grants.c.grant_id,
+                    )
+                )
+                .where(
+                    measurement_budget_grants.c.policy_id == policy.policy_id,
+                    measurement_budget_grants.c.policy_hash == policy.policy_hash,
+                    measurement_budget_grants.c.owner_key == owner.key,
+                )
+            ).all()
+        for operation_type, allowance, consumed in rows:
+            if operation_type in totals:
+                totals[operation_type]["allowance"] += allowance
+                totals[operation_type]["consumed"] += consumed
+        operations = {
+            operation_type: MeasurementOperationCapacity(
+                allowance=values["allowance"],
+                consumed=values["consumed"],
+                remaining=max(0, values["allowance"] - values["consumed"]),
+            )
+            for operation_type, values in totals.items()
+        }
+        runs = operations["webiq-browse"]
+        return MeasurementCapacity(
+            authorized_runs=runs.allowance,
+            consumed_runs=runs.consumed,
+            remaining_runs=runs.remaining,
+            exhausted=runs.remaining == 0,
+            operations=operations,
+        )
+
     def _consume_measurement_budget(
         self,
         connection: Connection,
         job: WorkflowJob,
         operation_type: str,
     ) -> str | None:
-        if self._measurement_budget_binding is None:
+        if self._measurement_budget_binding is None or not self._measurement_budget_enforced:
             return None
-        grant_id, policy_id, policy_hash = self._measurement_budget_binding
-        grant_row = connection.execute(
-            select(measurement_budget_grants).where(
-                measurement_budget_grants.c.grant_id == grant_id,
+        policy_id, policy_hash, owner_key = self._measurement_budget_binding
+        if owner_key != job.owner.key:
+            raise Conflict("Measurement budget does not authorise this job")
+        candidates = connection.execute(
+            select(measurement_budget_usage.c.grant_id)
+            .select_from(
+                measurement_budget_usage.join(
+                    measurement_budget_grants,
+                    measurement_budget_usage.c.grant_id == measurement_budget_grants.c.grant_id,
+                )
+            )
+            .where(
                 measurement_budget_grants.c.policy_id == policy_id,
                 measurement_budget_grants.c.policy_hash == policy_hash,
-                measurement_budget_grants.c.owner_key == job.owner.key,
-            )
-        ).first()
-        if grant_row is None:
-            raise Conflict("Measurement budget does not authorise this job")
-        consumed = connection.execute(
-            update(measurement_budget_usage)
-            .where(
-                measurement_budget_usage.c.grant_id == grant_id,
+                measurement_budget_grants.c.owner_key == owner_key,
                 measurement_budget_usage.c.operation_type == operation_type,
                 measurement_budget_usage.c.consumed < measurement_budget_usage.c.allowance,
             )
-            .values(consumed=measurement_budget_usage.c.consumed + 1)
-        )
-        if consumed.rowcount != 1:
-            raise Conflict("Measurement operation allowance is exhausted or not authorised")
-        return grant_id
+            .order_by(
+                measurement_budget_grants.c.approved_at,
+                measurement_budget_grants.c.grant_id,
+            )
+        ).scalars().all()
+        for grant_id in candidates:
+            consumed = connection.execute(
+                update(measurement_budget_usage)
+                .where(
+                    measurement_budget_usage.c.grant_id == grant_id,
+                    measurement_budget_usage.c.operation_type == operation_type,
+                    measurement_budget_usage.c.consumed < measurement_budget_usage.c.allowance,
+                )
+                .values(consumed=measurement_budget_usage.c.consumed + 1)
+            )
+            if consumed.rowcount == 1:
+                return grant_id
+        raise Conflict("Measurement operation allowance is exhausted or not authorised")
+
+    @staticmethod
+    def _require_live_project_run(run: MeasurementRun) -> None:
+        try:
+            if run.inputs is not None:
+                run.inputs.validate_live()
+            if run.measurement is not None:
+                run.measurement.validate_live()
+            if run.recommendations is not None:
+                if run.measurement is None:
+                    raise ValueError("Project recommendations require a saved live measurement")
+                run.measurement.validate_live()
+        except ValueError as error:
+            raise Conflict(str(error)) from None
 
     @staticmethod
     def _claim_from_row(row: Any, *, include_output: bool = False) -> OperationClaim:
@@ -1776,6 +2000,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     MeasurementState.PARTIAL,
                     MeasurementState.FAILED,
                 },
+                JobType.RECOVER_EVALUATORS: {
+                    MeasurementState.READY,
+                    MeasurementState.PARTIAL,
+                    MeasurementState.FAILED,
+                },
             }
             if updated_run.state not in allowed_states[job.job_type]:
                 raise Conflict("Job completion produced an invalid measurement state")
@@ -1787,7 +2016,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                         and self._read_brand_definition(connection, run.run_id, job.owner) is None):
                     self._insert_brand_definition(connection, job.owner, BrandDefinitionRecord(
                         run_id=run.run_id, definition_version=1,
-                        definition=analysis.brand.definition, source="page-analysis"))
+                        definition=BrandDefinition.model_validate(
+                            analysis.brand.definition.model_dump(mode="json")
+                        ),
+                        source="page-analysis",
+                    ))
             now = utc_now()
             completed = job.model_copy(update={
                 "run_revision": updated_run.revision,

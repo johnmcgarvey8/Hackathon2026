@@ -155,7 +155,12 @@ class SyntheticRecommendations:
 
 
 class MockMeasurementRuntime:
-    def __init__(self, repository: JobRepository, policy: MeasurementExecutionPolicy):
+    def __init__(
+        self,
+        repository: JobRepository,
+        policy: MeasurementExecutionPolicy,
+        on_job_finished=None,
+    ):
         if policy.execution_mode != "mock":
             raise ValueError("The local mock runtime requires a mock execution policy")
         preparation = SyntheticPreparationModel()

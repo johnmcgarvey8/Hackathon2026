@@ -1,5 +1,6 @@
 import io
 import json
+import platform
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
@@ -37,10 +38,13 @@ def test_branded_queries_are_reported_separately():
     assert report["by_query_type"]["unbranded"]["denominator"] == 4
 
 
-def measurement_result():
+def measurement_result(provenance="synthetic"):
     legacy = synthetic_inputs()
     captured = datetime(2026, 9, 15, tzinfo=timezone.utc)
-    snapshot = legacy.snapshot.model_copy(update={"captured_at": captured})
+    snapshot = legacy.snapshot.model_copy(update={
+        "captured_at": captured,
+        "provenance": provenance,
+    })
     plan = QueryPlan(queries=tuple({
         "query_id": query.query_id, "priority": index, "rationale": "Saved page supports this intent",
         "intent": query.intent, "branded": index == 1, "chat_query": query.text,
@@ -56,15 +60,15 @@ def measurement_result():
     inputs = MeasurementInputs(brief=legacy.brief, snapshot=snapshot, query_plan=plan,
                                profiles=profiles, policy_hash=digest({"fixture": True}))
     packets = tuple(RetrievalResult(
-        query_id=query.query_id, grounding_query=query.grounding_query, provenance="synthetic",
+        query_id=query.query_id, grounding_query=query.grounding_query, provenance=provenance,
         status="completed", retrieved_at=captured,
         sources=(Source(evidence_id=f"{query.query_id}-alternative", url="https://alternative.example/guide",
-                        excerpt="A clear buyer comparison checklist.", provenance="synthetic", returned_position=1),
+                        excerpt="A clear buyer comparison checklist.", provenance=provenance, returned_position=1),
                  Source(evidence_id=f"{query.query_id}-target", url=inputs.brief.url,
-                        excerpt=snapshot.content[:500], provenance="synthetic", returned_position=2)),
+                        excerpt=snapshot.content[:500], provenance=provenance, returned_position=2)),
     ) for query in plan.queries)
     results = tuple(EvaluationResult(
-        query_id=packet.query_id, profile_id=profile.profile_id, provenance="synthetic", status="completed",
+        query_id=packet.query_id, profile_id=profile.profile_id, provenance=provenance, status="completed",
         answer="Synthetic answer, not a provider response.", sources=packet.sources,
         citation_ids=(packet.sources[1 if index < 2 else 0].evidence_id,),
     ) for index, packet in enumerate(packets) for profile in profiles)
@@ -184,6 +188,9 @@ def test_legacy_export_still_uses_original_manifest_contract():
 
 @pytest.mark.parametrize("failed_profile", [None, "claude-backed"])
 def test_mocked_six_stage_components_route_and_export_without_live_calls(measurement, monkeypatch, failed_profile):
+    # Warm the Windows platform cache before subprocess access is forbidden.
+    platform.platform()
+
     def forbidden(*args, **kwargs):
         pytest.fail("Integration test must not authenticate or open a network connection")
 

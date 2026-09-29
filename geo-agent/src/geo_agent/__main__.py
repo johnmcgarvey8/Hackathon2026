@@ -15,13 +15,14 @@ from geo_agent.agent_access import AgentPrincipal
 from geo_agent.mcp_server import _persistent_secret
 from geo_agent.measurement_workflow import OwnerIdentity
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
+from geo_agent.project_foundry import ProjectFoundrySettings
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
 
 
 def load_environment(env_file: Path | None = None) -> None:
     path = env_file if env_file is not None else Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(path, override=False, interpolate=False)
+    load_dotenv(path, override=True, interpolate=False)
 
 
 def main() -> None:
@@ -62,7 +63,12 @@ def main() -> None:
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
         if os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") != policy.deployment:
             raise ValueError("Chat policy does not match the configured Foundry deployment")
-        chat = ConversationAgent(RunStore(database), policy, endpoint=endpoint)
+        chat = ConversationAgent(
+            RunStore(database),
+            policy,
+            endpoint=endpoint,
+            enforce_budget=False,
+        )
     analysis = None
     analysis_file = os.environ.get("GEO_ANALYSIS_POLICY")
     if analysis_file:

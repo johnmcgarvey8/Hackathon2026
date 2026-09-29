@@ -1,7 +1,11 @@
 import sqlite3
 
 from geo_agent.contracts import EvaluationResult, Source
-from geo_agent.evaluation_workflow import EvaluationHandler, EvaluationRequest
+from geo_agent.evaluation_workflow import (
+    EvaluationHandler,
+    EvaluationRequest,
+    EvaluatorRecoveryRequest,
+)
 from geo_agent.jobs import JobService, JobState, JobType
 from geo_agent.measurement_workflow import MeasurementCoordinator, MeasurementState, OwnerIdentity
 from geo_agent.persistence import SQLiteMeasurementRepository
@@ -136,6 +140,124 @@ def test_evaluation_reuses_five_packets_and_isolates_profile_failure(tmp_path):
     assert "sensitive fixture failure" not in failed_payload
 
 
+def test_evaluator_recovery_reuses_saved_searches_and_only_replaces_failed_answers(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "recover.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-initial",
+        EvaluationRequest(confirm_evaluation_calls=True),
+    )
+    initial_search = FakeSearch()
+    Worker(
+        repository,
+        "worker-a",
+        {JobType.EVALUATE: EvaluationHandler(
+            repository,
+            execution_policy,
+            initial_search,
+            (FakeEvaluator(prepared.profiles[0], fail_query="q-3"),),
+        )},
+    ).run_once()
+    failed = repository.get(created.run_id, owner)
+    assert failed.state == MeasurementState.PARTIAL
+
+    JobService(repository).enqueue(
+        failed.run_id,
+        owner,
+        failed.revision,
+        JobType.RECOVER_EVALUATORS,
+        "recover-evaluators",
+        EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+    )
+    recovery_search = FakeSearch()
+    recovery_evaluator = FakeEvaluator(prepared.profiles[0])
+    Worker(
+        repository,
+        "worker-b",
+        {JobType.RECOVER_EVALUATORS: EvaluationHandler(
+            repository,
+            execution_policy,
+            recovery_search,
+            (recovery_evaluator,),
+        )},
+    ).run_once()
+    recovered = repository.get(created.run_id, owner)
+    assert recovered.state == MeasurementState.READY
+    assert recovery_search.calls == []
+    assert recovery_evaluator.calls == ["q-3"]
+    assert all(result.status == "completed" for result in recovered.measurement.results)
+    assert recovered.measurement.retrievals == failed.measurement.retrievals
+
+
+def test_evaluator_recovery_may_correct_only_the_provider_endpoint(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "endpoint-recovery.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-endpoint",
+        EvaluationRequest(confirm_evaluation_calls=True),
+    )
+    Worker(
+        repository,
+        "worker-a",
+        {JobType.EVALUATE: EvaluationHandler(
+            repository,
+            execution_policy,
+            FakeSearch(),
+            (FakeEvaluator(prepared.profiles[0], fail_query="q-1"),),
+        )},
+    ).run_once()
+    failed = repository.get(created.run_id, owner)
+    corrected_profile = prepared.profiles[0].model_copy(update={
+        "endpoint": "https://corrected.services.ai.azure.com/openai/v1/",
+    })
+    corrected_policy = execution_policy.model_copy(update={
+        "profiles": (corrected_profile,),
+        "budget_grant_id": "recovery-grant",
+    })
+    JobService(repository).enqueue(
+        failed.run_id,
+        owner,
+        failed.revision,
+        JobType.RECOVER_EVALUATORS,
+        "recover-endpoint",
+        EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+    )
+    evaluator = FakeEvaluator(corrected_profile)
+    Worker(
+        repository,
+        "worker-b",
+        {JobType.RECOVER_EVALUATORS: EvaluationHandler(
+            repository,
+            corrected_policy,
+            FakeSearch(),
+            (evaluator,),
+        )},
+    ).run_once()
+    recovered = repository.get(created.run_id, owner)
+    assert recovered.state == MeasurementState.READY
+    assert evaluator.calls == ["q-1"]
+
+
 def test_three_profiles_share_five_packets_across_fifteen_evaluations(tmp_path):
     profiles = three_profiles()
     execution_policy = policy().model_copy(update={"profiles": profiles})
@@ -226,6 +348,46 @@ def test_retrieval_failure_skips_only_its_evaluator_and_later_queries_continue(t
     failed_answer = next(item for item in completed_run.measurement.results if item.query_id == "q-2")
     assert failed_packet.status == "error"
     assert failed_answer.error == "Retrieval failed; evaluator not called."
+
+
+def test_project_evaluation_rejects_synthetic_inputs_before_provider_calls(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "project-synthetic-evaluation.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "project-synthetic-evaluation",
+        EvaluationRequest(confirm_evaluation_calls=True, project_bound=True),
+    )
+    search = FakeSearch()
+    evaluator = FakeEvaluator(prepared.profiles[0])
+
+    job, run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                search,
+                (evaluator,),
+            ),
+        },
+    ).run_once()
+
+    assert job.state == JobState.FAILED
+    assert job.error_code == "Conflict"
+    assert run.state == MeasurementState.NEEDS_REVIEW
+    assert search.calls == []
+    assert evaluator.calls == []
 
 
 def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):

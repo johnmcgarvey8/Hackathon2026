@@ -5,7 +5,8 @@ from geo_agent.contracts import (
     EvaluationResult,
     MeasurementResults,
     RetrievalResult,
-    SimulationProfile,
+    EvaluatorProfile,
+    Provenance,
     Source,
 )
 from geo_agent.execution_policy import MeasurementExecutionPolicy
@@ -18,6 +19,11 @@ from geo_agent.workflow import Conflict
 class EvaluationRequest(Contract):
     confirm_evaluation_calls: Literal[True]
     include_recommendations: bool = False
+    project_bound: bool = False
+
+
+class EvaluatorRecoveryRequest(Contract):
+    confirm_evaluation_calls: Literal[True]
 
 
 class SearchProvider(Protocol):
@@ -26,7 +32,7 @@ class SearchProvider(Protocol):
 
 class Evaluator(Protocol):
     @property
-    def profile(self) -> SimulationProfile: ...
+    def profile(self) -> EvaluatorProfile: ...
 
     def evaluate(self, query, locale: str, sources: tuple[Source, ...]) -> EvaluationResult: ...
 
@@ -51,7 +57,7 @@ class EvaluationHandler:
         self.recommendations = recommendations
 
     def __call__(self, job: WorkflowJob, operations: ClaimedOperationRunner) -> Mutation:
-        if job.job_type != JobType.EVALUATE:
+        if job.job_type not in {JobType.EVALUATE, JobType.RECOVER_EVALUATORS}:
             raise Conflict("Evaluation handler requires an evaluation job")
         if (
             job.policy_id is not None
@@ -65,14 +71,37 @@ class EvaluationHandler:
         run = self.repository.get(job.run_id, job.owner)
         if run.state != MeasurementState.EVALUATING or run.inputs is None or run.approval is None:
             raise Conflict("Evaluation requires leased, approved measurement inputs")
+        if not recovery and request.project_bound:
+            if self.policy.execution_mode != "live":
+                raise Conflict("Project measurements require a live execution policy")
+            try:
+                run.inputs.validate_live()
+            except ValueError as error:
+                raise Conflict(str(error)) from None
+        recovery_profiles_match = (
+            recovery
+            and tuple(
+                profile.model_dump(exclude={"endpoint"})
+                for profile in run.inputs.profiles
+            )
+            == tuple(
+                profile.model_dump(exclude={"endpoint"})
+                for profile in self.policy.profiles
+            )
+        )
         if (
-            run.inputs.policy_hash != self.policy.policy_hash
-            or run.inputs.profiles != self.policy.profiles
+            (not recovery and run.inputs.policy_hash != self.policy.policy_hash)
+            or (
+                run.inputs.profiles != self.policy.profiles
+                and not recovery_profiles_match
+            )
             or run.approval.input_hash != run.inputs.approval_hash
         ):
             raise Conflict("Evaluation inputs do not match the execution policy and approval")
         if set(self.evaluators) != {profile.profile_id for profile in run.inputs.profiles}:
             raise Conflict("Evaluation requires exactly the approved profile roster")
+        if recovery:
+            return self._recover_failed_evaluators(run, job, operations)
 
         retrievals: list[RetrievalResult] = []
         results: list[EvaluationResult] = []
@@ -131,7 +160,7 @@ class EvaluationHandler:
                         profile,
                         retrieval.sources,
                         run.inputs.snapshot.provenance,
-                        "Evaluator failed; no automatic retry.",
+                        self._safe_evaluator_error(error),
                     )
                 results.append(result)
 
@@ -140,6 +169,11 @@ class EvaluationHandler:
             retrievals=tuple(retrievals),
             results=tuple(results),
         )
+        if request.project_bound:
+            try:
+                measurement.validate_live()
+            except ValueError as error:
+                raise Conflict(str(error)) from None
         completed = sum(result.status == "completed" for result in measurement.results)
         state = (
             MeasurementState.READY
@@ -177,6 +211,92 @@ class EvaluationHandler:
             })
 
         return mutation
+
+    def _recover_failed_evaluators(
+        self,
+        run: MeasurementRun,
+        job: WorkflowJob,
+        operations: ClaimedOperationRunner,
+    ) -> Mutation:
+        if run.measurement is None:
+            raise Conflict("Evaluator recovery requires saved measurement evidence")
+        retrievals = run.measurement.retrievals
+        retrieval_by_query = {item.query_id: item for item in retrievals}
+        previous = {
+            (item.query_id, item.profile_id): item
+            for item in run.measurement.results
+        }
+        results: list[EvaluationResult] = []
+        for pair in sorted(run.inputs.query_plan.queries, key=lambda item: item.priority):
+            retrieval = retrieval_by_query.get(pair.query_id)
+            for profile in run.inputs.profiles:
+                existing = previous.get((pair.query_id, profile.profile_id))
+                if existing is None:
+                    raise Conflict("Saved evaluator results do not match the approved query plan")
+                if existing.status == "completed":
+                    results.append(existing)
+                    continue
+                if retrieval is None or retrieval.status != "completed":
+                    results.append(existing)
+                    continue
+                evaluator = self.evaluators[profile.profile_id]
+                try:
+                    result = operations.call(
+                        f"{job.idempotency_key}:recover:{pair.query_id}:{profile.profile_id}",
+                        "profile-evaluator",
+                        lambda pair=pair, evaluator=evaluator, sources=retrieval.sources:
+                            self._evaluate_call(
+                                evaluator,
+                                pair.as_query(),
+                                run.inputs.brief.locale,
+                                sources,
+                                run.inputs.snapshot.provenance,
+                            ),
+                    )
+                except Exception as error:
+                    result = self._error_result(
+                        pair.query_id,
+                        profile,
+                        retrieval.sources,
+                        run.inputs.snapshot.provenance,
+                        self._safe_evaluator_error(error),
+                    )
+                results.append(result)
+        measurement = MeasurementResults(
+            inputs=run.inputs,
+            retrievals=retrievals,
+            results=tuple(results),
+        )
+        completed = sum(result.status == "completed" for result in results)
+        state = (
+            MeasurementState.READY
+            if completed == len(results)
+            else MeasurementState.PARTIAL
+            if completed
+            else MeasurementState.FAILED
+        )
+
+        def mutation(current: MeasurementRun) -> MeasurementRun:
+            if current.state != MeasurementState.EVALUATING or current.inputs != measurement.inputs:
+                raise Conflict("Evaluator recovery no longer matches the run")
+            return current.model_copy(update={
+                "measurement": measurement,
+                "recommendations": None,
+                "recommendation_review": None,
+                "state": state,
+                "events": (*current.events, MeasurementEvent(
+                    sequence=len(current.events) + 1,
+                    event_type=f"evaluator-recovery-{state.value}",
+                )),
+            })
+
+        return mutation
+
+    @staticmethod
+    def _safe_evaluator_error(error: Exception) -> str:
+        if hasattr(error, "code"):
+            return f"Evaluator failed ({error.code.value}); no automatic retry."
+        return "Evaluator failed; no automatic retry."
 
     def _search_call(self, pair, query, locale: str, provenance):
         sources = self.search.search(query, locale)
@@ -216,7 +336,7 @@ class EvaluationHandler:
     @staticmethod
     def _error_result(
         query_id: str,
-        profile: SimulationProfile,
+        profile: EvaluatorProfile,
         sources: tuple[Source, ...],
         provenance,
         error: str,

@@ -12,6 +12,7 @@ from geo_agent.workflow import Conflict
 class PreparationRequest(Contract):
     brief: Brief
     confirm_preparation_calls: Literal[True]
+    project_bound: bool = False
 
 
 class BrowseProvider(Protocol):
@@ -59,7 +60,9 @@ class PreparationHandler:
         ):
             raise Conflict("Preparation job does not match the worker execution policy")
         request = PreparationRequest.model_validate(job.request)
-        self.policy.validate_brief(request.brief)
+        self.policy.validate_brief(request.brief, project_bound=request.project_bound)
+        if request.project_bound and self.policy.execution_mode != "live":
+            raise Conflict("Project measurements require a live execution policy")
 
         def browse_call() -> tuple[PageSnapshot, dict[str, str | int | bool | None]]:
             snapshot = self.browse.browse(request.brief)
@@ -73,7 +76,9 @@ class PreparationHandler:
             "webiq-browse",
             browse_call,
         )
-        expected_provenance = Provenance.SYNTHETIC if self.policy.execution_mode == "mock" else Provenance.LIVE
+        expected_provenance = Provenance.LIVE if request.project_bound else (
+            Provenance.SYNTHETIC if self.policy.execution_mode == "mock" else Provenance.LIVE
+        )
         if snapshot.url != request.brief.url or snapshot.provenance != expected_provenance:
             raise ProviderError("Browse evidence does not match the preparation policy")
         passages = [

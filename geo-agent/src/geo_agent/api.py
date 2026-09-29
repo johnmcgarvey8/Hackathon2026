@@ -17,6 +17,11 @@ from geo_agent.conversation import ChatRequest, ConversationAgent
 from geo_agent.evaluation import match_citations
 from geo_agent.fixtures import evaluate_synthetic, synthetic_inputs
 from geo_agent.live import BudgetedLiveWorkflow, LiveWorkflow
+from geo_agent.goal_summary import (
+    FallbackGoalSummaryProvider,
+    FoundryGoalSummaryProvider,
+    ProjectGoalSummaryService,
+)
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.agent_access import AgentPrincipal
 from geo_agent.measurement_api import OperatorPrincipal, create_measurement_router
@@ -27,6 +32,11 @@ from geo_agent.measurement_views import CursorCodec
 from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.page_analysis import AnalysisRequest, EvaluationBriefRequest, PageAnalysisService
 from geo_agent.persistence import SQLiteMeasurementRepository
+from geo_agent.project_api import create_project_router
+from geo_agent.project_chat import MockProjectAgent, ProjectChatService, UnavailableProjectAgent
+from geo_agent.project_chat_api import create_project_chat_router
+from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
+from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict, Coordinator, NotFound, RunStore
 
@@ -153,6 +163,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
                 roles=(measurement_policy.owner_role,),
             )
 
+    if measurement_policy is not None:
         app.include_router(create_measurement_router(
             measurement_repository,
             measurement_policy,
@@ -162,6 +173,24 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
             service=measurement_application,
             default_agent_principal_id=default_agent_principal_id,
         ))
+    app.include_router(create_project_router(
+        measurement_repository,
+        measurement_policy,
+        authenticate_operator,
+        measurement_artifacts,
+        None,
+        goal_summaries,
+    ))
+    app.include_router(create_project_chat_router(
+        ProjectChatService(
+            measurement_repository,
+            project_agent,
+            project_chat_workflow,
+        ),
+        measurement_policy,
+        authenticate_operator,
+        None,
+    ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     def browser_chat() -> HTMLResponse:
@@ -255,7 +284,26 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "mode": "live-policy-enabled" if live else "chat-policy-enabled" if chat else "synthetic-only", "live_ready": False, "live_configured": live is not None, "chat_configured": chat is not None}
+        project_live = (
+            measurement_policy is not None
+            and measurement_policy.execution_mode == "live"
+        )
+        return {
+            "status": "ok",
+            "mode": (
+                "project-live-enabled"
+                if project_live else
+                "live-policy-enabled"
+                if live else
+                "chat-policy-enabled"
+                if chat else
+                "configuration-required"
+            ),
+            "live_ready": project_live and project_foundry is not None,
+            "live_configured": live is not None,
+            "chat_configured": chat is not None or project_foundry is not None,
+            "measurement_configured": project_live,
+        }
 
     @app.exception_handler(ProviderError)
     async def provider_handler(request: Request, error: ProviderError) -> JSONResponse:

@@ -1,0 +1,24 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "project-live-evaluator-recovery-2026-09-18-v2-grant",
+  "purpose": "failed-evaluator-recovery",
+  "policy_id": "project-live-evaluator-recovery-2026-09-18-v2",
+  "policy_hash": "d249c91a3d6f84592466feae73b33e3d0d70a07478c63e7a091bdf8a583e6390",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 0,
+    "page_analysis_model": 0,
+    "paired_query_plan": 0,
+    "webiq_search": 0,
+    "profile_evaluator": 5,
+    "recommendation_model": 0
+  },
+  "maximum_authorized_cost_usd": "10.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "On 2026-09-18 the user explicitly instructed the implementation to carry on. This second evaluator-only recovery applies the corrected Responses structured-output configuration and authorizes five calls against the existing approved queries and saved WebIQ evidence. It authorizes no retrieval, search, preparation, recommendations, publishing, or automatic retries.",
+  "approved_at": "2026-09-18T15:09:39+01:00"
+}

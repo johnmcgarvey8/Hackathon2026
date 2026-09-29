@@ -3,7 +3,7 @@ import json
 import socket
 from collections.abc import Callable
 from enum import StrEnum
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 from pydantic import HttpUrl, TypeAdapter, ValidationError
@@ -13,6 +13,14 @@ from geo_agent.contracts import Brief, PageSnapshot, Provenance, Query, Source
 
 BROWSE_ENDPOINT = "https://api.microsoft.ai/v3/browse"
 SEARCH_ENDPOINT = "https://api.microsoft.ai/v3/search/web"
+TRACKING_QUERY_KEYS = {
+    "fbclid",
+    "gclid",
+    "mc_cid",
+    "mc_eid",
+    "msclkid",
+    "msockid",
+}
 
 
 class ProviderFailure(StrEnum):
@@ -31,9 +39,16 @@ class ProviderFailure(StrEnum):
 
 
 class ProviderError(ValueError):
-    def __init__(self, message: str, *, code: ProviderFailure = ProviderFailure.UNKNOWN):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: ProviderFailure = ProviderFailure.UNKNOWN,
+        safe_detail: str | None = None,
+    ):
         super().__init__(message)
         self.code = ProviderFailure(code)
+        self.safe_detail = safe_detail
 
 
 def public_url(value: str, resolve: bool = True) -> str:
@@ -60,6 +75,36 @@ def public_url(value: str, resolve: bool = True) -> str:
         return str(url)
     except (ValueError, OSError):
         raise ProviderError("URL policy rejected the page or its resolved addresses") from None
+
+
+def _same_browse_page(requested: str, returned: str) -> bool:
+    requested_url = urlsplit(requested)
+    returned_url = urlsplit(returned)
+    requested_host = requested_url.hostname or ""
+    returned_host = returned_url.hostname or ""
+    hosts_match = requested_host == returned_host or (
+        requested_host.removeprefix("www.") == returned_host.removeprefix("www.")
+        and (requested_host.startswith("www.") or returned_host.startswith("www."))
+    )
+    requested_query = tuple(sorted(
+        (key, value)
+        for key, value in parse_qsl(requested_url.query, keep_blank_values=True)
+        if key.casefold() not in TRACKING_QUERY_KEYS
+        and not key.casefold().startswith("utm_")
+    ))
+    returned_query = tuple(sorted(
+        (key, value)
+        for key, value in parse_qsl(returned_url.query, keep_blank_values=True)
+        if key.casefold() not in TRACKING_QUERY_KEYS
+        and not key.casefold().startswith("utm_")
+    ))
+    return (
+        hosts_match
+        and requested_url.scheme == returned_url.scheme
+        and requested_url.port == returned_url.port
+        and requested_url.path == returned_url.path
+        and requested_query == returned_query
+    )
 
 
 class WebIQ:
@@ -111,7 +156,8 @@ class WebIQ:
             "renderDynamicPages": False,
         })
         try:
-            if public_url(payload["url"], resolve=False) != target:
+            returned_url = public_url(payload["url"], resolve=False)
+            if not _same_browse_page(target, returned_url):
                 raise ProviderError("Browse returned a different page; redirect equivalence is unverified")
             if not isinstance(payload.get("content"), str) or not payload["content"].strip():
                 raise ValueError

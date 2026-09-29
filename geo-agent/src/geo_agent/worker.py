@@ -7,6 +7,9 @@ from geo_agent.measurement_workflow import MeasurementRun, Mutation
 from geo_agent.webiq import ProviderError
 
 
+logger = logging.getLogger(__name__)
+
+
 JobHandler = Callable[[WorkflowJob, ClaimedOperationRunner], Mutation]
 logger = logging.getLogger(__name__)
 

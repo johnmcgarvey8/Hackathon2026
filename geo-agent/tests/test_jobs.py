@@ -441,6 +441,41 @@ def test_queue_admission_enforces_owner_and_global_limits(repository):
         )
 
 
+def test_post_job_reconciliation_failure_does_not_stop_worker(repository, owner):
+    draft = repository.create(owner)
+    JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "prepare-with-failing-callback",
+        {},
+    )
+
+    def handler(_job, _operations):
+        return lambda run: run.model_copy(update={
+            "inputs": inputs(),
+            "state": MeasurementState.AWAITING_APPROVAL,
+            "events": (*run.events, MeasurementEvent(
+                sequence=len(run.events) + 1,
+                event_type="awaiting-query-approval",
+            )),
+        })
+
+    result = Worker(
+        repository,
+        "worker-a",
+        {JobType.PREPARE: handler},
+        on_job_finished=lambda _job, _run: (_ for _ in ()).throw(
+            RuntimeError("synthetic reconciliation failure")
+        ),
+    ).run_once()
+
+    assert result is not None
+    assert result[0].state == JobState.COMPLETED
+    assert result[1].state == MeasurementState.AWAITING_APPROVAL
+
+
 def test_progress_updates_without_run_revision_and_is_owner_scoped(repository, owner):
     draft = repository.create(owner)
     job, run = JobService(repository).enqueue(
@@ -517,6 +552,16 @@ def test_worker_failure_is_sanitized_and_never_requeued(repository, owner):
     assert failed_job.error_code == "RuntimeError"
     assert failed_run.state == MeasurementState.NEEDS_REVIEW
     assert repository.lease_one_job("worker-b") is None
+    recovery_job, recovering_run = JobService(repository).enqueue(
+        failed_run.run_id,
+        owner,
+        failed_run.revision,
+        JobType.PREPARE,
+        "prepare-recovery",
+        {},
+    )
+    assert recovery_job.state == JobState.QUEUED
+    assert recovering_run.state == MeasurementState.PREPARING
     with repository.engine.connect() as connection:
         payload = connection.exec_driver_sql(
             "SELECT payload FROM operation_claims WHERE operation_key = 'prepare-1:browse'"

@@ -225,6 +225,15 @@ def render_measurement_bundle(
     )
     overall = scores["overall"]
     display_score = "N/A" if overall["score"] is None else f'{overall["score"]}/100'
+    method_notice = (
+        "These are controlled evidence-packet evaluations from the configured live providers, "
+        "not measurements of public consumer product behavior. Provider/model identity and prompt "
+        "instructions are retained when available. Canonical equivalence is unverified."
+        if manifest.provenance == Provenance.LIVE
+        else
+        "Synthetic provenance denotes isolated software test data, not provider output or public "
+        "product behavior. Canonical equivalence is unverified."
+    )
     markdown = (
         "# GEO Measurement Draft\n\n"
         f"Provenance: **{manifest.provenance.value}**. Exact-page citation score: **{display_score}**.\n\n"
@@ -249,9 +258,7 @@ def render_measurement_bundle(
         "other pages earn no exact-page credit. Query priority does not weight the score. "
         "Compare profiles only on common_completed_query_ids. Web IQ presence and observed "
         "position are separate metrics; absence from a saved top-five packet is not a global rank.\n\n"
-        "These are controlled evidence-packet simulations, not measurements of consumer "
-        "Copilot, Claude or ChatGPT. Synthetic data is software test data. Provider/model identity "
-        "and prompt instructions are retained when available. Canonical equivalence is unverified.\n\n"
+        f"{method_notice}\n\n"
         f"Recommendation status: {manifest.recommendation_status}. "
         f"Review status: {manifest.recommendation_review_status}. "
         "Suggestions are hypotheses requiring human review. Exact-quote checks establish "

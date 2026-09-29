@@ -67,6 +67,47 @@ def test_error_is_redacted_and_not_retried(status, code):
     assert caught.value.code == code
 
 
+def test_safe_unsupported_parameter_hint_is_retained_without_long_identifiers():
+    def handler(_request):
+        return httpx.Response(400, json={"error": {
+            "code": "invalid_request_error",
+            "message": (
+                "Unsupported parameter: parallel_tool_calls for request "
+                "abcdefghijklmnopqrstuvwxyz0123456789-secret"
+            ),
+        }})
+
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy-token",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.evaluate(Query(query_id="q-1", text="Question", intent="Plan"), "en-GB", ())
+    message = str(caught.value)
+    assert "Unsupported parameter: parallel_tool_calls" in message
+    assert "invalid_request_error" in message
+    assert "secret" not in message
+
+
+def test_structured_output_disables_parallel_tool_calls():
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=response_payload())
+
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy-token",
+        transport=httpx.MockTransport(handler),
+    )
+    provider.evaluate(Query(query_id="q-1", text="Question", intent="Plan"), "en-GB", ())
+    assert requests[0]["parallel_tool_calls"] is False
+
+
 def test_cli_failure_never_prints_tokens(monkeypatch, capsys):
     monkeypatch.setattr("geo_agent.foundry.shutil.which", lambda name: "az")
     def fail(*args, **kwargs):
@@ -130,7 +171,24 @@ def test_paired_planner_bounded_payload_and_metadata():
     assert metadata == {"model": "model-version-test", "response_id": "resp-test", "input_tokens": 100, "output_tokens": 30}
 
 
-@pytest.mark.parametrize("problem", ["count", "id", "priority", "order", "chat", "grounding", "quote", "passage", "rationale"])
+def test_paired_planner_removes_unsupported_navigation_marker_from_exact_quote():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["quote"] = "Local places >"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence[0].quote == "Local places"
+
+
+@pytest.mark.parametrize("problem", ["count", "id", "priority", "order", "chat", "grounding", "rationale"])
 def test_paired_planner_rejects_invalid_plans(problem):
     proposal = paired_proposal()
     queries = proposal["queries"]
@@ -146,10 +204,6 @@ def test_paired_planner_rejects_invalid_plans(problem):
         queries[1]["chat_query"] = " WHERE  CAN I FIND OPTION 1? "
     elif problem == "grounding":
         queries[1]["grounding_query"] = " LOCAL  OPTION 1 "
-    elif problem == "quote":
-        queries[0]["evidence"][0]["quote"] = "Fabricated words"
-    elif problem == "passage":
-        queries[0]["evidence"][0]["evidence_id"] = "page-11"
     else:
         queries[0]["rationale"] = "x" * 501
     calls = []
@@ -162,9 +216,43 @@ def test_paired_planner_rejects_invalid_plans(problem):
     with pytest.raises(ProviderError) as caught:
         provider.propose_pairs(*planning_inputs())
     assert len(calls) == 1
-    expected = (ProviderFailure.PLAN_ORDER if problem == "order" else
-                ProviderFailure.PLAN_EVIDENCE if problem in {"quote", "passage"} else ProviderFailure.SCHEMA)
+    expected = ProviderFailure.PLAN_ORDER if problem == "order" else ProviderFailure.SCHEMA
     assert caught.value.code == expected
+
+
+def test_paired_planner_discards_unverifiable_page_evidence_without_failing():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["quote"] = "Fabricated words"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence == ()
+    assert all(query.evidence for query in plan.queries[1:])
+
+
+def test_paired_planner_reassigns_valid_quote_to_its_actual_passage():
+    proposal = paired_proposal()
+    proposal["queries"][0]["evidence"][0]["evidence_id"] = "page-11"
+    provider = Foundry(
+        ENDPOINT,
+        "test",
+        token_provider=lambda: "dummy",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_payload(proposal))
+        ),
+    )
+
+    plan, _ = provider.propose_pairs(*planning_inputs())
+
+    assert plan.queries[0].evidence[0].evidence_id == "page-1"
 
 
 @pytest.mark.parametrize("reason,code", [("max_output_tokens", ProviderFailure.OUTPUT_LIMIT),
@@ -200,7 +288,7 @@ def test_paired_planner_rejects_invalid_snapshot_before_authentication(problem):
         provider.propose_pairs(brief, snapshot)
 
 
-@pytest.mark.parametrize("brand_case", ["supported", "missing", "invented-quote", "unanchored-name"])
+@pytest.mark.parametrize("brand_case", ["supported", "missing", "invented-quote", "unanchored-name", "invalid-definition"])
 def test_preparation_infers_brand_in_existing_analysis_call(brand_case):
     from test_page_analysis import report_for
 
@@ -217,6 +305,10 @@ def test_preparation_infers_brand_in_existing_analysis_call(brand_case):
         report["brand"]["evidence"][0]["quote"] = "Invented Clarity quote"
     elif brand_case == "unanchored-name":
         report["brand"]["definition"].update(name="Another brand", aliases=[])
+    elif brand_case == "invalid-definition":
+        report["brand"]["definition"]["aliases"].append(
+            {"text": "Microsoft Clarity", "ambiguous": False}
+        )
     calls = []
 
     def handler(request):

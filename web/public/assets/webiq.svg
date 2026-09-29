@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 48 48" role="img" aria-label="WebIQ">
+  <defs>
+    <linearGradient id="webiq-a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2899f5"/>
+      <stop offset="1" stop-color="#0050a0"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="10" fill="url(#webiq-a)"/>
+  <g fill="none" stroke="#fff" stroke-width="2.4">
+    <circle cx="24" cy="24" r="11.5"/>
+    <path d="M12.5 24h23M24 12.5c3.4 3.2 5.2 7.3 5.2 11.5S27.4 32.3 24 35.5c-3.4-3.2-5.2-7.3-5.2-11.5s1.8-8.3 5.2-11.5Z"/>
+  </g>
+</svg>

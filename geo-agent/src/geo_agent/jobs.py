@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 from collections.abc import Callable
+import logging
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel, Field
@@ -19,9 +20,13 @@ class LeaseLost(ExecutionControlError):
     pass
 
 
+logger = logging.getLogger(__name__)
+
+
 class JobType(StrEnum):
     PREPARE = "prepare"
     EVALUATE = "evaluate"
+    RECOVER_EVALUATORS = "recover-evaluators"
 
 
 class JobState(StrEnum):
@@ -155,6 +160,13 @@ class RunProgress(Contract):
                        last_activity_at=run.updated_at)
         if job.job_type == JobType.PREPARE:
             planned = {"webiq-browse": 1, "page-analysis-model": 1, "paired-query-plan": 1}
+        elif job.job_type == JobType.RECOVER_EVALUATORS:
+            planned = {
+                "profile-evaluator": sum(
+                    result.status == "error"
+                    for result in (run.measurement.results if run.measurement else ())
+                ),
+            }
         else:
             if isinstance(run, MeasurementRun):
                 query_count = len(run.inputs.query_plan.queries) if run.inputs else 0
@@ -352,10 +364,23 @@ class ClaimedOperationRunner:
         try:
             result, provider_metadata = operation()
         except Exception as error:
+            provider_metadata = (
+                {"failure_detail": error.safe_detail[:200]}
+                if isinstance(error, ProviderError) and error.safe_detail
+                else {}
+            )
+            if provider_metadata:
+                logger.warning(
+                    "Provider operation failed: operation_type=%s error_code=%s detail=%s",
+                    operation_type,
+                    error.code.value,
+                    provider_metadata["failure_detail"],
+                )
             self.repository.record_operation(
                 claim.claim_id,
                 self.worker_id,
                 OperationClaimState.FAILED,
+                provider_metadata=provider_metadata,
                 error_code=error.code.value if isinstance(error, ProviderError) else type(error).__name__,
                 lease_token=self.job.lease_token,
             )
