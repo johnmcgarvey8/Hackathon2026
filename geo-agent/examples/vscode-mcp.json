@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "geo-agent": {
+      "type": "stdio",
+      "command": "${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "geo_agent.mcp_server"
+      ],
+      "env": {
+        "GEO_DATA_DIR": "${workspaceFolder}\\geo-agent\\.data",
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}\\geo-agent\\measurement-policy.json",
+        "GEO_MCP_TENANT_ID": "local-development",
+        "GEO_MCP_OWNER": "local-developer",
+        "GEO_MCP_PRINCIPAL_ID": "local-agent"
+      }
+    }
+  }
+}

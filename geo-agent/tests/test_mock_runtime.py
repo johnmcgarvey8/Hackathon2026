@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from threading import Event, Thread
 
 from geo_agent.contracts import Brief
 from geo_agent.evaluation_workflow import EvaluationRequest
@@ -48,6 +49,9 @@ def test_mock_runtime_completes_durable_three_profile_workflow_without_providers
         JobType.PREPARE,
         "prepare-runtime",
         PreparationRequest(brief=brief, confirm_preparation_calls=True),
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        operation_ceiling=3,
     )
 
     runtime.drain()
@@ -68,6 +72,9 @@ def test_mock_runtime_completes_durable_three_profile_workflow_without_providers
         JobType.EVALUATE,
         "evaluate-runtime",
         EvaluationRequest(confirm_evaluation_calls=True, include_recommendations=True),
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        operation_ceiling=5 + 5 * len(execution_policy.profiles) + 1,
     )
 
     runtime.drain()
@@ -80,3 +87,68 @@ def test_mock_runtime_completes_durable_three_profile_workflow_without_providers
     with sqlite3.connect(tmp_path / "runtime.sqlite3") as connection:
         operation_count = connection.execute("SELECT COUNT(*) FROM operation_claims").fetchone()[0]
     assert operation_count == 24
+
+
+def test_operation_identity_is_job_scoped_for_max_keys_and_multiple_owners(tmp_path):
+    execution_policy = policy()
+    repository = SQLiteMeasurementRepository(tmp_path / "operation-identity.sqlite3")
+    runtime = MockMeasurementRuntime(repository, execution_policy)
+    idempotency_key = "k" * 200
+
+    for object_id in ("owner-a", "owner-b"):
+        owner = OwnerIdentity(tenant_id="tenant-a", object_id=object_id)
+        brief = Brief.model_validate({
+            **inputs().brief.model_dump(mode="json"),
+            "url": "https://example.com/mock-page",
+        })
+        draft = repository.create(owner, brief=brief)
+        JobService(repository).enqueue(
+            draft.run_id,
+            owner,
+            draft.revision,
+            JobType.PREPARE,
+            idempotency_key,
+            PreparationRequest(brief=brief, confirm_preparation_calls=True),
+            policy_id=execution_policy.policy_id,
+            policy_hash=execution_policy.policy_hash,
+            operation_ceiling=3,
+        )
+        runtime.drain()
+        assert repository.get(draft.run_id, owner).state == MeasurementState.AWAITING_APPROVAL
+
+    with sqlite3.connect(tmp_path / "operation-identity.sqlite3") as connection:
+        keys = [
+            row[0]
+            for row in connection.execute(
+                "SELECT operation_key FROM operation_claims ORDER BY operation_key"
+            )
+        ]
+    assert len(keys) == len(set(keys)) == 6
+    assert max(map(len, keys)) < 200
+
+
+def test_mock_runtime_does_not_drop_a_concurrent_drain_notification(tmp_path):
+    execution_policy = policy()
+    repository = SQLiteMeasurementRepository(tmp_path / "wakeup.sqlite3")
+    runtime = MockMeasurementRuntime(repository, execution_policy)
+    entered = Event()
+    release = Event()
+    calls = []
+
+    def run_once():
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        return None
+
+    runtime.worker.run_once = run_once
+    first = Thread(target=runtime.drain)
+    first.start()
+    assert entered.wait(5)
+    runtime.drain()
+    release.set()
+    first.join(5)
+
+    assert not first.is_alive()
+    assert calls == [1, 2]

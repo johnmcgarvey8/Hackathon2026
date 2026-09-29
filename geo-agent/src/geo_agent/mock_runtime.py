@@ -1,4 +1,4 @@
-from threading import Lock
+from threading import Event, Lock
 from urllib.parse import urlsplit
 
 from geo_agent.contracts import (
@@ -164,30 +164,32 @@ class MockMeasurementRuntime:
         if policy.execution_mode != "mock":
             raise ValueError("The local mock runtime requires a mock execution policy")
         preparation = SyntheticPreparationModel()
-        self.worker = Worker(
-            repository,
-            "local-mock-worker",
-            {
-                JobType.PREPARE: PreparationHandler(
-                    policy, SyntheticBrowse(), preparation, preparation,
-                ),
-                JobType.EVALUATE: EvaluationHandler(
-                    repository,
-                    policy,
-                    SyntheticSearch(),
-                    tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
-                    SyntheticRecommendations(),
-                ),
-            },
-            on_job_finished=on_job_finished,
-        )
+        self.worker = Worker(repository, "local-mock-worker", {
+            JobType.PREPARE: PreparationHandler(policy, SyntheticBrowse(), preparation, preparation),
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                policy,
+                SyntheticSearch(),
+                tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
+                SyntheticRecommendations(),
+            ),
+        }, policy_id=policy.policy_id, policy_hash=policy.policy_hash)
         self._lock = Lock()
+        self._pending = Event()
 
     def drain(self) -> None:
-        if not self._lock.acquire(blocking=False):
-            return
-        try:
-            while self.worker.run_once() is not None:
-                pass
-        finally:
-            self._lock.release()
+        self._pending.set()
+        while True:
+            if not self._lock.acquire(blocking=False):
+                return
+            try:
+                while True:
+                    self._pending.clear()
+                    while self.worker.run_once() is not None:
+                        pass
+                    if not self._pending.is_set():
+                        break
+            finally:
+                self._lock.release()
+            if not self._pending.is_set():
+                return

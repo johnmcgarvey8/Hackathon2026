@@ -271,7 +271,7 @@ def test_three_profiles_share_five_packets_across_fifteen_evaluations(tmp_path):
     approved = MeasurementCoordinator(repository).approve(
         created.run_id, owner, created.revision, prepared.approval_hash
     )
-    JobService(repository).enqueue(
+    job, _ = JobService(repository).enqueue(
         approved.run_id,
         owner,
         approved.revision,
@@ -399,7 +399,7 @@ def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):
     approved = MeasurementCoordinator(repository).approve(
         created.run_id, owner, created.revision, prepared.approval_hash
     )
-    JobService(repository).enqueue(
+    job, _ = JobService(repository).enqueue(
         approved.run_id,
         owner,
         approved.revision,
@@ -429,7 +429,8 @@ def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):
     assert completed_run.recommendations.status == "insufficient-evidence"
     with sqlite3.connect(tmp_path / "recommend.sqlite3") as connection:
         recommendation_claims = connection.execute(
-            "SELECT COUNT(*) FROM operation_claims WHERE operation_key = 'evaluate-1:recommend'"
+            "SELECT COUNT(*) FROM operation_claims WHERE operation_key = ?",
+            (f"{job.job_id}:recommend",),
         ).fetchone()[0]
     assert recommendation_claims == 1
 
@@ -468,6 +469,6 @@ def test_recommendations_are_not_invoked_without_explicit_request(tmp_path):
     assert recommendations.calls == 0
     with sqlite3.connect(tmp_path / "recommend-disabled.sqlite3") as connection:
         recommendation_claims = connection.execute(
-            "SELECT COUNT(*) FROM operation_claims WHERE operation_key = 'evaluate-1:recommend'"
+            "SELECT COUNT(*) FROM operation_claims WHERE operation_key LIKE '%:recommend'"
         ).fetchone()[0]
     assert recommendation_claims == 0

@@ -1,5 +1,4 @@
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 import pytest
@@ -190,12 +189,6 @@ def test_multi_run_grant_funds_different_urls_for_same_owner_and_fails_closed(tm
     repository = SQLiteMeasurementRepository(tmp_path / "multi-url.sqlite3")
     repository.bind_measurement_budget(grant, policy)
     homepage_job = leased_job(repository, grant.owner)
-    feature_job = leased_job(
-        repository,
-        grant.owner,
-        "https://clarity.microsoft.com/ai-visibility",
-        "worker-b",
-    )
 
     repository.claim_operation(
         homepage_job.job_id,
@@ -203,12 +196,20 @@ def test_multi_run_grant_funds_different_urls_for_same_owner_and_fails_closed(tm
         f"{homepage_job.run_id}:webiq-browse",
         "webiq-browse",
     )
+    repository.fail_job(homepage_job.job_id, "worker-a", "test-stage-complete")
+    feature_job = leased_job(
+        repository,
+        grant.owner,
+        "https://clarity.microsoft.com/ai-visibility",
+        "worker-b",
+    )
     repository.claim_operation(
         feature_job.job_id,
         "worker-b",
         f"{feature_job.run_id}:webiq-browse",
         "webiq-browse",
     )
+    repository.fail_job(feature_job.job_id, "worker-b", "test-stage-complete")
 
     overflow_job = leased_job(
         repository,
@@ -225,41 +226,44 @@ def test_multi_run_grant_funds_different_urls_for_same_owner_and_fails_closed(tm
         )
 
 
-def test_budget_last_allowance_is_atomic_across_jobs(tmp_path):
+def test_one_active_job_serializes_last_budget_allowance(tmp_path):
     policy = live_policy(("chatgpt-style",))
     grant = budget_grant(policy)
     repository = SQLiteMeasurementRepository(tmp_path / "concurrent-budget.sqlite3")
     repository.bind_measurement_budget(grant, policy)
     first_job = leased_job(repository, grant.owner, worker_id="worker-a")
-    second_job = leased_job(
-        repository,
-        grant.owner,
-        "https://clarity.microsoft.com/ai-visibility",
-        "worker-b",
+    brief = Brief(
+        url="https://clarity.microsoft.com/ai-visibility",
+        audience="Product teams",
+        goal="Compare behavioural analytics tools",
+        locale="en-GB",
     )
-
-    def claim(job, worker_id):
-        return repository.claim_operation(
-            job.job_id,
-            worker_id,
-            f"{job.run_id}:webiq-browse",
+    draft = repository.create(grant.owner, brief=brief)
+    second_job, _ = JobService(repository).enqueue(
+        draft.run_id,
+        grant.owner,
+        draft.revision,
+        JobType.PREPARE,
+        "second-budget-job",
+        PreparationRequest(brief=brief, confirm_preparation_calls=True),
+    )
+    assert repository.lease_one_job("worker-b") is None
+    repository.claim_operation(
+        first_job.job_id,
+        "worker-a",
+        f"{first_job.run_id}:webiq-browse",
+        "webiq-browse",
+    )
+    repository.fail_job(first_job.job_id, "worker-a", "test-stage-complete")
+    leased_second = repository.lease_one_job("worker-b")
+    assert leased_second is not None and leased_second.job_id == second_job.job_id
+    with pytest.raises(Conflict, match="allowance is exhausted"):
+        repository.claim_operation(
+            second_job.job_id,
+            "worker-b",
+            f"{second_job.run_id}:webiq-browse",
             "webiq-browse",
         )
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = (
-            executor.submit(claim, first_job, "worker-a"),
-            executor.submit(claim, second_job, "worker-b"),
-        )
-        outcomes = []
-        for future in futures:
-            try:
-                outcomes.append(future.result())
-            except Conflict as error:
-                outcomes.append(error)
-
-    assert sum(not isinstance(outcome, Conflict) for outcome in outcomes) == 1
-    assert sum(isinstance(outcome, Conflict) for outcome in outcomes) == 1
     with sqlite3.connect(tmp_path / "concurrent-budget.sqlite3") as connection:
         assert connection.execute(
             "SELECT consumed FROM measurement_budget_usage "

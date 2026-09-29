@@ -36,6 +36,7 @@ const baseUrl = process.env.GEO_BROWSER_BASE_URL || 'http://127.0.0.1:8091';
     let cancellations = 0;
     let assessmentReads = 0;
     let strategyReads = 0;
+    let agentAuthorizations = 0;
     let strategyError = false;
     let strategyPartial = false;
     const inferredBrand = {run_id: 'run-ui', definition_version: 1, definition_hash: 'e'.repeat(64), source: 'page-analysis', definition: {name: 'Microsoft Clarity', aliases: [{text: 'Clarity', ambiguous: true}], domains: ['clarity.microsoft.com']}};
@@ -66,13 +67,28 @@ const baseUrl = process.env.GEO_BROWSER_BASE_URL || 'http://127.0.0.1:8091';
       if (!url.pathname.startsWith('/api/v2/')) { externalCalls++; throw new Error(`Unexpected external request: ${url.href}`); }
       if (request.headers().authorization === 'Bearer wrong-server-token') return route.fulfill({ status: 401, json: { detail: 'Invalid bearer token' } });
       assert.equal(request.headers().authorization, 'Bearer dummy-browser-only');
-      if (url.pathname === '/api/v2/policy') return route.fulfill({ json: { policy_id: 'mock-ui', execution_mode: 'mock', allowed_domains: ['example.com'], locale: 'en-GB', profiles, limits: { preparation_calls: 3, search_calls: 5, evaluator_calls: 15, recommendation_calls: 1, automatic_retries: false } } });
+      if (url.pathname === '/api/v2/policy') return route.fulfill({ json: { policy_id: 'mock-ui', execution_mode: 'mock', allowed_domains: ['example.com'], locale: 'en-GB', profiles, limits: { preparation_calls: 3, search_calls: 5, evaluator_calls: 15, recommendation_calls: 1, automatic_retries: false }, agent_execution: {default_principal_id: 'local-agent', human_authorization_required: true} } });
       if (url.pathname === '/api/v2/runs' && request.method() === 'GET') return route.fulfill({ json: run ? [run] : [] });
       if (url.pathname === '/api/v2/briefs') {
         briefSubmissions++;
         assert.deepEqual(request.postDataJSON(), brief);
         run = { run_id: 'run-ui', revision: 1, state: 'draft', brief, inputs: null, approval: null, approval_hash: null, measurement: null, recommendations: null, scores: null, events: events('draft') };
         return route.fulfill({ status: 201, json: run });
+      }
+      if (url.pathname === '/api/v2/runs/run-ui/agent-execution-authorizations') {
+        const body = request.postDataJSON();
+        assert.equal(body.agent_principal_id, 'local-agent');
+        assert.equal(body.expected_revision, run.revision);
+        assert.ok(['prepare', 'evaluate'].includes(body.stage));
+        if (body.stage === 'evaluate') assert.equal(body.input_hash, run.approval_hash);
+        agentAuthorizations++;
+        return route.fulfill({status: 201, json: {
+          authorization_id: `authorization-${body.stage}`,
+          stage: body.stage,
+          run_revision: run.revision,
+          input_hash: body.input_hash || null,
+          expires_at: '2026-09-17T14:00:00Z',
+        }});
       }
       if (url.pathname === '/api/v2/runs/run-ui/prepare') {
         assert.equal(request.postDataJSON().confirm_preparation_calls, true);
@@ -180,6 +196,8 @@ const baseUrl = process.env.GEO_BROWSER_BASE_URL || 'http://127.0.0.1:8091';
     await page.getByLabel('Public URL').fill(brief.url);
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await page.locator('#run-detail .state').getByText('draft', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Authorise agent preparation' }).click();
+    await page.getByText('Agent preparation authorised.', {exact: true}).waitFor();
     await page.locator('#prepare-confirm').check();
     await page.getByRole('button', { name: 'Prepare query packet' }).click();
     await page.getByRole('button', { name: 'Approve exact queries' }).waitFor();
@@ -191,6 +209,8 @@ const baseUrl = process.env.GEO_BROWSER_BASE_URL || 'http://127.0.0.1:8091';
     await page.getByRole('button', { name: 'Save query packet' }).click();
     await page.getByText('Edited buyer question 1?', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Approve exact queries' }).click();
+    await page.getByRole('button', { name: 'Authorise agent measurement' }).click();
+    await page.getByText('Agent measurement authorised.', {exact: true}).waitFor();
     await page.locator('#evaluate-confirm').check();
     assert.equal(await page.locator('#include-recommendations').count(), 0);
     await page.getByRole('button', { name: 'Start measurement' }).click();
@@ -267,6 +287,7 @@ const baseUrl = process.env.GEO_BROWSER_BASE_URL || 'http://127.0.0.1:8091';
     await page.screenshot({ path: path.resolve(__dirname, '../.data/measurement-mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
     assert.equal(externalCalls, 0);
+    assert.equal(agentAuthorizations, 2);
     for (const theme of ['light', 'dark']) {
       await page.getByLabel('Color theme').selectOption(theme);
       for (const width of [1440, 768, 390, 320]) {
