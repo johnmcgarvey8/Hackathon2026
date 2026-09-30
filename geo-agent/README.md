@@ -50,7 +50,7 @@ The exported input hash is an integrity fingerprint, not evidence that a human a
 
 Gate C.5 verification: **58 MCP and human-handoff tests passed**. The [MCP tests](tests/test_mcp_server.py) exercise all twenty tools, real stdio and Streamable HTTP clients, separate agent identity, human-issued execution authorization, terminal replay, job-scoped progress, bounded maximal query packets and immutable export reads. The workspace verifier starts the committed `geoAgent` entry, and the end-to-end verifier completes one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 synthetic operations with no external traffic. The browser checks cover the six-stage UI and both agent-authorisation handoffs, including accessibility, reload recovery, safe rendering and ZIP integrity.
 
-The complete repository suite passes **612 tests** with 18 existing Pydantic serialization warnings. The repaired migration graph has one Alembic head, project and MCP persistence coexist, and export reservations are run-scoped so deleting a run cannot permanently consume an unfulfilled idempotency key. See the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
+The complete repository suite passes **615 tests** with 19 existing Pydantic serialization warnings. The repaired migration graph has one Alembic head, project and MCP persistence coexist, and export reservations are run-scoped so deleting a run cannot permanently consume an unfulfilled idempotency key. See the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
 
 ### Grounding and Answer Assessment
 

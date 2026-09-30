@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-The local MCP implementation is complete, the committed VS Code workspace path has passed its automated Gate C.5 proof, and the integrated Python baseline is green at 612 tests. One interactive step remains: reload the workspace, approve MCP trust and complete a Copilot-driven synthetic run.
+The local MCP implementation is complete, the committed VS Code workspace path has passed its automated Gate C.5 proof, and the integrated Python baseline is green at 615 tests. One interactive step remains: reload the workspace, approve MCP trust and complete a Copilot-driven synthetic run.
 
 The three priorities are **close local acceptance**, **confirm production decisions** and **then harden the governed service**. Preserve the existing human checkpoints, scientific semantics, provider-operation counts and immutable exports. Do not start Gate D or enable live MCP merely because the local mock workflow is successful.
 
@@ -22,7 +22,7 @@ Current source and operating guidance:
 
 | Section | Description | Notes |
 | --- | --- | --- |
-| Startle | The automated Copilot-equivalent journey completes all 23 synthetic operations, reconnects after restart and now sits on a 612-test green baseline. | Only the interactive VS Code trust and Copilot check remains in Gate C.5. |
+| Startle | The automated Copilot-equivalent journey completes all 23 synthetic operations, reconnects after restart and now sits on a 615-test green baseline. | Only the interactive VS Code trust and Copilot check remains in Gate C.5. |
 | WIIFM | A committed workspace path gives Copilot the governed GEO workflow without copied configuration or live-provider spend. | Agents gain preparation, measurement, evidence and export access without gaining human approval rights. |
 | Needs and Challenges | Close the interactive trust check before adding remote identity, storage, worker isolation, observability and controlled live spend. | The stdio MCP path and repository-wide baseline are proven locally. |
 | Define Questions | Can the workspace pass a real Copilot run, then preserve owner isolation and responsiveness through a hosted topology? | Gate C.5 closes local usability. Gate D answers remote readiness. Gate E answers live acceptance. |
@@ -53,7 +53,7 @@ Current source and operating guidance:
 | Maximum response | 4,972 bytes | 4,982 bytes | Default at most 16 KiB; progress at most 8 KiB |
 | Tool catalogue | 17,970 bytes | 17,970 bytes | At most 32 KiB |
 
-The MCP, human handoff, configuration, evaluation and worker suites passed **58 tests**. The browser and accessibility harness passed with no external calls. The complete repository suite passed **612 tests** with 18 existing Pydantic serialization warnings.
+The MCP, human handoff, configuration, evaluation and worker suites passed **58 tests**. The browser and accessibility harness passed with no external calls. The complete repository suite passed **615 tests** with 19 existing Pydantic serialization warnings.
 
 ### Implemented safety properties
 
@@ -367,7 +367,7 @@ Do not parallelise edits to persistence, migration, execution authorisation and 
    & '.\geo-agent\.venv\Scripts\python.exe' geo-agent\tests\measure_mcp_performance.py
    ```
 
-6. Run the full Python suite and confirm the 612-test baseline before Gate D.
+6. Run the full Python suite and confirm the 615-test baseline before Gate D.
 7. Inspect these code surfaces before changing them:
    - [MCP registration and transports](geo-agent/src/geo_agent/mcp_server.py)
    - [Application service and bounded views](geo-agent/src/geo_agent/measurement_service.py)

@@ -1,7 +1,7 @@
 {
   "schema_version": "geo-mcp-vscode-integration/v1",
   "measured_at": "2026-09-30",
-  "base_commit": "7901712",
+  "base_commit": "c219565",
   "status": "automated-pass-interactive-trust-check-pending",
   "environment": {
     "operating_system": "Windows",
@@ -53,10 +53,10 @@
     },
     "full_python_suite": {
       "status": "passed",
-      "passed": 612,
+      "passed": 615,
       "failed": 0,
       "errors": 0,
-      "warnings": 18
+      "warnings": 19
     }
   },
   "performance": {
