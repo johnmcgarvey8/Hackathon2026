@@ -19,7 +19,6 @@ from geo_agent.measurement_views import (
     CursorCodec,
     artifact_view as _artifact_view,
     job_view as _job_view,
-    run_view as _run_view,
 )
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
@@ -117,6 +116,7 @@ def create_measurement_router(
         artifact_service,
         CursorCodec(secrets.token_bytes(32)),
     )
+    run_view = lambda run: build_run_view(repository, run, policy)
 
     def run_view(run) -> dict:
         return build_run_view(repository, run, policy)
@@ -158,7 +158,7 @@ def create_measurement_router(
     @router.post("/briefs", status_code=201)
     def create_brief(body: CreateMeasurementBriefRequest, owner: OwnerIdentity = owner_dependency) -> dict:
         brief = Brief.model_validate(body.model_dump(exclude={"brand_definition"}))
-        return _run_view(application.create_human_run(
+        return run_view(application.create_human_run(
             owner,
             brief=brief,
             brand_definition=body.brand_definition,

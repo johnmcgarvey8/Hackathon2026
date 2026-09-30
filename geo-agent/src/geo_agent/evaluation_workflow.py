@@ -59,6 +59,7 @@ class EvaluationHandler:
     def __call__(self, job: WorkflowJob, operations: ClaimedOperationRunner) -> Mutation:
         if job.job_type not in {JobType.EVALUATE, JobType.RECOVER_EVALUATORS}:
             raise Conflict("Evaluation handler requires an evaluation job")
+        recovery = job.job_type == JobType.RECOVER_EVALUATORS
         if (
             job.policy_id is not None
             and (
@@ -67,7 +68,11 @@ class EvaluationHandler:
             )
         ):
             raise Conflict("Evaluation job does not match the worker execution policy")
-        request = EvaluationRequest.model_validate(job.request)
+        request = (
+            EvaluatorRecoveryRequest.model_validate(job.request)
+            if recovery
+            else EvaluationRequest.model_validate(job.request)
+        )
         run = self.repository.get(job.run_id, job.owner)
         if run.state != MeasurementState.EVALUATING or run.inputs is None or run.approval is None:
             raise Conflict("Evaluation requires leased, approved measurement inputs")
@@ -154,7 +159,7 @@ class EvaluationHandler:
                     )
                 except Conflict:
                     raise
-                except Exception:
+                except Exception as error:
                     result = self._error_result(
                         pair.query_id,
                         profile,

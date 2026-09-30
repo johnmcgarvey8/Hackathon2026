@@ -1,0 +1,89 @@
+{
+  "schema_version": "geo-mcp-vscode-integration/v1",
+  "measured_at": "2026-09-30",
+  "base_commit": "7901712",
+  "status": "automated-pass-interactive-trust-check-pending",
+  "environment": {
+    "operating_system": "Windows",
+    "vscode_version": "1.139.1",
+    "python_version": "3.13.7",
+    "mcp_version": "2.2.0",
+    "pydantic_version": "2.13.5",
+    "fastapi_version": "0.141.1",
+    "sqlalchemy_version": "2.0.52",
+    "alembic_version": "1.19.2",
+    "pytest_version": "9.1.1"
+  },
+  "workspace": {
+    "configuration": ".vscode/mcp.json",
+    "server_name": "geoAgent",
+    "transport": "stdio",
+    "tool_count": 20,
+    "secrets_in_configuration": false,
+    "configuration_smoke": "passed"
+  },
+  "persistence": {
+    "alembic_head": "0008_export_request_run_scope",
+    "alembic_heads": 1,
+    "sqlite_journal_mode": "wal",
+    "sqlite_busy_timeout_ms": 30000,
+    "export_reservations": "run-scoped"
+  },
+  "synthetic_end_to_end": {
+    "status": "passed",
+    "queries": 5,
+    "profiles": 3,
+    "profile_outcomes": 15,
+    "provider_operations": 23,
+    "human_execution_authorizations": 2,
+    "exact_query_approval": "human-api-only",
+    "export_manifest": "passed",
+    "restart_and_reconnect": "passed",
+    "live_provider_calls": 0
+  },
+  "tests": {
+    "mcp_and_human_handoff": {
+      "status": "passed",
+      "passed": 58,
+      "warnings": 5
+    },
+    "browser_and_accessibility": {
+      "status": "passed",
+      "external_calls": 0
+    },
+    "full_python_suite": {
+      "status": "passed",
+      "passed": 612,
+      "failed": 0,
+      "errors": 0,
+      "warnings": 18
+    }
+  },
+  "performance": {
+    "saved_runs": 1000,
+    "simultaneous_clients": 5,
+    "requests_per_transport": 200,
+    "stdio": {
+      "catalogue_bytes": 17970,
+      "max_payload_bytes": 4972,
+      "max_seconds": 0.13551279999956023,
+      "p95_seconds": 0.019053800002438948
+    },
+    "streamable_http": {
+      "catalogue_bytes": 17970,
+      "max_payload_bytes": 4982,
+      "max_seconds": 0.16928360000019893,
+      "p95_seconds": 0.11745820000214735
+    },
+    "targets": {
+      "catalogue_bytes": 32768,
+      "default_payload_bytes": 16384,
+      "progress_payload_bytes": 8192,
+      "warm_p95_seconds": 2
+    }
+  },
+  "interactive_vscode_check": {
+    "status": "pending",
+    "required_action": "Reload the workspace, approve MCP trust and complete one Copilot-driven synthetic run."
+  }
+}

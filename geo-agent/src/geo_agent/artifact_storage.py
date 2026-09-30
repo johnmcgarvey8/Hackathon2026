@@ -192,7 +192,10 @@ class ArtifactService:
             content_hash=content_hash,
             media_type=self.media_type,
             size=len(content),
-            storage_key=f"{owner.key}/{run.run_id}/{ArtifactKind.MEASUREMENT.value}/{content_hash}.zip",
+            storage_key=(
+                f"{run.run_id}/"
+                f"{owner.key}-{ArtifactKind.MEASUREMENT.value}-{content_hash}.zip"
+            ),
         )
         self.storage.put(artifact.storage_key, content)
         return self.repository.persist_export(artifact, owner, revision)
@@ -255,7 +258,7 @@ class ArtifactService:
             content_hash=content_hash,
             media_type=self.media_type,
             size=len(content),
-            storage_key=f"{owner.key}/{run.run_id}/{kind.value}/{content_hash}.zip",
+            storage_key=f"{run.run_id}/{owner.key}-{kind.value}-{content_hash}.zip",
         )
         self.storage.put(artifact.storage_key, content)
         return self.repository.persist_companion(artifact, owner, revision)

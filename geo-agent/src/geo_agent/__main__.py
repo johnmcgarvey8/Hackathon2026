@@ -22,7 +22,7 @@ from geo_agent.workflow import RunStore
 
 def load_environment(env_file: Path | None = None) -> None:
     path = env_file if env_file is not None else Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(path, override=True, interpolate=False)
+    load_dotenv(path, override=False, interpolate=False)
 
 
 def main() -> None:

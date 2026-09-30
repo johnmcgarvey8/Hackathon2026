@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 JobHandler = Callable[[WorkflowJob, ClaimedOperationRunner], Mutation]
-logger = logging.getLogger(__name__)
 
 
 class LeaseHeartbeat:
@@ -86,6 +85,7 @@ class Worker:
         policy_id: str | None = None,
         policy_hash: str | None = None,
         owner_key: str | None = None,
+        on_job_finished: Callable[[WorkflowJob, MeasurementRun], None] | None = None,
     ):
         if not 3 <= lease_seconds <= 3600:
             raise ValueError("Worker lease duration must be between 3 and 3600 seconds")
@@ -103,6 +103,7 @@ class Worker:
         self.policy_id = policy_id
         self.policy_hash = policy_hash
         self.owner_key = owner_key
+        self.on_job_finished = on_job_finished
 
     def run_once(self) -> tuple[WorkflowJob, MeasurementRun] | None:
         self.repository.recover_interrupted()
@@ -117,12 +118,14 @@ class Worker:
             return None
         handler = self.handlers.get(job.job_type)
         if handler is None:
-            return self.repository.fail_job(
+            result = self.repository.fail_job(
                 job.job_id,
                 self.worker_id,
                 "unsupported-job-type",
                 job.lease_token,
             )
+            self._notify_finished(result)
+            return result
         operations = ClaimedOperationRunner(self.repository, job, self.worker_id)
         heartbeat = LeaseHeartbeat(
             self.repository,
@@ -142,24 +145,42 @@ class Worker:
             code = error.code.value if isinstance(error, ProviderError) else type(error).__name__
             try:
                 heartbeat.ensure_active()
-                return self.repository.fail_job(
+                result = self.repository.fail_job(
                     job.job_id,
                     self.worker_id,
                     code,
                     job.lease_token,
                 )
+                self._notify_finished(result)
+                return result
             except LeaseLost:
                 logger.warning("Worker could not finalize failed job %s after lease loss", job.job_id)
                 return None
         heartbeat.stop()
         try:
             heartbeat.ensure_active()
-            return self.repository.complete_job(
+            result = self.repository.complete_job(
                 job.job_id,
                 self.worker_id,
                 mutation,
                 job.lease_token,
             )
+            self._notify_finished(result)
+            return result
         except LeaseLost:
             logger.warning("Worker could not complete job %s after lease loss", job.job_id)
             return None
+
+    def _notify_finished(
+        self,
+        result: tuple[WorkflowJob, MeasurementRun],
+    ) -> None:
+        if self.on_job_finished is None:
+            return
+        try:
+            self.on_job_finished(*result)
+        except Exception:
+            logger.exception(
+                "Post-job reconciliation failed for job %s",
+                result[0].job_id,
+            )

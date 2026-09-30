@@ -66,6 +66,7 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
+    print("Mock measurement worker ready", flush=True)
     try:
         run_worker(runtime, stop_event, poll_seconds)
     finally:

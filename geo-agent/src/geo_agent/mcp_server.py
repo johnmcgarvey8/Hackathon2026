@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import asyncio
+import time
 from contextvars import ContextVar
 from functools import partial
 from pathlib import Path
@@ -525,21 +526,42 @@ def create_streamable_http_app(
 
 
 def _persistent_secret(path: Path) -> bytes:
+    def read_initialized() -> bytes | None:
+        for _ in range(100):
+            try:
+                encoded = path.read_text(encoding="ascii").strip()
+            except FileNotFoundError:
+                return None
+            try:
+                existing = bytes.fromhex(encoded)
+            except ValueError:
+                existing = b""
+            if len(existing) == 32:
+                return existing
+            time.sleep(0.01)
+        raise ValueError("MCP cursor key file must contain 32 valid bytes")
+
+    existing = read_initialized()
+    if existing is not None:
+        return existing
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    value = secrets.token_bytes(32)
     try:
-        encoded = path.read_text(encoding="ascii").strip()
-    except FileNotFoundError:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        value = secrets.token_bytes(32)
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
-            stream.write(value.hex())
-        return value
-    try:
-        value = bytes.fromhex(encoded)
-    except ValueError as error:
-        raise ValueError("MCP cursor key file is invalid") from error
-    if len(value) != 32:
-        raise ValueError("MCP cursor key file must contain 32 bytes")
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        existing = read_initialized()
+        if existing is None:
+            raise ValueError("MCP cursor key file disappeared during initialization")
+        return existing
+    with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+        stream.write(value.hex())
+        stream.flush()
+        os.fsync(stream.fileno())
     return value
 
 

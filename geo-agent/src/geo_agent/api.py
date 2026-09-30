@@ -183,6 +183,14 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         measurement_policy,
         goal_summaries,
     )
+    if mock_runtime is not None:
+        mock_runtime.worker.on_job_finished = (
+            lambda job, run: project_chat_workflow.reconcile_job(
+                job,
+                run,
+                project_agent,
+            )
+        )
 
     if measurement_policy is not None and measurement_application is not None:
         app.include_router(create_measurement_router(
@@ -199,7 +207,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         measurement_policy,
         authenticate_operator,
         measurement_artifacts,
-        None,
+        mock_runtime.drain if mock_runtime is not None else None,
         goal_summaries,
     ))
     app.include_router(create_project_chat_router(
@@ -210,7 +218,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         ),
         measurement_policy,
         authenticate_operator,
-        None,
+        mock_runtime.drain if mock_runtime is not None else None,
     ))
 
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
