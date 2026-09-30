@@ -22,7 +22,7 @@ from geo_agent.artifact_storage import ArtifactKind, ArtifactService, LocalArtif
 from geo_agent.contracts import digest
 from geo_agent.evidence_assessment import BrandDefinition
 from geo_agent.execution_policy import MeasurementExecutionPolicy
-from geo_agent.mcp_server import create_mcp_server
+from geo_agent.mcp_server import _persistent_secret, create_mcp_server
 from geo_agent.measurement_service import MeasurementApplicationService
 from geo_agent.measurement_views import CursorCodec
 from geo_agent.measurement_workflow import MeasurementCoordinator, OwnerIdentity
@@ -284,6 +284,16 @@ def test_stdio_transport_discovers_and_calls_without_starting_work(tmp_path):
             assert connection.execute("SELECT COUNT(*) FROM workflow_jobs").fetchone()[0] == 0
 
     asyncio.run(scenario())
+
+
+def test_persistent_secret_creation_is_concurrency_safe(tmp_path):
+    path = tmp_path / "mcp-cursor-key"
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        values = tuple(executor.map(lambda _: _persistent_secret(path), range(5)))
+
+    assert len(set(values)) == 1
+    assert values[0] == bytes.fromhex(path.read_text(encoding="ascii"))
 
 
 def _free_port() -> int:

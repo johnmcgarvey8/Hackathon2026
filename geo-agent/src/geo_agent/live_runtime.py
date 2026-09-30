@@ -59,19 +59,30 @@ class LiveMeasurementRuntime:
             create_evaluator(profile, token_provider=token_provider, transport=foundry_transport)
             for profile in policy.profiles
         )
-        self.worker = Worker(repository, worker_id, {
-            JobType.PREPARE: PreparationHandler(policy, webiq, preparation, preparation),
-            JobType.EVALUATE: EvaluationHandler(
-                repository,
-                policy,
-                webiq,
-                evaluators,
-                RecommendationService(preparation),
-            ),
-        },
+        evaluation = EvaluationHandler(
+            repository,
+            policy,
+            webiq,
+            evaluators,
+            RecommendationService(preparation),
+        )
+        self.worker = Worker(
+            repository,
+            worker_id,
+            {
+                JobType.PREPARE: PreparationHandler(
+                    policy,
+                    webiq,
+                    preparation,
+                    preparation,
+                ),
+                JobType.EVALUATE: evaluation,
+                JobType.RECOVER_EVALUATORS: evaluation,
+            },
             policy_id=policy.policy_id,
             policy_hash=policy.policy_hash,
-            owner_key=budget_grant.owner.key,
+            owner_key=grants[0].owner.key,
+            on_job_finished=on_job_finished,
         )
         self.repository = repository
 

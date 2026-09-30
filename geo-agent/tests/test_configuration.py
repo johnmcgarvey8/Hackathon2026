@@ -19,12 +19,12 @@ def test_env_file_loads_endpoints_and_preserves_literal_key(tmp_path, monkeypatc
     assert os.environ["WEBIQ_API_KEY"] == "dummy-${NOT_AN_ENV_REFERENCE}-value"
 
 
-def test_env_file_takes_precedence_for_local_runtime(tmp_path, monkeypatch):
+def test_existing_environment_takes_precedence_for_local_runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBIQ_API_KEY", "dummy-existing-value")
     env_file = tmp_path / ".env"
     env_file.write_text("WEBIQ_API_KEY=dummy-file-value\n", encoding="utf-8")
     load_environment(env_file)
-    assert os.environ["WEBIQ_API_KEY"] == "dummy-file-value"
+    assert os.environ["WEBIQ_API_KEY"] == "dummy-existing-value"
 
 
 def test_missing_env_file_is_optional(tmp_path, monkeypatch):

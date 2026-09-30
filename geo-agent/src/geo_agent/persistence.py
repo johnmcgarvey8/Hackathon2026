@@ -64,7 +64,7 @@ from geo_agent.workflow import Conflict, NotFound
 
 
 metadata = MetaData()
-LATEST_SCHEMA_REVISION = "0005_nullable_export_reservations"
+LATEST_SCHEMA_REVISION = "0008_export_request_run_scope"
 
 projects = Table(
     "projects",
@@ -334,8 +334,10 @@ artifact_create_requests = Table(
     Column("owner_key", String(64), primary_key=True),
     Column("idempotency_key", String(200), primary_key=True),
     Column("request_hash", String(64), nullable=False),
+    Column("run_id", String(64), ForeignKey("measurement_runs.run_id")),
     Column("artifact_id", String(64), ForeignKey("artifacts.artifact_id")),
     Column("created_at", String(40), nullable=False),
+    Index("ix_artifact_create_requests_run", "run_id", "owner_key"),
 )
 
 agent_execution_authorizations = Table(
@@ -406,7 +408,12 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
     })
 
     def __init__(self, database_url: str, *, initialize_schema: bool = False):
-        self.engine = create_engine(database_url)
+        engine_options = (
+            {"connect_args": {"timeout": 30}}
+            if database_url.startswith("sqlite")
+            else {}
+        )
+        self.engine = create_engine(database_url, **engine_options)
         self._measurement_budget_binding: tuple[str, str, str] | None = None
         self._measurement_budget_enforced = True
         if self.engine.dialect.name == "sqlite":
@@ -425,6 +432,8 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
     def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("PRAGMA busy_timeout = 30000")
+        cursor.execute("PRAGMA journal_mode = WAL")
         cursor.close()
 
     @staticmethod
@@ -825,12 +834,19 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             run_create_requests.c.run_id == run_id,
             run_create_requests.c.owner_key == owner.key,
         ))
-        if artifact_ids:
-            connection.execute(sql_delete(artifact_create_requests).where(
+        connection.execute(sql_delete(artifact_create_requests).where(
+            artifact_create_requests.c.owner_key == owner.key,
+            or_(
+                artifact_create_requests.c.run_id == run_id,
                 artifact_create_requests.c.artifact_id.in_(artifact_ids),
-                artifact_create_requests.c.owner_key == owner.key,
+            ),
+        ))
+        if artifact_ids:
+            connection.execute(sql_delete(artifacts).where(
+                artifacts.c.artifact_id.in_(artifact_ids),
+                artifacts.c.owner_key == owner.key,
             ))
-        for table in (artifacts, approvals, run_events, run_brand_definitions):
+        for table in (approvals, run_events, run_brand_definitions):
             connection.execute(sql_delete(table).where(table.c.run_id == run_id))
         connection.execute(sql_delete(project_runs).where(
             project_runs.c.project_id == project_id,
@@ -1447,11 +1463,13 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
     def reserve_export_request(
         self,
         owner: OwnerIdentity,
+        run_id: str,
         idempotency_key: str,
         request_hash: str,
     ) -> MeasurementArtifact | None:
         try:
             with self.engine.begin() as connection:
+                self._read(connection, run_id, owner)
                 existing = connection.execute(
                     select(artifact_create_requests).where(
                         artifact_create_requests.c.owner_key == owner.key,
@@ -1463,10 +1481,13 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                         owner_key=owner.key,
                         idempotency_key=idempotency_key,
                         request_hash=request_hash,
+                        run_id=run_id,
                         artifact_id=None,
                         created_at=utc_now().isoformat(),
                     ))
                     return None
+                if existing.run_id is not None and existing.run_id != run_id:
+                    raise Conflict("Idempotency key is bound to a different export run")
                 if existing.request_hash != request_hash:
                     raise Conflict("Idempotency key is bound to a different export request")
                 if existing.artifact_id is None:
@@ -1488,6 +1509,8 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 ).first()
                 if existing is None:
                     raise
+                if existing.run_id is not None and existing.run_id != run_id:
+                    raise Conflict("Idempotency key is bound to a different export run")
                 if existing.request_hash != request_hash:
                     raise Conflict("Idempotency key is bound to a different export request")
                 if existing.artifact_id is None:
@@ -1516,6 +1539,13 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     )
                 ).first()
                 if existing is not None:
+                    if (
+                        existing.run_id is not None
+                        and existing.run_id != artifact.run_id
+                    ):
+                        raise Conflict(
+                            "Idempotency key is bound to a different export run"
+                        )
                     if existing.request_hash != request_hash:
                         raise Conflict("Idempotency key is bound to a different export request")
                     if existing.artifact_id is None:
@@ -1527,7 +1557,10 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                                 artifact_create_requests.c.request_hash == request_hash,
                                 artifact_create_requests.c.artifact_id.is_(None),
                             )
-                            .values(artifact_id=artifact.artifact_id)
+                            .values(
+                                run_id=artifact.run_id,
+                                artifact_id=artifact.artifact_id,
+                            )
                         )
                         if changed.rowcount == 1:
                             return artifact
@@ -1546,7 +1579,12 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     return self._artifact_from_row(row)
                 raise Conflict("Export request was not reserved")
         except IntegrityError:
-            replay = self.reserve_export_request(owner, idempotency_key, request_hash)
+            replay = self.reserve_export_request(
+                owner,
+                artifact.run_id,
+                idempotency_key,
+                request_hash,
+            )
             if replay is not None:
                 return replay
             raise
@@ -2818,7 +2856,14 @@ class SQLiteMeasurementRepository(SQLAlchemyMeasurementRepository):
                 row[1] == "artifact_id" and row[3] == 0
                 for row in column_rows.get("artifact_create_requests", [])
             )
-            complete = v4_complete and artifact_reservation_nullable
+            artifact_reservation_run_scoped = (
+                "run_id" in columns.get("artifact_create_requests", set())
+            )
+            complete = (
+                v4_complete
+                and artifact_reservation_nullable
+                and artifact_reservation_run_scoped
+            )
             markers_present = (
                 bool(required_tables.intersection(tables))
                 or bool(mcp_only_indexes.intersection(indexes))
@@ -2845,10 +2890,18 @@ class SQLiteMeasurementRepository(SQLAlchemyMeasurementRepository):
                     raise Conflict(
                         "The MCP schema is partially migrated; restore a backup or complete a controlled repair"
                     )
+            elif version == "0005_nullable_export_reservations":
+                if not v4_complete or not artifact_reservation_nullable:
+                    raise Conflict(
+                        "The MCP export schema is partially migrated; restore a backup or complete a controlled repair"
+                    )
             elif version is None and v4_complete:
                 version = "0004_mcp_execution_foundation"
             if markers_present:
-                if version != "0004_mcp_execution_foundation":
+                if version not in {
+                    "0004_mcp_execution_foundation",
+                    "0005_nullable_export_reservations",
+                }:
                     raise Conflict(
                         "The MCP schema is partially migrated; restore a backup or complete a controlled repair"
                     )

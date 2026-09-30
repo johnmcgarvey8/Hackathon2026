@@ -164,16 +164,28 @@ class MockMeasurementRuntime:
         if policy.execution_mode != "mock":
             raise ValueError("The local mock runtime requires a mock execution policy")
         preparation = SyntheticPreparationModel()
-        self.worker = Worker(repository, "local-mock-worker", {
-            JobType.PREPARE: PreparationHandler(policy, SyntheticBrowse(), preparation, preparation),
-            JobType.EVALUATE: EvaluationHandler(
-                repository,
-                policy,
-                SyntheticSearch(),
-                tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
-                SyntheticRecommendations(),
-            ),
-        }, policy_id=policy.policy_id, policy_hash=policy.policy_hash)
+        self.worker = Worker(
+            repository,
+            "local-mock-worker",
+            {
+                JobType.PREPARE: PreparationHandler(
+                    policy,
+                    SyntheticBrowse(),
+                    preparation,
+                    preparation,
+                ),
+                JobType.EVALUATE: EvaluationHandler(
+                    repository,
+                    policy,
+                    SyntheticSearch(),
+                    tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
+                    SyntheticRecommendations(),
+                ),
+            },
+            policy_id=policy.policy_id,
+            policy_hash=policy.policy_hash,
+            on_job_finished=on_job_finished,
+        )
         self._lock = Lock()
         self._pending = Event()
 
