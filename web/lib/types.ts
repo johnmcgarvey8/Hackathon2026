@@ -397,7 +397,16 @@ export interface BrandEvidenceAssessment {
         };
       }[];
     }[];
-    answers: Record<string, unknown>[];
+    answers: {
+      query_id: string;
+      profile_id: string;
+      status: "completed" | "error" | "missing";
+      brand: {
+        status: "matched" | "ambiguous" | "absent" | "unknown" | "unconfigured";
+        matches: unknown[];
+      };
+      [key: string]: unknown;
+    }[];
     limitations: string[];
     [key: string]: unknown;
   } | null;

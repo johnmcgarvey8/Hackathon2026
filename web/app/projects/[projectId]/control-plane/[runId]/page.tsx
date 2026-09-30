@@ -168,6 +168,7 @@ export default function ControlPlaneRunPage() {
             run={run}
             assessment={assessment}
             strategy={strategy}
+            showLimitations={false}
             onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)}
           />
 

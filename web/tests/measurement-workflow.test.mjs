@@ -71,12 +71,11 @@ test("polling is bounded, visibility aware, and GET only", () => {
 test("results are grouped by query and provider answers use safe markdown", () => {
   const results = read("components/measurement/results/measurement-results.tsx");
   for (const heading of [
-    "Grounding queries",
+    "Grounding queries and brand presence",
     "Inference inputs",
     "Grounding supplied to the LLM",
     "LLM Provider Survey",
     "Citation performance",
-    "Brand presence",
     "Recommendations",
     "Limitations and provenance",
   ]) assert.match(results, new RegExp(heading));
@@ -91,6 +90,10 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /post-inference provider responses/);
   assert.match(results, /measurement-query-group/);
   assert.match(results, /provider-survey-response/);
+  assert.match(results, /answerBrandFindings\.find/);
+  assert.match(results, /answerBrandPresentation\(brandFinding\.brand\.status, brandName\)/);
+  assert.match(results, /\$\{brandName\} mentioned/);
+  assert.doesNotMatch(results, />\{answer\.status\}<\/span>/);
   assert.ok(results.indexOf('id="model-answers"') > results.indexOf('id="query-plan"'));
   assert.match(results, /query\?\.chat_query \|\| "Prompt unavailable"/);
   assert.doesNotMatch(results, /providerSurveyLabel|Survey response #/);
@@ -105,11 +108,11 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /content=\{answer\.answer\}/);
   assert.match(results, /onCitationClick/);
   assert.match(results, /Grounding query/);
-  assert.match(results, /Grounding query results/);
-  assert.match(results, /green check means/);
   assert.match(results, /groundingMatchPresentation/);
-  assert.match(results, /View matching citation/);
-  assert.match(results, /finding\.brand_status === "matched"/);
+  assert.match(results, /brandSources\.get\(source\.evidence_id\) === "matched"/);
+  assert.match(results, /Brand result unknown/);
+  assert.doesNotMatch(results, /Brand presence summary/);
+  assert.doesNotMatch(results, /id="brand-presence"/);
   assert.match(results, /findingLabels\(finding\)\.join/);
   assert.match(results, /Results blocked/);
   assert.match(results, /non-live data/);
@@ -122,10 +125,9 @@ test("measurement detail provides accessible responsive section navigation", () 
   const styles = read("app/globals.css");
   for (const [id, label] of [
     ["brief", "Brief"],
-    ["query-plan", "Grounding Queries"],
+    ["query-plan", "Grounding & Brand Presence"],
     ["model-answers", "LLM Provider Survey"],
     ["citation-performance", "Citation Performance"],
-    ["brand-presence", "Brand Presence"],
     ["recommendations", "Recommendations"],
   ]) {
     assert.match(sectionNav, new RegExp(`id: "${id}", label: "${label}"`));
@@ -145,8 +147,9 @@ test("measurement detail provides accessible responsive section navigation", () 
 
 test("chat renders query-centric workflow evidence without exposing internal IDs", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
+  const types = read("lib/types.ts");
   assert.match(chat, /measurement_workflows/);
-  assert.match(chat, /linked_run_ids/);
+  assert.match(types, /linked_run_ids/);
   assert.match(chat, /turn\.origin !== "workflow"/);
   assert.match(chat, /Measurement insight/);
   assert.match(chat, /evidencePresentation/);
@@ -163,6 +166,14 @@ test("chat renders query-centric workflow evidence without exposing internal IDs
   assert.match(chat, /source-card source-card-link/);
   assert.match(chat, /Open in Control Plane/);
   assert.match(chat, /control-plane\/\$\{encodeURIComponent\(workflowRunId\)\}/);
+  assert.match(chat, /\[\.\.\.runSources, \.\.\.drawerSources\]/);
+  assert.match(chat, /No saved WebIQ citations are available for this grounding query/);
+  assert.doesNotMatch(chat, /No returned citations are included in this response/);
+  assert.match(chat, /query\?\.chat_query \|\| "Survey question unavailable"/);
+  assert.match(chat, /answer\.sources\.filter\(\(source\) => answer\.citation_ids\.includes\(source\.evidence_id\)\)/);
+  assert.match(chat, /<AssistantMarkdown content=\{answer\.answer\}/);
+  assert.match(chat, /<h5>Cited sources<\/h5>/);
+  assert.match(chat, /This response did not cite any supplied grounding sources/);
   assert.match(chat, /className="source-url"/);
   assert.match(chat, /title=\{sourceUrl\}/);
   assert.match(chat, /source-subgroup-header/);
@@ -179,6 +190,7 @@ test("chat-first workflow polls saved conversation while control plane remains r
   const control = read("app/projects/[projectId]/control-plane/page.tsx");
   const detail = read("app/projects/[projectId]/control-plane/[runId]/page.tsx");
   const chat = read("app/projects/[projectId]/chat/page.tsx");
+  const styles = read("app/globals.css");
   assert.doesNotMatch(control, /width:\s*"55%"/);
   assert.match(control, /operationTotals/);
   assert.doesNotMatch(control, /cancelJob|New measurement|Create measurement/);
@@ -189,10 +201,18 @@ test("chat-first workflow polls saved conversation while control plane remains r
   assert.match(chat, /attempts < 120/);
   assert.match(chat, /api\.conversation\(project\.project_id, conversationId\)/);
   assert.doesNotMatch(chat, /agent-surfaces|chat-run-notice|View in Control Plane|Manual measurement/);
-  assert.match(chat, /Run-bound conversations/);
-  assert.match(chat, /Project conversations/);
+  assert.match(chat, /\{filtered\.map\(\(conversation\) =>/);
+  assert.doesNotMatch(chat, /Run-bound conversations|Project conversations/);
+  assert.doesNotMatch(chat, /Use run \$\{runId\}|selected\?\.linked_run_ids \|\| \[\]/);
+  assert.match(chat, />Sources<\/span>/);
+  assert.match(chat, /aria-label=\{`Delete chat \$\{conversation\.title\}`\}/);
+  assert.match(styles, /\.chat-history-item \{[^}]*min-width: 0;[^}]*flex: 1;[^}]*width: auto;/);
+  assert.match(styles, /\.chat-delete \{[^}]*width: 28px;[^}]*color: var\(--text-tertiary\);/);
+  assert.match(styles, /\.chat-delete \.ui-icon \{[^}]*width: 15px;/);
+  assert.match(styles, /\.chat-delete:hover, \.chat-delete:focus-visible \{[^}]*color: var\(--red\);/);
   assert.match(chat, /Measure a page/);
   assert.match(detail, /MeasurementResultsView/);
+  assert.match(detail, /showLimitations=\{false\}/);
   assert.match(detail, /troubleshooting-panel/);
   assert.match(detail, /Troubleshooting details/);
   assert.ok(detail.indexOf("troubleshooting-panel") > detail.indexOf("<MeasurementResultsView"));

@@ -13,6 +13,7 @@ export type IconName =
   | "sources"
   | "send"
   | "close"
+  | "trash"
   | "trend"
   | "lock"
   | "chevron";
@@ -30,6 +31,7 @@ const paths: Record<IconName, React.ReactNode> = {
   sources: <><path d="M4 6c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2Z" /><path d="M4 6v6c0 1.1 3.6 2 8 2s8-.9 8-2V6M4 12v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6" /></>,
   send: <path d="m5 12 14-8-5 16-3-6zM5 12h6" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
+  trash: <><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7" /><path d="M10 11v6m4-6v6" /></>,
   trend: <path d="m3 17 6-6 4 4 8-9M15 6h6v6" />,
   lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
   chevron: <path d="m9 18 6-6-6-6" />,

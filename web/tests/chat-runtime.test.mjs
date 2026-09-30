@@ -6,7 +6,7 @@ import vm from "node:vm";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
-function load(path, imports = {}) {
+function load(path, imports = {}, globals = {}) {
   const source = readFileSync(path, "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
@@ -15,6 +15,7 @@ function load(path, imports = {}) {
   vm.runInNewContext(outputText, {
     exports, require: (name) => imports[name] ?? require(name),
     crypto: { randomUUID: () => "new-turn-key" }, URL, Error,
+    ...globals,
   });
   return exports;
 }
@@ -54,7 +55,7 @@ test("chat workflow polling is limited to active backend workflow states", () =>
   ]), false);
 });
 
-function harness(overrides = {}) {
+function harness(overrides = {}, confirm = () => true) {
   const calls = [];
   const states = [];
   const refs = [];
@@ -67,6 +68,7 @@ function harness(overrides = {}) {
     conversation: async () => saved,
     sendMessage: async () => saved,
     createConversation: async () => conversation,
+    deleteConversation: async () => undefined,
     ...overrides,
   }).map(([name, fn]) => [name, (...args) => { calls.push(name); return fn(...args); }]));
   const react = {
@@ -94,7 +96,7 @@ function harness(overrides = {}) {
     "@/components/icons": { Icon: () => null },
     "@/components/assistant-markdown": { AssistantMarkdown: () => null },
     "@/components/status-state": { LoadingState: () => null, UnavailableState: () => null },
-  });
+  }, { window: { confirm } });
   function render() { cursor = 0; refCursor = 0; return ChatPage(); }
   render();
   // Initial loaded workspace, before the first user interaction.
@@ -114,6 +116,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 const sendButton = (node) => node.props?.["aria-label"] === "Send message";
 const newChat = (node) => node.props?.className === "new-chat-button";
 const reloadButton = (node) => node.props?.children === "Reload saved conversation";
+const deleteChat = (node) => node.props?.["aria-label"]?.startsWith("Delete chat ");
 
 test("sending locks navigation and refreshes history and runtime", async () => {
   let finish;
@@ -205,4 +208,25 @@ test("recovery clears only the draft for the matching completed request", async 
   unrelated.submit();
   await settle();
   assert.equal(unrelated.states[4], "Draft question");
+});
+
+test("deleting the selected chat is confirmed, persisted, and selects the next chat", async () => {
+  const next = { ...conversation, conversation_id: "chat-two", title: "Next chat", updated_at: "2026-09-16" };
+  const h = harness();
+  h.states[0] = [conversation, next];
+  h.find(deleteChat).props.onClick();
+  await settle();
+  assert.equal(h.calls.filter((name) => name === "deleteConversation").length, 1);
+  assert.deepEqual(h.states[0].map((item) => item.conversation_id), ["chat-two"]);
+  assert.equal(h.states[2].conversation_id, "chat-two");
+  assert.equal(h.states[4], "");
+});
+
+test("cancelling chat deletion leaves history unchanged", async () => {
+  const h = harness({}, () => false);
+  h.find(deleteChat).props.onClick();
+  await settle();
+  assert.equal(h.calls.includes("deleteConversation"), false);
+  assert.equal(h.states[0][0].conversation_id, conversation.conversation_id);
+  assert.equal(h.states[2].conversation_id, conversation.conversation_id);
 });

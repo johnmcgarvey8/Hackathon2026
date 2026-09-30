@@ -44,6 +44,17 @@ function groundingMatchPresentation(
   return { className: "", label: "Result unknown" };
 }
 
+function answerBrandPresentation(
+  status: NonNullable<BrandEvidenceAssessment["assessment"]>["answers"][number]["brand"]["status"],
+  brandName: string,
+) {
+  if (status === "matched") return { className: "green", label: `✓ ${brandName} mentioned` };
+  if (status === "ambiguous") return { className: "amber", label: `Possible ${brandName} mention` };
+  if (status === "absent") return { className: "", label: `${brandName} not mentioned` };
+  if (status === "unconfigured") return { className: "", label: "Brand not configured" };
+  return { className: "", label: "Brand result unknown" };
+}
+
 function providerAnswerCitations(answer: EvaluatedAnswer): ChatCitation[] {
   return answer.sources.map((source) => ({
     source_class: "geo-evidence",
@@ -55,30 +66,17 @@ function providerAnswerCitations(answer: EvaluatedAnswer): ChatCitation[] {
   }));
 }
 
-function SafeRecord({ value }: { value: unknown }) {
-  if (value === null || value === undefined) return <span>Unknown</span>;
-  if (typeof value !== "object") return <span>{String(value)}</span>;
-  if (Array.isArray(value)) {
-    return <ul className="plain-list">{value.map((item, index) => <li key={index}><SafeRecord value={item} /></li>)}</ul>;
-  }
-  return (
-    <dl className="safe-record">
-      {Object.entries(value as Record<string, unknown>).map(([key, item]) => (
-        <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><SafeRecord value={item} /></dd></div>
-      ))}
-    </dl>
-  );
-}
-
 export function MeasurementResultsView({
   run,
   assessment,
   strategy,
+  showLimitations = true,
   onOpenEvidence,
 }: {
   run: MeasurementRun;
   assessment: BrandEvidenceAssessment | null;
   strategy: ContentStrategyResponse | null;
+  showLimitations?: boolean;
   onOpenEvidence: (evidenceId: string) => void;
 }) {
   const measurement = run.measurement;
@@ -103,6 +101,7 @@ export function MeasurementResultsView({
   });
   const brandName = assessment?.brand_definition?.definition.name || "Brand";
   const groundingFindings = assessment?.assessment?.queries || [];
+  const answerBrandFindings = assessment?.assessment?.answers || [];
   const hasNonLiveData = Boolean(
     (run.inputs && run.inputs.snapshot.provenance !== "live")
     || retrievals.some((retrieval) =>
@@ -136,13 +135,20 @@ export function MeasurementResultsView({
   return (
     <div className="result-sections">
       <section className="card result-section" id="query-plan">
-        <div className="card-heading"><h2>Grounding queries</h2><span className="pill">{queryIds.length} queries</span></div>
-        <p className="muted">Each query groups the WebIQ retrieval input with the grounding citations supplied to the LLM during inference.</p>
+        <div className="card-heading"><h2>Grounding queries and brand presence</h2><span className="pill">{queryIds.length} queries</span></div>
+        <p className="muted">Each query groups the WebIQ retrieval input with the grounding citations supplied to the LLM during inference and flags literal brand presence in the saved results.</p>
         {queryIds.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before grounding queries could be saved." : "Grounding queries are being generated and will be bound automatically."}</p> : (
           <div className="measurement-query-list">
             {queryIds.map((queryId) => {
               const query = queries.find((item) => item.query_id === queryId);
               const retrieval = retrievals.find((item) => item.query_id === queryId);
+              const brandFinding = groundingFindings.find((item) => item.query_id === queryId);
+              const brandPresentation = brandFinding
+                ? groundingMatchPresentation(brandFinding.brand_status, brandName)
+                : { className: "", label: assessment?.brand_definition ? "Brand result unknown" : "Brand not configured" };
+              const brandSources = new Map(
+                (brandFinding?.sources || []).map((source) => [source.evidence_id, source.brand.status]),
+              );
               const queryTitle = query?.grounding_query || retrieval?.grounding_query || queryId;
               return (
                 <details className="measurement-query-group" key={queryId}>
@@ -152,7 +158,8 @@ export function MeasurementResultsView({
                       <span>{queryTitle}</span>
                     </span>
                     <span className="measurement-query-counts">
-                      {retrieval?.sources.length || 0} grounding {retrieval?.sources.length === 1 ? "citation" : "citations"}
+                      <span>{retrieval?.sources.length || 0} grounding {retrieval?.sources.length === 1 ? "citation" : "citations"}</span>
+                      <span className={`pill ${brandPresentation.className}`}>{brandPresentation.label}</span>
                     </span>
                   </summary>
                   <div className="measurement-query-content">
@@ -183,7 +190,16 @@ export function MeasurementResultsView({
                       {retrieval?.error && <p className="form-error">{retrieval.error}</p>}
                       {!retrieval || retrieval.sources.length === 0 ? <p className="small muted">No saved grounding citations are available.</p> : retrieval.sources.map((source) => (
                         <button className="evidence-row" type="button" key={source.evidence_id} onClick={() => onOpenEvidence(source.evidence_id)}>
-                          <span><span className="pill green evidence-kind">Grounding citation</span><strong>{source.title || source.url}</strong><small>{source.url}</small><small>Returned position {source.returned_position ?? "unknown"} · {source.provenance} provenance</small></span>
+                          <span>
+                            <span className="evidence-kind-row">
+                              <span className="pill evidence-kind">Grounding citation</span>
+                              {brandSources.get(source.evidence_id) === "matched" && <span className="pill green">{brandName} found</span>}
+                              {brandSources.get(source.evidence_id) === "ambiguous" && <span className="pill amber">Possible {brandName} match</span>}
+                            </span>
+                            <strong>{source.title || source.url}</strong>
+                            <small>{source.url}</small>
+                            <small>Returned position {source.returned_position ?? "unknown"} · {source.provenance} provenance</small>
+                          </span>
                           <span>View citation</span>
                         </button>
                       ))}
@@ -204,6 +220,12 @@ export function MeasurementResultsView({
           <div className="provider-survey-list">
             {answers.map((answer) => {
               const query = queries.find((item) => item.query_id === answer.query_id);
+              const brandFinding = answerBrandFindings.find(
+                (item) => item.query_id === answer.query_id && item.profile_id === answer.profile_id,
+              );
+              const brandPresentation = brandFinding
+                ? answerBrandPresentation(brandFinding.brand.status, brandName)
+                : { className: "", label: assessment?.brand_definition ? "Brand result unknown" : "Brand not configured" };
               return (
                 <details className="provider-survey-response" key={`${answer.query_id}-${answer.profile_id}`}>
                   <summary>
@@ -211,7 +233,7 @@ export function MeasurementResultsView({
                       <strong>{query?.chat_query || "Prompt unavailable"}</strong>
                       <span>{modelByProfile.get(answer.profile_id)?.label || answer.model || answer.profile_id}</span>
                     </span>
-                    <span className={`pill ${answer.status === "completed" ? "green" : "red"}`}>{answer.status}</span>
+                    <span className={`pill ${brandPresentation.className}`}>{brandPresentation.label}</span>
                   </summary>
                   <div className="provider-survey-content">
                     {answer.status === "completed" ? (
@@ -259,47 +281,6 @@ export function MeasurementResultsView({
         {!scores && <p className="muted">Citation scores are unknown until saved measurement results are available.</p>}
       </section>
 
-      <section className="card result-section" id="brand-presence">
-        <div className="card-heading"><h2>Brand presence</h2><span className="pill">{assessment?.status || "Unknown"}</span></div>
-        <p className="muted">This section reports literal retained-text findings only. It does not measure sentiment, endorsement, causality, ranking, or full-web absence.</p>
-        {assessment?.assessment ? (
-          <>
-            <article className="grounding-match-panel">
-              <h3>Grounding query results</h3>
-              <p className="small muted">A green check means {brandName} appeared literally in at least one saved title or passage returned for that grounding query.</p>
-              <div className="grounding-match-list">
-                {groundingFindings.map((finding) => {
-                  const presentation = groundingMatchPresentation(finding.brand_status, brandName);
-                  const matchedSources = finding.sources.filter((source) => source.brand.status === "matched");
-                  return (
-                    <div className={`grounding-match-row ${finding.brand_status === "matched" ? "matched" : ""}`} key={finding.query_id}>
-                      <div className="grounding-match-query">
-                        <span className="pill blue">{finding.query_id}</span>
-                        <strong>{finding.grounding_query}</strong>
-                      </div>
-                      <span className={`pill ${presentation.className}`}>{presentation.label}</span>
-                      {matchedSources.length > 0 && (
-                        <div className="grounding-match-sources">
-                          {matchedSources.map((source) => (
-                            <button type="button" key={source.evidence_id} onClick={() => onOpenEvidence(source.evidence_id)}>
-                              View matching citation: {source.title || source.url}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </article>
-            <div className="grid two brand-summary-grid">
-              <article><h3>Grounding summary</h3><SafeRecord value={assessment.assessment.grounding} /></article>
-              <article><h3>LLM Provider Survey summary</h3><SafeRecord value={assessment.assessment.answer} /></article>
-            </div>
-          </>
-        ) : <p>No brand evidence assessment is saved.</p>}
-      </section>
-
       <section className="card result-section" id="recommendations">
         <div className="card-heading"><h2>Recommendations</h2><span className="pill">{run.recommendations?.status || "Unavailable"}</span></div>
         {!run.recommendations ? <p className="muted">No recommendation report is saved.</p> : (
@@ -318,11 +299,13 @@ export function MeasurementResultsView({
         )}
       </section>
 
-      <section className="card result-section limitations" id="limitations">
-        <div className="card-heading"><h2>Limitations and provenance</h2><span className="pill amber">Read before use</span></div>
-        <ul>{Array.from(new Set(limitations)).map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
-        <p className="small muted">Run {run.run_id}, revision {run.revision}. Evidence IDs and saved provenance remain attached to each source.</p>
-      </section>
+      {showLimitations && (
+        <section className="card result-section limitations" id="limitations">
+          <div className="card-heading"><h2>Limitations and provenance</h2><span className="pill amber">Read before use</span></div>
+          <ul>{Array.from(new Set(limitations)).map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
+          <p className="small muted">Run {run.run_id}, revision {run.revision}. Evidence IDs and saved provenance remain attached to each source.</p>
+        </section>
+      )}
     </div>
   );
 }

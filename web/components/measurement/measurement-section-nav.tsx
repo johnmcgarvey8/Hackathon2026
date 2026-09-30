@@ -4,10 +4,9 @@ import { useEffect, useState } from "react";
 
 const sections = [
   { id: "brief", label: "Brief" },
-  { id: "query-plan", label: "Grounding Queries" },
+  { id: "query-plan", label: "Grounding & Brand Presence" },
   { id: "model-answers", label: "LLM Provider Survey" },
   { id: "citation-performance", label: "Citation Performance" },
-  { id: "brand-presence", label: "Brand Presence" },
   { id: "recommendations", label: "Recommendations" },
 ] as const;
 
