@@ -15,6 +15,17 @@ function displayDate(value: unknown) {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
 }
 
+function competitorText(run: MeasurementRun) {
+  const summary = run.competitor_summary;
+  if (!summary || summary.status === "not-configured") return "Not configured";
+  if (summary.status === "unavailable") return "Awaiting results";
+  if (summary.status === "none-found") return "None found";
+  if (summary.status === "cited") {
+    return `${summary.cited_domains.length} cited · ${summary.grounding_source_count} grounding`;
+  }
+  return `${summary.grounding_domains.length} found · ${summary.grounding_source_count} grounding`;
+}
+
 export default function ControlPlanePage() {
   const { project } = useProject();
   const [runs, setRuns] = useState<MeasurementRun[]>([]);
@@ -109,13 +120,14 @@ export default function ControlPlanePage() {
             {runs.length === 0 ? <UnavailableState title="No run history" message="Start a measurement in Chat to populate the Control Plane." compact /> : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Page and objective</th><th>Status</th><th>Current operation</th><th>Revision</th><th>Updated</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Page and objective</th><th>Status</th><th>Competitors</th><th>Current operation</th><th>Revision</th><th>Updated</th><th>Actions</th></tr></thead>
                   <tbody>{runs.map((run) => {
                     const savedProgress = progress[run.run_id] || run.progress || null;
                     return (
                       <tr key={run.run_id}>
                         <td><strong>{pageUrl(run)}</strong><small className="table-subtitle">{runObjective(run)}</small></td>
                         <td><span className={`pill ${["ready", "exported"].includes(run.state.toLowerCase()) ? "green" : run.state.toLowerCase() === "failed" ? "red" : "blue"}`}>{run.state}</span></td>
+                        <td>{competitorText(run)}</td>
                         <td>{savedProgress?.current_operation ? operationLabel(savedProgress.current_operation) : "None"}</td>
                         <td>{run.revision}</td>
                         <td>{displayDate(run.updated_at || run.created_at)}</td>

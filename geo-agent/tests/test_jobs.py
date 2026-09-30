@@ -22,6 +22,7 @@ from geo_agent.measurement_workflow import (
 from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.worker import Worker
 from geo_agent.workflow import Conflict, NotFound
+from test_evaluation import measurement_fixture
 from test_measurement_workflow import inputs
 from test_evaluation_workflow import three_profiles
 
@@ -502,6 +503,55 @@ def test_progress_updates_without_run_revision_and_is_owner_scoped(repository, o
     assert repository.get(run.run_id, owner) == run
     with pytest.raises(NotFound):
         repository.get_run_progress(run.run_id, OwnerIdentity(tenant_id="other", object_id="other"))
+
+
+def test_recovery_progress_reads_failed_evaluators_from_full_run(repository, owner):
+    measurement = measurement_fixture(failed_pairs=(("q-3", "chatgpt-style"),))
+    created = repository.create(owner, measurement.inputs)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id,
+        owner,
+        created.revision,
+        measurement.inputs.approval_hash,
+    )
+    evaluation_job, _ = JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-before-recovery",
+        {},
+    )
+    repository.lease_one_job("worker-a")
+    _, failed = repository.complete_job(
+        evaluation_job.job_id,
+        "worker-a",
+        lambda run: run.model_copy(update={
+            "measurement": measurement,
+            "state": MeasurementState.PARTIAL,
+            "events": (*run.events, MeasurementEvent(
+                sequence=len(run.events) + 1,
+                event_type="measurement-partial",
+            )),
+        }),
+    )
+    recovery_job, _ = JobService(repository).enqueue(
+        failed.run_id,
+        owner,
+        failed.revision,
+        JobType.RECOVER_EVALUATORS,
+        "recover-progress",
+        {},
+    )
+
+    progress = repository.get_run_progress(
+        failed.run_id,
+        owner,
+        recovery_job.job_id,
+    )
+
+    assert progress.operations[0].operation_type == "profile-evaluator"
+    assert progress.operations[0].planned == 1
 
 
 @pytest.mark.parametrize("profile_count", [1, 3])

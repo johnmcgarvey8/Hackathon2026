@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from geo_agent.api import create_app
 from geo_agent.contracts import Provenance
-from geo_agent.evidence_assessment import BrandDefinition
+from geo_agent.evidence_assessment import BrandDefinition, build_competitor_summary
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.jobs import JobType
 from geo_agent.measurement_budget import MeasurementBudgetGrant, MeasurementOperationAllowances
@@ -22,7 +22,7 @@ from geo_agent.project_chat import ProjectChatRequest, ProjectChatService, Proje
 from geo_agent.project_chat import MockProjectAgent
 from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
 from geo_agent.project_measurements import ProjectMeasurementOrchestrator
-from geo_agent.projects import ProjectCreate
+from geo_agent.projects import ProjectCreate, ProjectUpdate
 from geo_agent.workflow import Conflict
 from test_artifacts import measurement_result, recommendation_report
 from test_measurement_workflow import inputs
@@ -195,6 +195,92 @@ def test_project_domains_are_unique_per_owner(tmp_path):
         assert duplicate.status_code == 409
         invalid = client.post("/api/v2/projects", json=project_payload(domain="https://example.com/path"))
         assert invalid.status_code == 422
+
+
+def test_project_competitors_are_normalized_revisioned_and_disjoint(tmp_path):
+    app = create_app(
+        tmp_path / "project-competitors.sqlite3",
+        {ALICE_TOKEN: "alice"},
+        measurement_policy=policy(),
+    )
+    with TestClient(app, headers=alice_headers()) as client:
+        payload = {
+            **project_payload(),
+            "competitor_domains": ["HTTPS://Competitor.example/", "rival.example"],
+        }
+        created = client.post("/api/v2/projects", json=payload)
+        assert created.status_code == 201, created.text
+        project = created.json()
+        assert project["competitor_domains"] == [
+            "competitor.example",
+            "rival.example",
+        ]
+
+        duplicate = client.post("/api/v2/projects", json={
+            **project_payload("Duplicate competitors", "other.example"),
+            "competitor_domains": ["rival.example", "RIVAL.EXAMPLE"],
+        })
+        assert duplicate.status_code == 422
+
+        route = f"/api/v2/projects/{project['project_id']}"
+        overlap = client.patch(route, json={
+            "expected_revision": project["revision"],
+            "primary_domain": "competitor.example",
+        })
+        assert overlap.status_code == 422
+
+        updated = client.patch(route, json={
+            "expected_revision": project["revision"],
+            "competitor_domains": ["new-rival.example"],
+        })
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["competitor_domains"] == ["new-rival.example"]
+
+
+def test_project_runs_snapshot_competitors_and_summarize_citations(tmp_path):
+    database = tmp_path / "project-competitor-runs.sqlite3"
+    repository = SQLAlchemyMeasurementRepository(
+        f"sqlite:///{database}",
+        initialize_schema=True,
+    )
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    project = repository.create_project(
+        owner,
+        ProjectCreate.model_validate({
+            **project_payload(),
+            "competitor_domains": ["alternative.example"],
+        }),
+    )
+    measurement = measurement_result("live")
+    run = repository.create(
+        owner,
+        measurement.inputs,
+        project_id=project.project_id,
+        competitor_domains=project.competitor_domains,
+    )
+    assert run.competitor_domains == ("alternative.example",)
+
+    summary = build_competitor_summary(
+        measurement,
+        run.competitor_domains,
+    )
+    assert summary["status"] == "cited"
+    assert summary["grounding_domains"] == ("alternative.example",)
+    assert summary["grounding_source_count"] == 5
+    assert summary["citation_count"] == 3
+
+    changed = repository.update_project(
+        project.project_id,
+        owner,
+        ProjectUpdate(
+            expected_revision=project.revision,
+            competitor_domains=("different.example",),
+        ),
+    )
+    assert changed.competitor_domains == ("different.example",)
+    assert repository.get(run.run_id, owner).competitor_domains == (
+        "alternative.example",
+    )
 
 
 def test_project_briefs_bind_runs_and_prevent_cross_project_access(tmp_path):
@@ -1176,7 +1262,7 @@ def test_project_scoped_results_reviews_and_artifacts_are_isolated(tmp_path):
             f"{wrong}/artifacts/{artifact['artifact_id']}",
         ).status_code == 404
         artifact_files = list(
-            (database.parent / "measurement-artifacts" / ready.run_id).glob("*.zip")
+            (database.parent / "measurement-artifacts").rglob("*.zip")
         )
         assert len(artifact_files) == 1
         assert client.delete(route).status_code == 204

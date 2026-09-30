@@ -51,6 +51,39 @@ test("project, conversation, and run routes proxy DELETE upstream", () => {
   assert.match(read("lib/server-api.ts"), /response\.status === 204/);
 });
 
+test("project settings proxy revisioned updates and own permanent deletion", () => {
+  const route = read("app/api/projects/[projectId]/route.ts");
+  const browserApi = read("lib/api.ts");
+  const shell = read("components/project-shell.tsx");
+  const settings = read("app/projects/[projectId]/settings/page.tsx");
+  const projects = read("app/projects/page.tsx");
+  const create = read("app/projects/new/page.tsx");
+
+  assert.match(route, /export async function PATCH/);
+  assert.match(route, /method: "PATCH"/);
+  assert.match(route, /body: await request\.text\(\)/);
+  assert.match(browserApi, /updateProject/);
+  assert.match(browserApi, /method: "PATCH"/);
+  assert.match(shell, /label: "Settings"/);
+  assert.match(shell, /"\/settings"/);
+  for (const field of [
+    "Project name",
+    "Primary domain",
+    "Additional approved domains",
+    "Competitor domains",
+    "Default locale",
+    "Active goal",
+    "Project colour",
+  ]) assert.match(settings, new RegExp(field));
+  assert.match(settings, /expected_revision: project\.revision/);
+  assert.match(settings, /Danger zone/);
+  assert.match(settings, /Delete project permanently/);
+  assert.match(settings, /deleteConfirmation !== project\.name/);
+  assert.doesNotMatch(projects, /api\.deleteProject|Delete project/);
+  assert.match(create, /Competitor domains/);
+  assert.match(create, /competitor_domains/);
+});
+
 test("project chat requires explicit runtime readiness and never claims organisational grounding", () => {
   const chat = read("app/projects/[projectId]/chat/page.tsx");
   assert.match(chat, /api\.chatStatus\(project\.project_id\)/);

@@ -40,6 +40,24 @@ function saveDownload(download: BinaryArtifact, fallback: string) {
   URL.revokeObjectURL(url);
 }
 
+function competitorSummaryText(run: MeasurementRun) {
+  const summary = run.competitor_summary;
+  if (!summary || summary.status === "not-configured") {
+    return "No competitor domains were configured when this run was created.";
+  }
+  if (summary.status === "unavailable") {
+    return `Tracking ${summary.configured_domains.join(", ")}. Saved measurement results are not available yet.`;
+  }
+  if (summary.status === "none-found") {
+    return `No saved grounding sources matched ${summary.configured_domains.join(", ")}.`;
+  }
+  const grounding = `${summary.grounding_source_count} grounding ${summary.grounding_source_count === 1 ? "source" : "sources"} across ${summary.grounding_query_ids.length} ${summary.grounding_query_ids.length === 1 ? "query" : "queries"}`;
+  if (summary.status === "cited") {
+    return `${grounding}; ${summary.citation_count} LLM ${summary.citation_count === 1 ? "citation" : "citations"} referenced competitor sources.`;
+  }
+  return `${grounding}; no LLM survey answer cited those sources.`;
+}
+
 export default function ControlPlaneRunPage() {
   const { project } = useProject();
   const params = useParams<{ runId: string }>();
@@ -160,6 +178,7 @@ export default function ControlPlaneRunPage() {
             <dl className="scope-grid run-brief-grid">
               <div><dt>Goal</dt><dd>{runObjective(run)}</dd></div>
               <div><dt>Measured page</dt><dd>{pageUrl(run)}</dd></div>
+              <div><dt>Competitor visibility</dt><dd>{competitorSummaryText(run)}</dd></div>
             </dl>
           </section>
           {error && <UnavailableState title="Saved data unavailable" message={error} compact />}

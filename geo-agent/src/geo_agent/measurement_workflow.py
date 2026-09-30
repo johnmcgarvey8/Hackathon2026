@@ -98,6 +98,7 @@ class MeasurementRun(Contract):
     run_id: str = Field(default_factory=identifier)
     owner: OwnerIdentity
     revision: int = Field(default=1, ge=1)
+    competitor_domains: tuple[str, ...] = ()
     state: MeasurementState = MeasurementState.DRAFT
     brief: Brief | None = None
     inputs: MeasurementInputs | None = None
@@ -181,6 +182,7 @@ class MeasurementRepository(Protocol):
         brief: Brief | None = None,
         brand_definition: BrandDefinition | None = None,
         project_id: str | None = None,
+        competitor_domains: tuple[str, ...] = (),
     ) -> MeasurementRun: ...
 
     def create_idempotent(

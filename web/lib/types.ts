@@ -19,6 +19,7 @@ export interface Project {
   name: string;
   primary_domain: string;
   additional_domains: string[];
+  competitor_domains: string[];
   domains: string[];
   default_locale: string;
   active_goal: string | null;
@@ -37,9 +38,29 @@ export interface CreateProjectRequest {
   name: string;
   primary_domain: string;
   additional_domains: string[];
+  competitor_domains: string[];
   default_locale: string;
   active_goal: string | null;
   colour: string;
+}
+
+export interface UpdateProjectRequest extends CreateProjectRequest {
+  expected_revision: number;
+}
+
+export interface CompetitorSummary {
+  status: "not-configured" | "unavailable" | "none-found" | "grounding-found" | "cited";
+  configured_domains: string[];
+  grounding_domains: string[];
+  grounding_query_ids: string[];
+  grounding_source_count: number;
+  cited_domains: string[];
+  cited_profile_ids: string[];
+  citation_count: number;
+  completed_grounding_queries: number;
+  intended_grounding_queries: number;
+  completed_answers: number;
+  intended_answers: number;
 }
 
 export interface MeasurementBriefRequest {
@@ -296,6 +317,8 @@ export interface MeasurementRun {
   schema_version?: string;
   run_id: string;
   project_id?: string | null;
+  competitor_domains?: string[];
+  competitor_summary?: CompetitorSummary;
   state: string;
   revision: number;
   created_at?: string;
@@ -395,6 +418,7 @@ export interface BrandEvidenceAssessment {
         brand: {
           status: "matched" | "ambiguous" | "absent" | "unconfigured";
         };
+        competitor_domain: string | null;
       }[];
     }[];
     answers: {
@@ -405,6 +429,10 @@ export interface BrandEvidenceAssessment {
         status: "matched" | "ambiguous" | "absent" | "unknown" | "unconfigured";
         matches: unknown[];
       };
+      competitor_source_count: number;
+      competitor_cited_count: number;
+      competitor_domains: string[];
+      competitor_cited_domains: string[];
       [key: string]: unknown;
     }[];
     limitations: string[];

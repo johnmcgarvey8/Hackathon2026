@@ -18,6 +18,7 @@ from sqlalchemy import (
     delete as sql_delete,
     event,
     func,
+    inspect,
     insert,
     or_,
     select,
@@ -42,7 +43,12 @@ from geo_agent.jobs import (
     RunProgress,
     WorkflowJob,
 )
-from geo_agent.measurement_budget import MeasurementBudgetGrant
+from geo_agent.measurement_budget import (
+    MeasurementBudgetGrant,
+    MeasurementCapacity,
+    MeasurementOperationAllowances,
+    MeasurementOperationCapacity,
+)
 from geo_agent.measurement_workflow import (
     MeasurementApproval,
     MeasurementEvent,
@@ -426,6 +432,484 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         return MeasurementEvent(sequence=sequence, event_type=event_type)
 
     @staticmethod
+    def _read_project(
+        connection: Connection,
+        project_id: str,
+        owner: OwnerIdentity,
+    ) -> Project:
+        payload = connection.execute(
+            select(projects.c.payload).where(
+                projects.c.project_id == project_id,
+                projects.c.owner_key == owner.key,
+            )
+        ).scalar_one_or_none()
+        if payload is None:
+            raise NotFound("Project not found")
+        return Project.model_validate_json(payload)
+
+    def create_project(self, owner: OwnerIdentity, request: ProjectCreate) -> Project:
+        project = Project(owner=owner, **request.model_dump())
+        try:
+            with self.engine.begin() as connection:
+                existing = connection.execute(
+                    select(projects.c.project_id).where(projects.c.owner_key == owner.key)
+                ).scalars()
+                for project_id in existing:
+                    current = self._read_project(connection, project_id, owner)
+                    if set(project.domains) & set(current.domains):
+                        raise Conflict("A project already uses one of these domains")
+                connection.execute(insert(projects).values(
+                    project_id=project.project_id,
+                    owner_key=owner.key,
+                    revision=project.revision,
+                    payload=project.model_dump_json(),
+                    created_at=project.created_at.isoformat(),
+                    updated_at=project.updated_at.isoformat(),
+                ))
+            return project
+        except IntegrityError:
+            raise Conflict("Project could not be created") from None
+
+    def get_project(self, project_id: str, owner: OwnerIdentity) -> Project:
+        with self.engine.connect() as connection:
+            return self._read_project(connection, project_id, owner)
+
+    def list_projects(self, owner: OwnerIdentity) -> tuple[Project, ...]:
+        with self.engine.connect() as connection:
+            payloads = connection.execute(
+                select(projects.c.payload).where(projects.c.owner_key == owner.key)
+            ).scalars()
+            records = sorted(
+                (Project.model_validate_json(payload) for payload in payloads),
+                key=lambda project: (
+                    project.archived,
+                    project.name.casefold(),
+                    project.project_id,
+                ),
+            )
+            return tuple(records)
+
+    def update_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        request: ProjectUpdate,
+    ) -> Project:
+        with self.engine.begin() as connection:
+            current = self._read_project(connection, project_id, owner)
+            if current.revision != request.expected_revision:
+                raise Conflict("Stale project revision; reload the project")
+            changes = request.model_dump(exclude={"expected_revision"}, exclude_unset=True)
+            candidate_values = {
+                **current.model_dump(),
+                **changes,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            }
+            candidate_request = ProjectCreate.model_validate({
+                key: candidate_values[key]
+                for key in (
+                    "name",
+                    "primary_domain",
+                    "additional_domains",
+                    "competitor_domains",
+                    "default_locale",
+                    "active_goal",
+                    "colour",
+                    "foundry",
+                )
+            })
+            candidate = Project.model_validate({
+                **candidate_values,
+                **candidate_request.model_dump(),
+            })
+            other_ids = connection.execute(
+                select(projects.c.project_id).where(
+                    projects.c.owner_key == owner.key,
+                    projects.c.project_id != project_id,
+                )
+            ).scalars()
+            for other_id in other_ids:
+                other = self._read_project(connection, other_id, owner)
+                if set(candidate.domains) & set(other.domains):
+                    raise Conflict("A project already uses one of these domains")
+            result = connection.execute(
+                update(projects)
+                .where(
+                    projects.c.project_id == project_id,
+                    projects.c.owner_key == owner.key,
+                    projects.c.revision == current.revision,
+                )
+                .values(
+                    revision=candidate.revision,
+                    payload=candidate.model_dump_json(),
+                    updated_at=candidate.updated_at.isoformat(),
+                )
+            )
+            if result.rowcount != 1:
+                raise Conflict("Project changed concurrently; reload the project")
+            return candidate
+
+    def archive_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        expected_revision: int,
+    ) -> Project:
+        current = self.get_project(project_id, owner)
+        if current.archived:
+            return current
+        with self.engine.begin() as connection:
+            current = self._read_project(connection, project_id, owner)
+            if current.revision != expected_revision:
+                raise Conflict("Stale project revision; reload the project")
+            archived = current.model_copy(update={
+                "archived": True,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            })
+            changed = connection.execute(
+                update(projects)
+                .where(
+                    projects.c.project_id == project_id,
+                    projects.c.owner_key == owner.key,
+                    projects.c.revision == current.revision,
+                )
+                .values(
+                    revision=archived.revision,
+                    payload=archived.model_dump_json(),
+                    updated_at=archived.updated_at.isoformat(),
+                )
+            )
+            if changed.rowcount != 1:
+                raise Conflict("Project changed concurrently; reload the project")
+            return archived
+
+    def bind_run_to_project(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        try:
+            with self.engine.begin() as connection:
+                self._read_project(connection, project_id, owner)
+                self._read(connection, run_id, owner)
+                existing = connection.execute(
+                    select(project_runs.c.project_id).where(project_runs.c.run_id == run_id)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    if existing != project_id:
+                        raise Conflict("Measurement run already belongs to another project")
+                    return
+                connection.execute(insert(project_runs).values(
+                    project_id=project_id,
+                    run_id=run_id,
+                    owner_key=owner.key,
+                    created_at=utc_now().isoformat(),
+                ))
+        except IntegrityError:
+            raise Conflict("Measurement run could not be assigned to the project") from None
+
+    def list_project_runs(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+        limit: int | None = 50,
+    ) -> tuple[MeasurementRun, ...]:
+        if limit is not None and not 1 <= limit <= 100:
+            raise Conflict("Run list limit must be between 1 and 100")
+        with self.engine.connect() as connection:
+            self._read_project(connection, project_id, owner)
+            payloads = connection.execute(
+                select(measurement_runs.c.payload)
+                .select_from(project_runs.join(
+                    measurement_runs,
+                    project_runs.c.run_id == measurement_runs.c.run_id,
+                ))
+                .where(
+                    project_runs.c.project_id == project_id,
+                    project_runs.c.owner_key == owner.key,
+                    measurement_runs.c.owner_key == owner.key,
+                )
+            ).scalars()
+            runs = sorted(
+                (MeasurementRun.model_validate_json(payload) for payload in payloads),
+                key=lambda run: (run.updated_at, run.run_id),
+                reverse=True,
+            )
+            return tuple(runs if limit is None else runs[:limit])
+
+    def get_project_run(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> MeasurementRun:
+        with self.engine.connect() as connection:
+            self._read_project(connection, project_id, owner)
+            mapped = connection.execute(
+                select(project_runs.c.run_id).where(
+                    project_runs.c.project_id == project_id,
+                    project_runs.c.run_id == run_id,
+                    project_runs.c.owner_key == owner.key,
+                )
+            ).scalar_one_or_none()
+            if mapped is None:
+                raise NotFound("Measurement run not found in project")
+            return self._read(connection, run_id, owner)
+
+    def get_run_project_id(
+        self,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> str | None:
+        with self.engine.connect() as connection:
+            self._read(connection, run_id, owner)
+            return connection.execute(
+                select(project_runs.c.project_id).where(
+                    project_runs.c.run_id == run_id,
+                    project_runs.c.owner_key == owner.key,
+                )
+            ).scalar_one_or_none()
+
+    @staticmethod
+    def _reconcile_conversations_for_deleted_run(
+        connection: Connection,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        from geo_agent.project_chat import ProjectConversation
+
+        rows = connection.execute(select(project_conversations).where(
+            project_conversations.c.project_id == project_id,
+            project_conversations.c.owner_key == owner.key,
+        )).all()
+        for row in rows:
+            current = ProjectConversation.model_validate_json(row.payload)
+            if (
+                current.run_id != run_id
+                and run_id not in current.linked_run_ids
+                and run_id not in current.comparison_run_ids
+                and run_id not in current.bound_run_contexts
+                and all(
+                    workflow.run_id != run_id
+                    for workflow in current.measurement_workflows
+                )
+            ):
+                continue
+            active_run_id = None if current.run_id == run_id else current.run_id
+            contexts = {
+                linked_run_id: context
+                for linked_run_id, context in current.bound_run_contexts.items()
+                if linked_run_id != run_id
+            }
+            workflows = tuple(
+                workflow
+                for workflow in current.measurement_workflows
+                if workflow.run_id != run_id
+            )
+            updated = current.model_copy(update={
+                "run_id": active_run_id,
+                "linked_run_ids": tuple(
+                    linked_run_id
+                    for linked_run_id in current.linked_run_ids
+                    if linked_run_id != run_id
+                ),
+                "comparison_run_ids": tuple(
+                    comparison_run_id
+                    for comparison_run_id in current.comparison_run_ids
+                    if comparison_run_id != run_id
+                ),
+                "measurement_workflow": (
+                    None
+                    if (
+                        current.measurement_workflow is not None
+                        and current.measurement_workflow.run_id == run_id
+                    )
+                    else current.measurement_workflow
+                ),
+                "measurement_workflows": workflows,
+                "bound_project_context": (
+                    contexts.get(active_run_id)
+                    if active_run_id is not None
+                    else None
+                ),
+                "bound_run_contexts": contexts,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            })
+            changed = connection.execute(
+                update(project_conversations)
+                .where(
+                    project_conversations.c.conversation_id == current.conversation_id,
+                    project_conversations.c.project_id == project_id,
+                    project_conversations.c.owner_key == owner.key,
+                    project_conversations.c.revision == current.revision,
+                )
+                .values(
+                    run_id=active_run_id,
+                    revision=updated.revision,
+                    payload=updated.model_dump_json(),
+                    updated_at=updated.updated_at.isoformat(),
+                )
+            )
+            if changed.rowcount != 1:
+                raise Conflict("Conversation changed concurrently; reload it")
+        connection.execute(sql_delete(project_conversation_runs).where(
+            project_conversation_runs.c.project_id == project_id,
+            project_conversation_runs.c.run_id == run_id,
+            project_conversation_runs.c.owner_key == owner.key,
+        ))
+
+    def _delete_run_rows(
+        self,
+        connection: Connection,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+        *,
+        reconcile_conversations: bool,
+    ) -> tuple[str, ...]:
+        run = self._read(connection, run_id, owner)
+        if run.state in self._ACTIVE_DELETION_STATES:
+            raise Conflict("Active measurement runs cannot be deleted")
+        artifact_rows = connection.execute(select(
+            artifacts.c.artifact_id,
+            artifacts.c.storage_key,
+        ).where(
+            artifacts.c.run_id == run_id,
+            artifacts.c.owner_key == owner.key,
+        )).all()
+        artifact_ids = tuple(row.artifact_id for row in artifact_rows)
+        storage_keys = tuple(row.storage_key for row in artifact_rows)
+        if reconcile_conversations:
+            self._reconcile_conversations_for_deleted_run(
+                connection,
+                project_id,
+                run_id,
+                owner,
+            )
+        connection.execute(sql_delete(measurement_budget_consumptions).where(
+            measurement_budget_consumptions.c.claim_id.in_(
+                select(operation_claims.c.claim_id).where(
+                    operation_claims.c.run_id == run_id,
+                )
+            )
+        ))
+        connection.execute(sql_delete(operation_claims).where(
+            operation_claims.c.run_id == run_id,
+        ))
+        connection.execute(sql_delete(workflow_jobs).where(
+            workflow_jobs.c.run_id == run_id,
+            workflow_jobs.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(agent_capabilities).where(
+            agent_capabilities.c.conversation_id.in_(
+                select(agent_conversations.c.conversation_id).where(
+                    agent_conversations.c.run_id == run_id,
+                    agent_conversations.c.owner_key == owner.key,
+                )
+            )
+        ))
+        connection.execute(sql_delete(agent_conversations).where(
+            agent_conversations.c.run_id == run_id,
+            agent_conversations.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(agent_execution_authorizations).where(
+            agent_execution_authorizations.c.run_id == run_id,
+            agent_execution_authorizations.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(run_create_requests).where(
+            run_create_requests.c.run_id == run_id,
+            run_create_requests.c.owner_key == owner.key,
+        ))
+        if artifact_ids:
+            connection.execute(sql_delete(artifact_create_requests).where(
+                artifact_create_requests.c.artifact_id.in_(artifact_ids),
+                artifact_create_requests.c.owner_key == owner.key,
+            ))
+        for table in (artifacts, approvals, run_events, run_brand_definitions):
+            connection.execute(sql_delete(table).where(table.c.run_id == run_id))
+        connection.execute(sql_delete(project_runs).where(
+            project_runs.c.project_id == project_id,
+            project_runs.c.run_id == run_id,
+            project_runs.c.owner_key == owner.key,
+        ))
+        connection.execute(sql_delete(measurement_runs).where(
+            measurement_runs.c.run_id == run_id,
+            measurement_runs.c.owner_key == owner.key,
+        ))
+        return storage_keys
+
+    def delete_project_run(
+        self,
+        project_id: str,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> tuple[str, ...]:
+        with self.engine.begin() as connection:
+            self._read_project(connection, project_id, owner)
+            mapped = connection.execute(select(project_runs.c.run_id).where(
+                project_runs.c.project_id == project_id,
+                project_runs.c.run_id == run_id,
+                project_runs.c.owner_key == owner.key,
+            )).scalar_one_or_none()
+            if mapped is None:
+                raise NotFound("Measurement run not found in project")
+            return self._delete_run_rows(
+                connection,
+                project_id,
+                run_id,
+                owner,
+                reconcile_conversations=True,
+            )
+
+    def delete_project(
+        self,
+        project_id: str,
+        owner: OwnerIdentity,
+    ) -> tuple[str, ...]:
+        with self.engine.begin() as connection:
+            self._read_project(connection, project_id, owner)
+            run_ids = tuple(connection.execute(select(project_runs.c.run_id).where(
+                project_runs.c.project_id == project_id,
+                project_runs.c.owner_key == owner.key,
+            )).scalars())
+            runs = tuple(self._read(connection, run_id, owner) for run_id in run_ids)
+            if any(run.state in self._ACTIVE_DELETION_STATES for run in runs):
+                raise Conflict("Projects with active measurement runs cannot be deleted")
+            connection.execute(sql_delete(project_conversation_runs).where(
+                project_conversation_runs.c.project_id == project_id,
+                project_conversation_runs.c.owner_key == owner.key,
+            ))
+            connection.execute(sql_delete(project_conversations).where(
+                project_conversations.c.project_id == project_id,
+                project_conversations.c.owner_key == owner.key,
+            ))
+            connection.execute(sql_delete(project_llm_operations).where(
+                project_llm_operations.c.project_id == project_id,
+                project_llm_operations.c.owner_key == owner.key,
+            ))
+            storage_keys: list[str] = []
+            for run_id in run_ids:
+                storage_keys.extend(self._delete_run_rows(
+                    connection,
+                    project_id,
+                    run_id,
+                    owner,
+                    reconcile_conversations=False,
+                ))
+            deleted = connection.execute(sql_delete(projects).where(
+                projects.c.project_id == project_id,
+                projects.c.owner_key == owner.key,
+            ))
+            if deleted.rowcount != 1:
+                raise Conflict("Project changed concurrently; reload it")
+            return tuple(storage_keys)
+
+    @staticmethod
     def _run_values(run: MeasurementRun) -> dict[str, object]:
         summary = MeasurementRunSummary.from_run(run)
         return {
@@ -444,10 +928,12 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         brief: Brief | None = None,
         brand_definition: BrandDefinition | None = None,
         project_id: str | None = None,
+        competitor_domains: tuple[str, ...] = (),
     ) -> MeasurementRun:
         created_event = self._event("awaiting-query-approval" if inputs else "draft")
         run = MeasurementRun(
             owner=owner,
+            competitor_domains=competitor_domains,
             brief=inputs.brief if inputs is not None else brief,
             inputs=inputs,
             state=MeasurementState.AWAITING_APPROVAL if inputs else MeasurementState.DRAFT,
@@ -1299,6 +1785,18 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     raise Conflict("Evaluation requires the current automatic query binding")
                 next_state = MeasurementState.QUEUED
                 event_type = "evaluation-queued"
+            elif job_type == JobType.RECOVER_EVALUATORS:
+                failed_evaluators = (
+                    current.measurement is not None
+                    and any(result.status == "error" for result in current.measurement.results)
+                )
+                if (
+                    current.state not in {MeasurementState.FAILED, MeasurementState.PARTIAL}
+                    or not failed_evaluators
+                ):
+                    raise Conflict("Evaluator recovery requires failed evaluator results")
+                next_state = MeasurementState.QUEUED
+                event_type = "evaluator-recovery-queued"
             self._lock_admission(connection)
             self._validate_queue_capacity(connection, owner)
             job_id = identifier()
@@ -1431,10 +1929,12 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
             if job_id is not None and row is None:
                 raise NotFound("Workflow job not found")
             job = self._job_from_row(row) if row else None
-            if (
-                job is not None
-                and job.job_type == JobType.EVALUATE
-                and job.operation_ceiling is None
+            if job is not None and (
+                job.job_type == JobType.RECOVER_EVALUATORS
+                or (
+                    job.job_type == JobType.EVALUATE
+                    and job.operation_ceiling is None
+                )
             ):
                 run = self._read(connection, run_id, owner)
             claims = ()

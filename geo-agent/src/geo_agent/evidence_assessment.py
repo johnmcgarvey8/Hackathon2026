@@ -69,6 +69,112 @@ def owns_host(url: str, definition: BrandDefinition) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in definition.domains)
 
 
+def competitor_domain_for_url(
+    url: str,
+    competitor_domains: tuple[str, ...],
+) -> str | None:
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".").encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    return next(
+        (
+            domain
+            for domain in competitor_domains
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        None,
+    )
+
+
+def build_competitor_summary(
+    measurement: MeasurementResults | None,
+    competitor_domains: tuple[str, ...],
+) -> dict:
+    configured_domains = tuple(competitor_domains)
+    if not configured_domains:
+        return {
+            "status": "not-configured",
+            "configured_domains": (),
+            "grounding_domains": (),
+            "grounding_query_ids": (),
+            "grounding_source_count": 0,
+            "cited_domains": (),
+            "cited_profile_ids": (),
+            "citation_count": 0,
+            "completed_grounding_queries": 0,
+            "intended_grounding_queries": 0,
+            "completed_answers": 0,
+            "intended_answers": 0,
+        }
+    if measurement is None:
+        return {
+            "status": "unavailable",
+            "configured_domains": configured_domains,
+            "grounding_domains": (),
+            "grounding_query_ids": (),
+            "grounding_source_count": 0,
+            "cited_domains": (),
+            "cited_profile_ids": (),
+            "citation_count": 0,
+            "completed_grounding_queries": 0,
+            "intended_grounding_queries": 5,
+            "completed_answers": 0,
+            "intended_answers": 0,
+        }
+
+    competitor_sources: dict[tuple[str, str], str] = {}
+    for retrieval in measurement.retrievals:
+        for source in retrieval.sources:
+            domain = competitor_domain_for_url(str(source.url), configured_domains)
+            if domain is not None:
+                competitor_sources[(retrieval.query_id, source.evidence_id)] = domain
+
+    cited_domains: set[str] = set()
+    cited_profile_ids: set[str] = set()
+    for result in measurement.results:
+        if result.status != "completed":
+            continue
+        for evidence_id in dict.fromkeys(result.citation_ids):
+            domain = competitor_sources.get((result.query_id, evidence_id))
+            if domain is None:
+                continue
+            cited_domains.add(domain)
+            cited_profile_ids.add(result.profile_id)
+
+    grounding_domains = set(competitor_sources.values())
+    status = (
+        "cited"
+        if cited_domains
+        else "grounding-found"
+        if grounding_domains
+        else "none-found"
+    )
+    return {
+        "status": status,
+        "configured_domains": configured_domains,
+        "grounding_domains": tuple(sorted(grounding_domains)),
+        "grounding_query_ids": tuple(sorted({
+            query_id for query_id, _ in competitor_sources
+        })),
+        "grounding_source_count": len(competitor_sources),
+        "cited_domains": tuple(sorted(cited_domains)),
+        "cited_profile_ids": tuple(sorted(cited_profile_ids)),
+        "citation_count": len(cited_profile_ids),
+        "completed_grounding_queries": sum(
+            retrieval.status == "completed" for retrieval in measurement.retrievals
+        ),
+        "intended_grounding_queries": len(measurement.inputs.query_plan.queries),
+        "completed_answers": sum(
+            result.status == "completed" for result in measurement.results
+        ),
+        "intended_answers": (
+            len(measurement.inputs.query_plan.queries)
+            * len(measurement.inputs.profiles)
+        ),
+    }
+
+
 def _normalized_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
     pieces = []
     spans = []
@@ -198,8 +304,14 @@ def _answer_summary(answers: list[dict], configured: bool) -> dict:
             "unsupported_citation_count": sum(len(answer["unsupported_citation_ids"]) for answer in completed)}
 
 
-def build_evidence_assessment(measurement: MeasurementResults, record: BrandDefinitionRecord | None = None,
-                              *, run_id: str, run_revision: int) -> EvidenceAssessment:
+def build_evidence_assessment(
+    measurement: MeasurementResults,
+    record: BrandDefinitionRecord | None = None,
+    *,
+    run_id: str,
+    run_revision: int,
+    competitor_domains: tuple[str, ...] = (),
+) -> EvidenceAssessment:
     measurement = MeasurementResults.model_validate(measurement.model_dump(mode="json"))
     if record and record.run_id != run_id:
         raise ValueError("Brand definition belongs to another run")
@@ -217,13 +329,15 @@ def build_evidence_assessment(measurement: MeasurementResults, record: BrandDefi
             owned = owns_host(url, definition) if definition else False
             brand = brand_matches({"title": source.title or "", "excerpt": source.excerpt}, definition,
                                   brand_owned=owned)
+            competitor_domain = competitor_domain_for_url(url, competitor_domains)
             relation = ("exact-page" if comparable_url(source.url) == comparable_url(measurement.inputs.snapshot.url)
                         else "same-domain-other-page" if urlsplit(url).hostname == urlsplit(target).hostname
                         else "other-page")
             sources.append({"query_id": pair.query_id, "evidence_id": source.evidence_id,
                             "url": url, "title": source.title, "excerpt": source.excerpt,
                             "returned_position": source.returned_position, "provenance": source.provenance.value,
-                            "brand_owned_host": owned, "target_relation": relation, "brand": brand})
+                            "brand_owned_host": owned, "target_relation": relation, "brand": brand,
+                            "competitor_domain": competitor_domain})
         status = retrieval.status if retrieval else "missing"
         brand_status = ("unconfigured" if not definition else "unknown" if status != "completed" else
                         "matched" if any(source["brand"]["status"] == "matched" for source in sources) else
@@ -241,6 +355,7 @@ def build_evidence_assessment(measurement: MeasurementResults, record: BrandDefi
             unsupported = [citation.evidence_id for citation in citations if citation.kind == "unsupported"]
             trace = [{"evidence_id": source["evidence_id"], "query_id": pair.query_id,
                       "cited": source["evidence_id"] in valid if completed else None,
+                      "competitor_domain": source["competitor_domain"],
                       "shared_wording": _shared_wording(source["excerpt"], answer_text) if completed else [],
                       "selection_reason": "Selection reason not recorded"} for source in sources]
             for source in trace:
@@ -254,6 +369,12 @@ def build_evidence_assessment(measurement: MeasurementResults, record: BrandDefi
                                   brand_owned=_text_has_brand_host(answer_text, definition))
             if not completed and definition:
                 brand = {"status": "unknown", "matches": []}
+            competitor_source_ids = {
+                source["evidence_id"]
+                for source in sources
+                if source["competitor_domain"] is not None
+            }
+            competitor_cited_ids = competitor_source_ids.intersection(valid)
             answers.append({"query_id": pair.query_id, "profile_id": profile.profile_id,
                             "branded_query": pair.branded, "status": result.status if result else "missing",
                             "provenance": result.provenance.value if result else None,
@@ -263,6 +384,18 @@ def build_evidence_assessment(measurement: MeasurementResults, record: BrandDefi
                             "all" if len(valid) == len(sources) else "some" if valid else "none",
                             "source_citation_rate": _rate(len(valid), len(sources) if completed else 0),
                             "brand_source_count": len(brand_ids), "brand_cited_count": len(brand_ids.intersection(valid)),
+                            "competitor_source_count": len(competitor_source_ids),
+                            "competitor_cited_count": len(competitor_cited_ids),
+                            "competitor_domains": sorted({
+                                source["competitor_domain"]
+                                for source in sources
+                                if source["competitor_domain"] is not None
+                            }),
+                            "competitor_cited_domains": sorted({
+                                source["competitor_domain"]
+                                for source in sources
+                                if source["evidence_id"] in competitor_cited_ids
+                            }),
                             "exact_page_cited": any(citation.kind == "exact-page" for citation in citations) if completed else None,
                             "sources": trace})
     scores = measurement_scores(measurement)

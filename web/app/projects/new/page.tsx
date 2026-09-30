@@ -12,6 +12,7 @@ export default function NewProjectPage() {
   const [name, setName] = useState("");
   const [primaryDomain, setPrimaryDomain] = useState("");
   const [additionalDomains, setAdditionalDomains] = useState("");
+  const [competitorDomains, setCompetitorDomains] = useState("");
   const [locale, setLocale] = useState("en-GB");
   const [activeGoal, setActiveGoal] = useState("");
   const [colour, setColour] = useState("#0067b8");
@@ -28,6 +29,10 @@ export default function NewProjectPage() {
         name: name.trim(),
         primary_domain: primaryDomain.trim(),
         additional_domains: additionalDomains
+          .split(/[\n,]/)
+          .map((domain) => domain.trim())
+          .filter(Boolean),
+        competitor_domains: competitorDomains
           .split(/[\n,]/)
           .map((domain) => domain.trim())
           .filter(Boolean),
@@ -83,6 +88,11 @@ export default function NewProjectPage() {
                 <span>Additional approved domains</span>
                 <textarea value={additionalDomains} onChange={(event) => setAdditionalDomains(event.target.value)} placeholder={"www.contoso.com\ncontoso.co.uk"} />
                 <small>Optional. Separate hostnames with commas or new lines.</small>
+              </label>
+              <label className="form-field full">
+                <span>Competitor domains</span>
+                <textarea value={competitorDomains} onChange={(event) => setCompetitorDomains(event.target.value)} placeholder={"competitor.com\nanother-competitor.co.uk"} />
+                <small>Optional. Separate hostnames with commas or new lines. Competitor appearances will be snapshotted into each new measurement run.</small>
               </label>
               <label className="form-field">
                 <span>Default locale</span>

@@ -3,7 +3,7 @@ from hashlib import sha256
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from geo_agent.artifact_storage import ArtifactService, ArtifactStorage, MeasurementArtifact
 from geo_agent.artifacts import render_assessment_bundle, render_content_strategy_bundle
@@ -186,7 +186,10 @@ def create_project_router(
         body: ProjectUpdate,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        project = repository.update_project(project_id, owner, body)
+        try:
+            project = repository.update_project(project_id, owner, body)
+        except ValidationError as error:
+            raise HTTPException(422, detail=str(error)) from error
         return _project_view(project, repository, owner, policy)
 
     @router.post("/projects/{project_id}/archive")
@@ -249,6 +252,7 @@ def create_project_router(
             brief=brief,
             brand_definition=BrandDefinition(name=project.name, domains=project.domains),
             project_id=project_id,
+            competitor_domains=project.competitor_domains,
         )
         return run_view(run, project_id)
 
@@ -352,6 +356,7 @@ def create_project_router(
         report = (
             build_evidence_assessment(
                 run.measurement, record, run_id=run_id, run_revision=run.revision,
+                competitor_domains=run.competitor_domains,
             )
             if run.measurement else None
         )
@@ -388,7 +393,11 @@ def create_project_router(
         if run.measurement is None:
             raise Conflict("No saved measurement is available for assessment")
         report = build_evidence_assessment(
-            run.measurement, record, run_id=run_id, run_revision=run.revision,
+            run.measurement,
+            record,
+            run_id=run_id,
+            run_revision=run.revision,
+            competitor_domains=run.competitor_domains,
         )
         if measurement_hash is not None and report.measurement_hash != measurement_hash:
             raise Conflict("Saved measurement changed; reload the assessment")

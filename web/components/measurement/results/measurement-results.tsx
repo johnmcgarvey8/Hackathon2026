@@ -149,6 +149,9 @@ export function MeasurementResultsView({
               const brandSources = new Map(
                 (brandFinding?.sources || []).map((source) => [source.evidence_id, source.brand.status]),
               );
+              const competitorSources = new Map(
+                (brandFinding?.sources || []).map((source) => [source.evidence_id, source.competitor_domain]),
+              );
               const queryTitle = query?.grounding_query || retrieval?.grounding_query || queryId;
               return (
                 <details className="measurement-query-group" key={queryId}>
@@ -195,6 +198,9 @@ export function MeasurementResultsView({
                               <span className="pill evidence-kind">Grounding citation</span>
                               {brandSources.get(source.evidence_id) === "matched" && <span className="pill green">{brandName} found</span>}
                               {brandSources.get(source.evidence_id) === "ambiguous" && <span className="pill amber">Possible {brandName} match</span>}
+                              {competitorSources.get(source.evidence_id) && (
+                                <span className="pill red">Competitor: {competitorSources.get(source.evidence_id)}</span>
+                              )}
                             </span>
                             <strong>{source.title || source.url}</strong>
                             <small>{source.url}</small>
@@ -226,6 +232,7 @@ export function MeasurementResultsView({
               const brandPresentation = brandFinding
                 ? answerBrandPresentation(brandFinding.brand.status, brandName)
                 : { className: "", label: assessment?.brand_definition ? "Brand result unknown" : "Brand not configured" };
+              const citedCompetitors = brandFinding?.competitor_cited_domains || [];
               return (
                 <details className="provider-survey-response" key={`${answer.query_id}-${answer.profile_id}`}>
                   <summary>
@@ -233,7 +240,12 @@ export function MeasurementResultsView({
                       <strong>{query?.chat_query || "Prompt unavailable"}</strong>
                       <span>{modelByProfile.get(answer.profile_id)?.label || answer.model || answer.profile_id}</span>
                     </span>
-                    <span className={`pill ${brandPresentation.className}`}>{brandPresentation.label}</span>
+                    <span className="measurement-query-counts">
+                      <span className={`pill ${brandPresentation.className}`}>{brandPresentation.label}</span>
+                      {citedCompetitors.length > 0 && (
+                        <span className="pill red">Cited competitor: {citedCompetitors.join(", ")}</span>
+                      )}
+                    </span>
                   </summary>
                   <div className="provider-survey-content">
                     {answer.status === "completed" ? (

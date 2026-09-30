@@ -57,6 +57,7 @@ class ProjectMeasurementOrchestrator:
             brief=brief,
             brand_definition=BrandDefinition(name=project.name, domains=project.domains),
             project_id=project.project_id,
+            competitor_domains=project.competitor_domains,
         )
         return self.jobs.enqueue(
             run.run_id,

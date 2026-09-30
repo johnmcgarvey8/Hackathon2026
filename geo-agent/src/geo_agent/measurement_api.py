@@ -86,6 +86,10 @@ class RecoverEvaluatorsRequest(QueueRequest):
     confirm_evaluation_calls: bool
 
 
+class ReviewRecommendationsRequest(RevisionRequest):
+    decisions: tuple[RecommendationDecision, ...] = Field(min_length=1, max_length=3)
+
+
 class AgentExecutionAuthorizationRequest(RevisionRequest):
     agent_principal_id: str = Field(min_length=1, max_length=200)
     stage: ExecutionStage
@@ -113,6 +117,9 @@ def create_measurement_router(
         artifact_service,
         CursorCodec(secrets.token_bytes(32)),
     )
+
+    def run_view(run) -> dict:
+        return build_run_view(repository, run, policy)
 
     def require_operator(
         principal: Annotated[OperatorPrincipal, Depends(authenticate)],

@@ -1,6 +1,7 @@
 from typing import Any
 
 from geo_agent.evaluation import measurement_scores
+from geo_agent.evidence_assessment import build_competitor_summary
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.jobs import JobState, WorkflowJob
 from geo_agent.measurement_workflow import MeasurementRun, MeasurementState, OwnerIdentity
@@ -158,5 +159,9 @@ def build_run_view(
             "discuss": bound_project_id is not None,
         },
         "scores": measurement_scores(run.measurement) if run.measurement is not None else None,
+        "competitor_summary": build_competitor_summary(
+            run.measurement,
+            run.competitor_domains,
+        ),
     })
     return payload

@@ -21,6 +21,7 @@ import type {
   RunEvents,
   RunProgress,
   SendMessageRequest,
+  UpdateProjectRequest,
   WorkflowJob,
 } from "./types";
 
@@ -76,6 +77,11 @@ export const api = {
   createProject: (body: CreateProjectRequest) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
   project: (projectId: string) => request<Project>(projectPath(projectId)),
+  updateProject: (projectId: string, body: UpdateProjectRequest) =>
+    request<Project>(projectPath(projectId), {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   deleteProject: (projectId: string) =>
     request<void>(projectPath(projectId), { method: "DELETE" }),
   runs: (projectId: string) => request<MeasurementRun[]>(`${projectPath(projectId)}/runs`),

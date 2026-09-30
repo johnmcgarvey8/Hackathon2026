@@ -64,6 +64,7 @@ class LiveBriefRequest(Brief):
 def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | BudgetedLiveWorkflow | None = None,
                chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
                measurement_policy: MeasurementExecutionPolicy | None = None,
+               project_foundry: ProjectFoundrySettings | None = None,
                measurement_auto_worker: bool = False,
                measurement_mcp_principals: dict[str, AgentPrincipal] | None = None,
                mcp_cursor_secret: bytes | None = None,
@@ -86,24 +87,23 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
     tokens = dict(api_tokens)
     store = RunStore(database)
     coordinator = Coordinator(store)
-    measurement_repository = None
+    measurement_repository = SQLiteMeasurementRepository(database)
+    measurement_artifacts = LocalArtifactStorage(database.parent / "measurement-artifacts")
     measurement_application = None
     mock_runtime = None
     mcp_server = None
     mcp_asgi = None
     default_agent_principal_id = default_mcp_agent_principal_id
     if measurement_policy is not None:
-        measurement_repository = SQLiteMeasurementRepository(database)
         mock_runtime = (
             MockMeasurementRuntime(measurement_repository, measurement_policy)
             if measurement_auto_worker
             else None
         )
-        artifact_storage = LocalArtifactStorage(database.parent / "measurement-artifacts")
         measurement_application = MeasurementApplicationService(
             measurement_repository,
             measurement_policy,
-            ArtifactService(measurement_repository, artifact_storage),
+            ArtifactService(measurement_repository, measurement_artifacts),
             CursorCodec(mcp_cursor_secret or secrets.token_bytes(32)),
             human_base_url=human_base_url,
             pending_job_notifier=mock_runtime.drain if mock_runtime is not None else None,
@@ -155,20 +155,41 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
 
     owner_dependency = Depends(authenticate)
 
-    if measurement_policy is not None and measurement_repository is not None and measurement_application is not None:
-        def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
-            return OperatorPrincipal(
-                tenant_id="local-development",
-                object_id=owner,
-                roles=(measurement_policy.owner_role,),
-            )
+    def authenticate_operator(owner: Annotated[str, Depends(authenticate)]) -> OperatorPrincipal:
+        return OperatorPrincipal(
+            tenant_id="local-development",
+            object_id=owner,
+            roles=(measurement_policy.owner_role if measurement_policy is not None else "Geo.Operator",),
+        )
 
-    if measurement_policy is not None:
+    project_agent = (
+        HostedProjectAgent(measurement_repository, project_foundry)
+        if project_foundry is not None
+        else MockProjectAgent(measurement_repository)
+        if measurement_policy is not None and measurement_policy.execution_mode == "mock"
+        else UnavailableProjectAgent()
+    )
+    goal_summary_provider = (
+        FoundryGoalSummaryProvider(project_foundry)
+        if project_foundry is not None
+        else FallbackGoalSummaryProvider()
+    )
+    goal_summaries = ProjectGoalSummaryService(
+        measurement_repository,
+        goal_summary_provider,
+    )
+    project_chat_workflow = ProjectMeasurementChatWorkflow(
+        measurement_repository,
+        measurement_policy,
+        goal_summaries,
+    )
+
+    if measurement_policy is not None and measurement_application is not None:
         app.include_router(create_measurement_router(
             measurement_repository,
             measurement_policy,
             authenticate_operator,
-            measurement_application.artifacts.storage,
+            measurement_artifacts,
             mock_runtime.drain if mock_runtime is not None else None,
             service=measurement_application,
             default_agent_principal_id=default_agent_principal_id,

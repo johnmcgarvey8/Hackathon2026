@@ -74,6 +74,7 @@ class ProjectCreate(Contract):
     name: str = Field(min_length=1, max_length=120)
     primary_domain: str
     additional_domains: tuple[str, ...] = Field(default=(), max_length=20)
+    competitor_domains: tuple[str, ...] = Field(default=(), max_length=20)
     default_locale: str = Field(default="en-GB", pattern=r"^[a-z]{2}-[A-Z]{2}$")
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str = Field(default="#0067b8", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -92,9 +93,9 @@ class ProjectCreate(Contract):
     def normalize_primary_domain(cls, value: str) -> str:
         return normalize_domain(value)
 
-    @field_validator("additional_domains")
+    @field_validator("additional_domains", "competitor_domains")
     @classmethod
-    def normalize_additional_domains(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+    def normalize_domains(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(normalize_domain(value) for value in values)
 
     @model_validator(mode="after")
@@ -102,6 +103,10 @@ class ProjectCreate(Contract):
         domains = (self.primary_domain, *self.additional_domains)
         if len(set(domains)) != len(domains):
             raise ValueError("Project domains must be unique")
+        if len(set(self.competitor_domains)) != len(self.competitor_domains):
+            raise ValueError("Competitor domains must be unique")
+        if set(domains) & set(self.competitor_domains):
+            raise ValueError("Competitor domains cannot overlap project domains")
         return self
 
 
@@ -110,6 +115,7 @@ class ProjectUpdate(Contract):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     primary_domain: str | None = None
     additional_domains: tuple[str, ...] | None = Field(default=None, max_length=20)
+    competitor_domains: tuple[str, ...] | None = Field(default=None, max_length=20)
     default_locale: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
@@ -130,9 +136,9 @@ class ProjectUpdate(Contract):
     def normalize_optional_primary_domain(cls, value: str | None) -> str | None:
         return normalize_domain(value) if value is not None else None
 
-    @field_validator("additional_domains")
+    @field_validator("additional_domains", "competitor_domains")
     @classmethod
-    def normalize_optional_additional_domains(
+    def normalize_optional_domains(
         cls, values: tuple[str, ...] | None,
     ) -> tuple[str, ...] | None:
         return tuple(normalize_domain(value) for value in values) if values is not None else None
@@ -146,6 +152,7 @@ class Project(Contract):
     name: str = Field(min_length=1, max_length=120)
     primary_domain: str
     additional_domains: tuple[str, ...] = ()
+    competitor_domains: tuple[str, ...] = ()
     default_locale: str = Field(pattern=r"^[a-z]{2}-[A-Z]{2}$")
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")

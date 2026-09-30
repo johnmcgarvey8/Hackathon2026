@@ -110,6 +110,9 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /Grounding query/);
   assert.match(results, /groundingMatchPresentation/);
   assert.match(results, /brandSources\.get\(source\.evidence_id\) === "matched"/);
+  assert.match(results, /Competitor:/);
+  assert.match(results, /Cited competitor:/);
+  assert.match(results, /competitor_cited_domains/);
   assert.match(results, /Brand result unknown/);
   assert.doesNotMatch(results, /Brand presence summary/);
   assert.doesNotMatch(results, /id="brand-presence"/);
@@ -117,6 +120,19 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /Results blocked/);
   assert.match(results, /non-live data/);
   assert.doesNotMatch(results, /dangerouslySetInnerHTML/);
+});
+
+test("control plane surfaces snapshotted competitor summaries", () => {
+  const history = read("app/projects/[projectId]/control-plane/page.tsx");
+  const detail = read("app/projects/[projectId]/control-plane/[runId]/page.tsx");
+  const types = read("lib/types.ts");
+  assert.match(history, /<th>Competitors<\/th>/);
+  assert.match(history, /competitor_summary/);
+  assert.match(detail, /Competitor visibility/);
+  assert.match(detail, /competitorSummaryText/);
+  assert.match(detail, /LLM .*citation/);
+  assert.match(types, /interface CompetitorSummary/);
+  assert.match(types, /competitor_domains/);
 });
 
 test("measurement detail provides accessible responsive section navigation", () => {

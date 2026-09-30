@@ -16,6 +16,7 @@ const navItems: { href: string; label: string; icon: IconName; disabled?: boolea
   { href: "/chat", label: "Chat", icon: "chat" },
   { href: "/cms-updates", label: "CMS Updates", icon: "cms", disabled: true },
   { href: "/integrations", label: "Integrations", icon: "integrations" },
+  { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
 export function ProjectShell({ children }: { children: React.ReactNode }) {
@@ -67,7 +68,7 @@ export function ProjectShell({ children }: { children: React.ReactNode }) {
       return;
     }
     const suffix = pathname.replace(`/projects/${projectId}`, "");
-    const safeSuffix = ["/control-plane", "/chat", "/integrations"].includes(suffix)
+    const safeSuffix = ["/control-plane", "/chat", "/integrations", "/settings"].includes(suffix)
       ? suffix
       : "";
     router.push(`/projects/${value}${safeSuffix}`);
