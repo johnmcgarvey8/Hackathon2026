@@ -10,7 +10,9 @@ import type {
   MeasurementRun,
 } from "@/lib/types";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
+import { MeasurementLoadingState } from "@/components/measurement/measurement-loading-state";
 import { evidencePresentation, formatGroundingQueryTitle } from "@/lib/evidence-presentation";
+import { isMeasurementResultPending } from "@/lib/measurement-runtime";
 import { surveyModelRoster } from "@/lib/survey-models";
 
 function isCitationScores(value: MeasurementRun["scores"]): value is CitationScores {
@@ -132,6 +134,12 @@ export function MeasurementResultsView({
       : recommendationStage?.provider_mode === "environment-agent"
         ? "Default Recommendations Agent"
         : "Provider not recorded";
+  const queriesPending = queryIds.length === 0 && isMeasurementResultPending(run, "queries");
+  const evidencePending = isMeasurementResultPending(run, "evidence");
+  const answersPending = answers.length === 0 && isMeasurementResultPending(run, "answers");
+  const scoresPending = !scores && isMeasurementResultPending(run, "scores");
+  const recommendationsPending = !run.recommendations
+    && isMeasurementResultPending(run, "recommendations");
 
   if (hasNonLiveData) {
     return (
@@ -147,7 +155,7 @@ export function MeasurementResultsView({
       <section className="card result-section" id="query-plan">
         <div className="card-heading"><h2>Grounding queries and brand presence</h2><span className="pill">{queryIds.length} queries</span></div>
         <p className="muted">Each query groups the WebIQ retrieval input with the grounding citations supplied to the LLM during inference and flags literal brand presence in the saved results.</p>
-        {queryIds.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before grounding queries could be saved." : "Grounding queries are being generated and will be bound automatically."}</p> : (
+        {queriesPending ? <MeasurementLoadingState stage="queries" /> : queryIds.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before grounding queries could be saved." : "No grounding queries were saved for this run."}</p> : (
           <div className="measurement-query-list">
             {queryIds.map((queryId) => {
               const query = queries.find((item) => item.query_id === queryId);
@@ -201,7 +209,9 @@ export function MeasurementResultsView({
                         </span>
                       </div>
                       {retrieval?.error && <p className="form-error">{retrieval.error}</p>}
-                      {!retrieval || retrieval.sources.length === 0 ? <p className="small muted">No saved grounding citations are available.</p> : retrieval.sources.map((source) => (
+                      {!retrieval && evidencePending ? (
+                        <MeasurementLoadingState stage="evidence" compact />
+                      ) : !retrieval || retrieval.sources.length === 0 ? <p className="small muted">No saved grounding citations are available.</p> : retrieval.sources.map((source) => (
                         <button className="evidence-row" type="button" key={source.evidence_id} onClick={() => onOpenEvidence(source.evidence_id)}>
                           <span>
                             <span className="evidence-kind-row">
@@ -230,9 +240,9 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="model-answers">
-        <div className="card-heading"><h2>LLM Provider Survey</h2><span className="pill green">Post-inference · {answers.length} responses</span></div>
+        <div className="card-heading"><h2>LLM Provider Survey</h2><span className={`pill ${answersPending ? "blue" : "green"}`}>{answersPending ? "Running" : `Post-inference · ${answers.length} responses`}</span></div>
         <p className="muted">These are the post-inference provider responses generated after the saved WebIQ grounding citations were supplied to the LLM. Each response links back to its survey prompt and reported citation IDs.</p>
-        {answers.length === 0 ? <p className="muted">No saved LLM provider responses are available.</p> : (
+        {answersPending ? <MeasurementLoadingState stage="answers" /> : answers.length === 0 ? <p className="muted">No saved LLM provider responses are available.</p> : (
           <div className="provider-survey-list">
             {answers.map((answer) => {
               const query = queries.find((item) => item.query_id === answer.query_id);
@@ -275,44 +285,48 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="citation-performance">
-        <div className="card-heading"><h2>Citation performance</h2><span className="pill">{scores?.provisional ? "Provisional" : "Saved result"}</span></div>
+        <div className="card-heading"><h2>Citation performance</h2><span className="pill">{scoresPending ? "Calculating" : scores?.provisional ? "Provisional" : "Saved result"}</span></div>
         <p className="muted">
           Surveyed models are identified by friendly profile name and the exact configured or provider-returned model.
         </p>
-        <div className="grid three">
-          {surveyModels.map((model) => (
-            <article className="metric-card" key={model.profileId}>
-              <span>{model.label}</span>
-              <strong>{scoreText(scores?.by_profile?.[model.profileId])}</strong>
-              <small>{model.provider} · configured deployment {model.deployment}</small>
-            </article>
-          ))}
-        </div>
-        <div className="grid three">
-          <article className="metric-card"><span>Exact-page citation</span><strong>{scoreText(scores?.overall)}</strong></article>
-          <article className="metric-card"><span>Target returned by WebIQ</span><strong>{scoreText(scores?.retrieval)}</strong></article>
-          <article className="metric-card"><span>Comparable queries</span><strong>{scores?.common_completed_query_ids?.length ?? "Unknown"}</strong></article>
-        </div>
-        <div className="finding-list">
-          {(scores?.by_answer || []).map((finding) => (
-            <div key={`${finding.query_id}-${finding.profile_id}`}>
-              <span>{finding.query_id} · {modelByProfile.get(finding.profile_id)?.label || finding.profile_id}</span><strong>{findingLabels(finding).join(" · ")}</strong>
+        {scoresPending ? <MeasurementLoadingState stage="scores" /> : (
+          <>
+            <div className="grid three">
+              {surveyModels.map((model) => (
+                <article className="metric-card" key={model.profileId}>
+                  <span>{model.label}</span>
+                  <strong>{scoreText(scores?.by_profile?.[model.profileId])}</strong>
+                  <small>{model.provider} · configured deployment {model.deployment}</small>
+                </article>
+              ))}
             </div>
-          ))}
-        </div>
-        {!scores && <p className="muted">Citation scores are unknown until saved measurement results are available.</p>}
+            <div className="grid three">
+              <article className="metric-card"><span>Exact-page citation</span><strong>{scoreText(scores?.overall)}</strong></article>
+              <article className="metric-card"><span>Target returned by WebIQ</span><strong>{scoreText(scores?.retrieval)}</strong></article>
+              <article className="metric-card"><span>Comparable queries</span><strong>{scores?.common_completed_query_ids?.length ?? "Unknown"}</strong></article>
+            </div>
+            <div className="finding-list">
+              {(scores?.by_answer || []).map((finding) => (
+                <div key={`${finding.query_id}-${finding.profile_id}`}>
+                  <span>{finding.query_id} · {modelByProfile.get(finding.profile_id)?.label || finding.profile_id}</span><strong>{findingLabels(finding).join(" · ")}</strong>
+                </div>
+              ))}
+            </div>
+            {!scores && <p className="muted">Citation scores are unknown because no saved measurement results are available.</p>}
+          </>
+        )}
       </section>
 
       <section className="card result-section" id="recommendations">
         <div className="card-heading"><h2>Recommendations</h2><span className="pill">{recommendationStage?.status || run.recommendations?.status || "Not requested"}</span></div>
         <p className="small muted">{recommendationProvider}{recommendationStage?.binding ? ` · ${recommendationStage.binding.agent_name} v${recommendationStage.binding.agent_version}` : ""}</p>
-        {!run.recommendations ? (
+        {recommendationsPending ? (
+          <MeasurementLoadingState stage="recommendations" />
+        ) : !run.recommendations ? (
           <p className="muted">
             {recommendationStage?.status === "failed"
               ? `Recommendation generation failed${recommendationStage.error_code ? ` (${recommendationStage.error_code})` : ""}. Measurement results remain available.`
-              : recommendationStage?.status === "queued" || recommendationStage?.status === "running"
-                ? "Recommendation generation is running independently from the saved measurement."
-                : "No recommendation report is saved."}
+              : "No recommendation report is saved."}
           </p>
         ) : (
           <>

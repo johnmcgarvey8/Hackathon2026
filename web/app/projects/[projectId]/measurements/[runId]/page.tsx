@@ -9,7 +9,7 @@ import { useRunPolling } from "@/components/measurement/use-run-polling";
 import { ScreenHeader } from "@/components/screen-header";
 import { LoadingState, UnavailableState } from "@/components/status-state";
 import { api, ApiError } from "@/lib/api";
-import { actionAllowed, actionReason, pageUrl, runObjective } from "@/lib/measurement-runtime";
+import { actionAllowed, actionReason, isRunActive, pageUrl, runObjective } from "@/lib/measurement-runtime";
 import type {
   ArtifactMetadata,
   BinaryArtifact,
@@ -241,7 +241,7 @@ export default function MeasurementRunPage() {
   if (error && !run) return <section className="screen"><UnavailableState title="Measurement unavailable" message={error} /></section>;
   if (!run) return null;
 
-  const runActive = ["preparing", "queued", "evaluating", "recommending"].includes(run.state.toLowerCase());
+  const runActive = isRunActive(run);
 
   return (
     <section className="screen measurement-run">
@@ -285,7 +285,7 @@ export default function MeasurementRunPage() {
             </section>
             <section className="card">
               <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-              <RunProgressPanel progress={progress} />
+              <RunProgressPanel progress={progress} active={runActive} />
             </section>
           </div>
 
