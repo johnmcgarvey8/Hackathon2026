@@ -487,6 +487,13 @@ def build_geo_context_packet(
                 },
             )
 
+            recommendation_stage = next(
+                (
+                    item for item in run.agent_stages
+                    if item.role.value == "recommendations"
+                ),
+                None,
+            )
             recommendation_items = []
             decisions = {
                 item.task_id: item.decision
@@ -531,6 +538,14 @@ def build_geo_context_packet(
                     "requires_human_review": True,
                     "review_status": "reviewed" if run.recommendation_review else "pending",
                     "publish_permission": False,
+                    "stage_status": (
+                        recommendation_stage.status.value
+                        if recommendation_stage is not None else "legacy-or-not-requested"
+                    ),
+                    "provider_mode": (
+                        recommendation_stage.provider_mode.value
+                        if recommendation_stage is not None else None
+                    ),
                 },
             )
 

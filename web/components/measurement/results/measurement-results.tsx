@@ -122,6 +122,16 @@ export function MeasurementResultsView({
       ? [strategy.report.limitations]
       : Array.isArray(strategy?.report?.limitations) ? strategy.report.limitations : []),
   ];
+  const recommendationStage = (run.agent_stages || []).find(
+    (stage) => stage.role === "recommendations",
+  );
+  const recommendationProvider = recommendationStage?.provider_mode === "baseline-provider"
+    ? "Standard LLM provider"
+    : recommendationStage?.provider_mode === "project-agent"
+      ? "Project Recommendations Agent"
+      : recommendationStage?.provider_mode === "environment-agent"
+        ? "Default Recommendations Agent"
+        : "Provider not recorded";
 
   if (hasNonLiveData) {
     return (
@@ -294,8 +304,17 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="recommendations">
-        <div className="card-heading"><h2>Recommendations</h2><span className="pill">{run.recommendations?.status || "Unavailable"}</span></div>
-        {!run.recommendations ? <p className="muted">No recommendation report is saved.</p> : (
+        <div className="card-heading"><h2>Recommendations</h2><span className="pill">{recommendationStage?.status || run.recommendations?.status || "Not requested"}</span></div>
+        <p className="small muted">{recommendationProvider}{recommendationStage?.binding ? ` · ${recommendationStage.binding.agent_name} v${recommendationStage.binding.agent_version}` : ""}</p>
+        {!run.recommendations ? (
+          <p className="muted">
+            {recommendationStage?.status === "failed"
+              ? `Recommendation generation failed${recommendationStage.error_code ? ` (${recommendationStage.error_code})` : ""}. Measurement results remain available.`
+              : recommendationStage?.status === "queued" || recommendationStage?.status === "running"
+                ? "Recommendation generation is running independently from the saved measurement."
+                : "No recommendation report is saved."}
+          </p>
+        ) : (
           <>
             {run.recommendations.reason && <p>{run.recommendations.reason}</p>}
             {run.recommendations.tasks.map((task) => (

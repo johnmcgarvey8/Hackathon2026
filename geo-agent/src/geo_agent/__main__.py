@@ -16,6 +16,7 @@ from geo_agent.mcp_server import _persistent_secret
 from geo_agent.measurement_workflow import OwnerIdentity
 from geo_agent.page_analysis import AnalysisPolicy, PageAnalysisService
 from geo_agent.project_foundry import ProjectFoundrySettings
+from geo_agent.specialist_foundry import SpecialistFoundrySettings
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
 
@@ -84,6 +85,7 @@ def main() -> None:
             Path(measurement_policy_file).read_text(encoding="utf-8")
         )
     project_foundry = ProjectFoundrySettings.from_environment(os.environ)
+    specialist_foundry = SpecialistFoundrySettings.from_environment(os.environ)
     mcp_agent_token = os.environ.get("GEO_MCP_AGENT_TOKEN", "").strip()
     mcp_principals = None
     mcp_principal_id = os.environ.get("GEO_MCP_PRINCIPAL_ID", "local-agent")
@@ -105,6 +107,7 @@ def main() -> None:
         analysis=analysis,
         measurement_policy=measurement_policy,
         project_foundry=project_foundry,
+        specialist_foundry=specialist_foundry,
         measurement_auto_worker=measurement_policy is not None and measurement_policy.execution_mode == "mock",
         measurement_mcp_principals=mcp_principals,
         mcp_cursor_secret=_persistent_secret(data_dir / "mcp-cursor-key") if mcp_principals else None,

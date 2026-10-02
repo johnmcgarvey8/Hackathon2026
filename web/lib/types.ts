@@ -253,6 +253,35 @@ export interface RecommendationReport {
   measurement_hash?: string;
   method_version?: string;
   prompt_version?: string;
+  agent_call?: {
+    role: SpecialistAgentRole;
+    provider_mode: SpecialistProviderMode;
+    provider_response_id?: string | null;
+    agent_name?: string | null;
+    agent_version?: string | null;
+    model?: string | null;
+  } | null;
+}
+
+export type SpecialistAgentRole = "grounding-query" | "llm-survey" | "recommendations";
+export type SpecialistProviderMode = "project-agent" | "environment-agent" | "baseline-provider";
+
+export interface AgentStageRecord {
+  role: SpecialistAgentRole;
+  status: "not-requested" | "queued" | "running" | "completed" | "failed" | "skipped";
+  provider_mode: SpecialistProviderMode;
+  job_id: string | null;
+  input_hash: string;
+  output_hash: string | null;
+  provider_response_id: string | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  binding?: {
+    project_endpoint: string;
+    agent_name: string;
+    agent_version: string;
+  } | null;
 }
 
 export interface RecommendationReview {
@@ -290,6 +319,7 @@ export interface RunAvailableActions {
   start?: AvailableAction;
   cancel?: AvailableAction;
   review_recommendations?: AvailableAction;
+  retry_recommendations?: AvailableAction;
   export?: AvailableAction;
   discuss?: AvailableAction;
   [key: string]: AvailableAction | undefined;
@@ -334,6 +364,7 @@ export interface MeasurementRun {
   measurement?: MeasurementResults | null;
   recommendations?: RecommendationReport | null;
   recommendation_review?: RecommendationReview | null;
+  agent_stages?: AgentStageRecord[];
   scores?: CitationScores | Record<string, number> | null;
   available_actions?: RunAvailableActions;
   result_availability?: ResultAvailability;
@@ -350,7 +381,7 @@ export interface WorkflowJob {
   job_id: string;
   run_id: string;
   run_revision: number;
-  job_type: "prepare" | "evaluate" | "recover-evaluators";
+  job_type: "prepare" | "evaluate" | "recover-evaluators" | "agent-stage";
   state: "queued" | "leased" | "completed" | "failed" | "cancelled";
   error_code: string | null;
   created_at: string;
@@ -374,7 +405,7 @@ export interface RunProgress {
   run_revision: number;
   run_state: string;
   job_id: string | null;
-  job_type: "prepare" | "evaluate" | null;
+  job_type: WorkflowJob["job_type"] | null;
   job_state: WorkflowJob["state"] | null;
   error_code: string | null;
   queued_at: string | null;

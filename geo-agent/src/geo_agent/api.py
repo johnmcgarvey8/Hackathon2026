@@ -37,6 +37,8 @@ from geo_agent.project_chat import MockProjectAgent, ProjectChatService, Unavail
 from geo_agent.project_chat_api import create_project_chat_router
 from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
 from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
+from geo_agent.specialist_foundry import SpecialistFoundrySettings
 from geo_agent.webiq import ProviderError
 from geo_agent.workflow import Conflict, Coordinator, NotFound, RunStore
 
@@ -65,6 +67,7 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
                chat: ConversationAgent | None = None, analysis: PageAnalysisService | None = None,
                measurement_policy: MeasurementExecutionPolicy | None = None,
                project_foundry: ProjectFoundrySettings | None = None,
+               specialist_foundry: SpecialistFoundrySettings | None = None,
                measurement_auto_worker: bool = False,
                measurement_mcp_principals: dict[str, AgentPrincipal] | None = None,
                mcp_cursor_secret: bytes | None = None,
@@ -94,9 +97,22 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
     mcp_server = None
     mcp_asgi = None
     default_agent_principal_id = default_mcp_agent_principal_id
+    automatic_orchestrator = (
+        ProjectMeasurementOrchestrator(
+            measurement_repository,
+            measurement_policy,
+            specialist_foundry if measurement_policy.execution_mode == "live" else None,
+        )
+        if measurement_policy is not None
+        else None
+    )
     if measurement_policy is not None:
         mock_runtime = (
-            MockMeasurementRuntime(measurement_repository, measurement_policy)
+            MockMeasurementRuntime(
+                measurement_repository,
+                measurement_policy,
+                on_job_finished=automatic_orchestrator.reconcile_job,
+            )
             if measurement_auto_worker
             else None
         )
@@ -199,8 +215,9 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         measurement_policy,
         authenticate_operator,
         measurement_artifacts,
-        None,
+        mock_runtime.drain if mock_runtime is not None else None,
         goal_summaries,
+        specialist_foundry,
     ))
     app.include_router(create_project_chat_router(
         ProjectChatService(

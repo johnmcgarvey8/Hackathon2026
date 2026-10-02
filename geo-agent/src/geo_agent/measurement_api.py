@@ -158,7 +158,7 @@ def create_measurement_router(
     @router.post("/briefs", status_code=201)
     def create_brief(body: CreateMeasurementBriefRequest, owner: OwnerIdentity = owner_dependency) -> dict:
         brief = Brief.model_validate(body.model_dump(exclude={"brand_definition"}))
-        return _run_view(application.create_human_run(
+        return run_view(application.create_human_run(
             owner,
             brief=brief,
             brand_definition=body.brand_definition,

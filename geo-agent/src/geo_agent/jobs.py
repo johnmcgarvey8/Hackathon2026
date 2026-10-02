@@ -27,6 +27,7 @@ class JobType(StrEnum):
     PREPARE = "prepare"
     EVALUATE = "evaluate"
     RECOVER_EVALUATORS = "recover-evaluators"
+    AGENT_STAGE = "agent-stage"
 
 
 class JobState(StrEnum):
@@ -160,6 +161,8 @@ class RunProgress(Contract):
                        last_activity_at=run.updated_at)
         if job.job_type == JobType.PREPARE:
             planned = {"webiq-browse": 1, "page-analysis-model": 1, "paired-query-plan": 1}
+        elif job.job_type == JobType.AGENT_STAGE:
+            planned = {"recommendation-model": 1}
         elif job.job_type == JobType.RECOVER_EVALUATORS:
             planned = {
                 "profile-evaluator": sum(
@@ -183,8 +186,6 @@ class RunProgress(Contract):
                 query_count = 0
                 profile_count = 0
             planned = {"webiq-search": query_count, "profile-evaluator": query_count * profile_count}
-            if job.request.get("include_recommendations"):
-                planned["recommendation-model"] = 1
         active = job.state in {JobState.QUEUED, JobState.LEASED}
         operations = []
         for operation_type, total in planned.items():

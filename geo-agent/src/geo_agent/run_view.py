@@ -5,6 +5,7 @@ from geo_agent.evidence_assessment import build_competitor_summary
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.jobs import JobState, WorkflowJob
 from geo_agent.measurement_workflow import MeasurementRun, MeasurementState, OwnerIdentity
+from geo_agent.specialist_agents import AgentStageStatus, SpecialistAgentRole
 
 
 ACTIVE_JOB_STATES = {JobState.QUEUED, JobState.LEASED}
@@ -81,6 +82,13 @@ def build_run_view(
         and run.approval.input_hash == run.inputs.approval_hash
     )
     recommendation_tasks = bool(run.recommendations and run.recommendations.tasks)
+    recommendation_stage = next(
+        (
+            stage for stage in run.agent_stages
+            if stage.role == SpecialistAgentRole.RECOMMENDATIONS
+        ),
+        None,
+    )
     failed_evaluators = bool(
         run.measurement
         and any(result.status == "error" for result in run.measurement.results)
@@ -147,6 +155,11 @@ def build_run_view(
                 and policy.execution_mode == "live"
                 and run.state in {MeasurementState.FAILED, MeasurementState.PARTIAL}
                 and failed_evaluators
+                and not active_job
+            ),
+            "retry_recommendations": (
+                recommendation_stage is not None
+                and recommendation_stage.status == AgentStageStatus.FAILED
                 and not active_job
             ),
             "cancel": active_job,

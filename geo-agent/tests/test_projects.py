@@ -648,6 +648,11 @@ def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
         automatic = ProjectMeasurementOrchestrator(repository, execution_policy)
         agent = MockProjectAgent(repository)
         run = repository.get(run_id, owner)
+        queued_jobs = repository.list_run_jobs(run_id, owner)
+        assert len(queued_jobs) == 1
+        assert queued_jobs[0].policy_id == execution_policy.policy_id
+        assert queued_jobs[0].policy_hash == execution_policy.policy_hash
+        assert queued_jobs[0].operation_ceiling == 3
         prepared = live_inputs(execution_policy, run.brief)
         prepare_job = repository.lease_one_job("test-live-worker")
         assert prepare_job is not None
@@ -664,6 +669,14 @@ def test_second_run_bound_chat_does_not_steal_automatic_insights(tmp_path):
             }),
         )
         automatic.reconcile_job(*completed_prepare)
+        evaluate_jobs = tuple(
+            item for item in repository.list_run_jobs(run_id, owner)
+            if item.job_type == JobType.EVALUATE
+        )
+        assert len(evaluate_jobs) == 1
+        assert evaluate_jobs[0].policy_id == execution_policy.policy_id
+        assert evaluate_jobs[0].policy_hash == execution_policy.policy_hash
+        assert evaluate_jobs[0].operation_ceiling == 10
         workflow.reconcile_job(
             completed_prepare[0],
             repository.get(run_id, owner),
@@ -1030,6 +1043,9 @@ def test_project_scoped_run_contract_jobs_and_cancellation(tmp_path):
         assert queued.status_code == 202, queued.text
         payload = queued.json()
         job = payload["job"]
+        assert job["policy_id"] == policy().policy_id
+        assert job["policy_hash"] == policy().policy_hash
+        assert job["operation_ceiling"] == 3
         assert payload["run"]["available_actions"]["cancel"] is True
         assert payload["run"]["latest_job"] == job
         assert client.get(f"{route}/jobs").json() == [job]
@@ -1128,6 +1144,9 @@ def test_project_scoped_query_approval_and_start_are_revision_bound(tmp_path):
         )
         assert queued.status_code == 202, queued.text
         assert queued.json()["run"]["state"] == "queued"
+        assert queued.json()["job"]["policy_id"] == policy().policy_id
+        assert queued.json()["job"]["policy_hash"] == policy().policy_hash
+        assert queued.json()["job"]["operation_ceiling"] == 10
 
 
 def test_project_scoped_results_reviews_and_artifacts_are_isolated(tmp_path):

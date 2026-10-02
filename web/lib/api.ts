@@ -146,6 +146,15 @@ export const api = {
         confirm_evaluation_calls: true,
       }),
     }),
+  retryRecommendations: (projectId: string, runId: string, expectedRevision: number) =>
+    request<JobMutationResponse>(`${runPath(projectId, runId)}/retry-recommendations`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_revision: expectedRevision,
+        idempotency_key: crypto.randomUUID(),
+        confirm_provider_call: true,
+      }),
+    }),
   runEvents: (projectId: string, runId: string) =>
     request<RunEvents>(`${runPath(projectId, runId)}/events`),
   runJobs: (projectId: string, runId: string) =>

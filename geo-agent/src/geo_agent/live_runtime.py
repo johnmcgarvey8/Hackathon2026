@@ -11,6 +11,8 @@ from geo_agent.persistence import SQLAlchemyMeasurementRepository
 from geo_agent.preparation import PreparationHandler
 from geo_agent.providers import create_evaluator
 from geo_agent.recommendations import RecommendationService
+from geo_agent.specialist_foundry import HostedSpecialistAgent
+from geo_agent.specialist_workflow import SpecialistStageHandler
 from geo_agent.webiq import WebIQ
 from geo_agent.worker import Worker
 
@@ -45,6 +47,8 @@ class LiveMeasurementRuntime:
                 "OpenAI evaluator profiles must use the environment-configured Azure OpenAI endpoint"
             )
         grants = budget_grant if isinstance(budget_grant, tuple) else (budget_grant,)
+        if len({grant.owner.key for grant in grants}) != 1:
+            raise ValueError("Measurement budget grants must belong to one owner")
         repository.bind_measurement_budgets(grants, policy)
         repository.set_measurement_budget_enforcement(enforce_budget)
         webiq_options = {"url_validator": webiq_url_validator} if webiq_url_validator is not None else {}
@@ -59,6 +63,7 @@ class LiveMeasurementRuntime:
             create_evaluator(profile, token_provider=token_provider, transport=foundry_transport)
             for profile in policy.profiles
         )
+        recommendations = RecommendationService(preparation)
         self.worker = Worker(repository, worker_id, {
             JobType.PREPARE: PreparationHandler(policy, webiq, preparation, preparation),
             JobType.EVALUATE: EvaluationHandler(
@@ -66,12 +71,21 @@ class LiveMeasurementRuntime:
                 policy,
                 webiq,
                 evaluators,
-                RecommendationService(preparation),
+                recommendations,
+            ),
+            JobType.AGENT_STAGE: SpecialistStageHandler(
+                repository,
+                recommendations,
+                HostedSpecialistAgent(
+                    token_provider=token_provider,
+                    transport=foundry_transport,
+                ),
             ),
         },
             policy_id=policy.policy_id,
             policy_hash=policy.policy_hash,
-            owner_key=budget_grant.owner.key,
+            owner_key=grants[0].owner.key,
+            on_job_finished=on_job_finished,
         )
         self.repository = repository
 

@@ -186,13 +186,15 @@ class ArtifactService:
             assessment,
         )
         content_hash = sha256(content).hexdigest()
+        artifact_id = identifier()
         artifact = MeasurementArtifact(
+            artifact_id=artifact_id,
             run_id=run.run_id,
             kind=ArtifactKind.MEASUREMENT,
             content_hash=content_hash,
             media_type=self.media_type,
             size=len(content),
-            storage_key=f"{owner.key}/{run.run_id}/{ArtifactKind.MEASUREMENT.value}/{content_hash}.zip",
+            storage_key=f"{owner.key[:8]}/{artifact_id}.zip",
         )
         self.storage.put(artifact.storage_key, content)
         return self.repository.persist_export(artifact, owner, revision)
@@ -249,13 +251,15 @@ class ArtifactService:
 
             content = render_content_strategy_bundle(run.measurement)
         content_hash = sha256(content).hexdigest()
+        artifact_id = identifier()
         artifact = MeasurementArtifact(
+            artifact_id=artifact_id,
             run_id=run.run_id,
             kind=kind,
             content_hash=content_hash,
             media_type=self.media_type,
             size=len(content),
-            storage_key=f"{owner.key}/{run.run_id}/{kind.value}/{content_hash}.zip",
+            storage_key=f"{owner.key[:8]}/{artifact_id}.zip",
         )
         self.storage.put(artifact.storage_key, content)
         return self.repository.persist_companion(artifact, owner, revision)

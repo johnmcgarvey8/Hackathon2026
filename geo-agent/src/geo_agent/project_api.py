@@ -44,6 +44,7 @@ from geo_agent.projects import (
     host_in_domains,
 )
 from geo_agent.project_measurements import ProjectMeasurementOrchestrator
+from geo_agent.specialist_foundry import SpecialistFoundrySettings
 from geo_agent.recommendations import build_content_strategy
 from geo_agent.run_view import build_run_view, job_view
 from geo_agent.workflow import Conflict, NotFound
@@ -60,6 +61,12 @@ class ConfirmedProjectMeasurementRequest(ProjectBriefRequest):
 
 class ArchiveProjectRequest(Contract):
     expected_revision: int = Field(ge=1)
+
+
+class RetryRecommendationsRequest(Contract):
+    expected_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirm_provider_call: bool
 
 
 def _artifact_view(artifact: MeasurementArtifact) -> dict:
@@ -102,12 +109,13 @@ def create_project_router(
     artifact_storage: ArtifactStorage,
     run_pending_jobs: Callable[[], None] | None = None,
     goal_summaries: ProjectGoalSummaryService | None = None,
+    specialist_settings: SpecialistFoundrySettings | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["projects"])
     coordinator = MeasurementCoordinator(repository)
     jobs = JobService(repository)
     artifact_service = ArtifactService(repository, artifact_storage)
-    automatic = ProjectMeasurementOrchestrator(repository, policy)
+    automatic = ProjectMeasurementOrchestrator(repository, policy, specialist_settings)
 
     def require_operator(
         principal: Annotated[OperatorPrincipal, Depends(authenticate)],
@@ -457,7 +465,7 @@ def create_project_router(
         background_tasks: BackgroundTasks,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        require_measurement_policy()
+        execution_policy = require_measurement_policy()
         if body.confirm_preparation_calls is not True:
             raise Conflict("Preparation provider calls require explicit confirmation")
         run = scoped_run(project_id, run_id, owner)
@@ -473,6 +481,13 @@ def create_project_router(
                 brief=run.brief,
                 confirm_preparation_calls=True,
                 project_bound=True,
+            ),
+            policy_id=execution_policy.policy_id,
+            policy_hash=execution_policy.policy_hash,
+            operation_ceiling=(
+                execution_policy.max_browse_calls
+                + execution_policy.max_page_analysis_calls
+                + execution_policy.max_query_plan_calls
             ),
         )
         if run_pending_jobs is not None:
@@ -523,7 +538,7 @@ def create_project_router(
         background_tasks: BackgroundTasks,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        require_measurement_policy()
+        execution_policy = require_measurement_policy()
         if body.confirm_evaluation_calls is not True:
             raise Conflict("Evaluation provider calls require explicit confirmation")
         scoped_run(project_id, run_id, owner)
@@ -538,6 +553,13 @@ def create_project_router(
                 include_recommendations=body.include_recommendations,
                 project_bound=True,
             ),
+            policy_id=execution_policy.policy_id,
+            policy_hash=execution_policy.policy_hash,
+            operation_ceiling=(
+                execution_policy.max_search_calls
+                + execution_policy.max_evaluator_calls_per_profile
+                * len(execution_policy.profiles)
+            ),
         )
         if run_pending_jobs is not None:
             background_tasks.add_task(run_pending_jobs)
@@ -551,7 +573,7 @@ def create_project_router(
         background_tasks: BackgroundTasks,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
-        require_measurement_policy()
+        execution_policy = require_measurement_policy()
         if body.confirm_evaluation_calls is not True:
             raise Conflict("Evaluator recovery calls require explicit confirmation")
         scoped_run(project_id, run_id, owner)
@@ -562,6 +584,36 @@ def create_project_router(
             JobType.RECOVER_EVALUATORS,
             body.idempotency_key,
             EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+            policy_id=execution_policy.policy_id,
+            policy_hash=execution_policy.policy_hash,
+            operation_ceiling=(
+                execution_policy.max_search_calls
+                + execution_policy.max_evaluator_calls_per_profile
+                * len(execution_policy.profiles)
+            ),
+        )
+        if run_pending_jobs is not None:
+            background_tasks.add_task(run_pending_jobs)
+        return {"job": job_view(job), "run": run_view(updated, project_id)}
+
+    @router.post(
+        "/projects/{project_id}/runs/{run_id}/retry-recommendations",
+        status_code=202,
+    )
+    def retry_recommendations(
+        project_id: str,
+        run_id: str,
+        body: RetryRecommendationsRequest,
+        background_tasks: BackgroundTasks,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        if body.confirm_provider_call is not True:
+            raise Conflict("Recommendation provider calls require explicit confirmation")
+        run = scoped_run(project_id, run_id, owner)
+        job, updated = automatic.retry_recommendations(
+            run,
+            expected_revision=body.expected_revision,
+            idempotency_key=body.idempotency_key,
         )
         if run_pending_jobs is not None:
             background_tasks.add_task(run_pending_jobs)

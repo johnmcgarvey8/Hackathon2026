@@ -60,6 +60,15 @@ from geo_agent.measurement_workflow import (
     OwnerIdentity,
 )
 from geo_agent.projects import Project, ProjectCreate, ProjectUpdate
+from geo_agent.specialist_agents import (
+    AgentBindingSnapshot,
+    AgentStageRecord,
+    AgentStageStatus,
+    SpecialistAgentRole,
+    SpecialistProviderMode,
+    upsert_stage,
+)
+from geo_agent.specialist_workflow import SpecialistStageRequest
 from geo_agent.workflow import Conflict, NotFound
 
 
@@ -517,6 +526,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     "active_goal",
                     "colour",
                     "foundry",
+                    "specialist_agents",
                 )
             })
             candidate = Project.model_validate({
@@ -775,6 +785,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         run = self._read(connection, run_id, owner)
         if run.state in self._ACTIVE_DELETION_STATES:
             raise Conflict("Active measurement runs cannot be deleted")
+        self._require_no_active_specialist_job(connection, run_id, owner)
         artifact_rows = connection.execute(select(
             artifacts.c.artifact_id,
             artifacts.c.storage_key,
@@ -1182,6 +1193,28 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         return MeasurementRun.model_validate_json(payload)
 
     @staticmethod
+    def _require_no_active_specialist_job(
+        connection: Connection,
+        run_id: str,
+        owner: OwnerIdentity,
+    ) -> None:
+        active = connection.execute(
+            select(workflow_jobs.c.job_id).where(
+                workflow_jobs.c.run_id == run_id,
+                workflow_jobs.c.owner_key == owner.key,
+                workflow_jobs.c.job_type == JobType.AGENT_STAGE.value,
+                workflow_jobs.c.state.in_((
+                    JobState.QUEUED.value,
+                    JobState.LEASED.value,
+                )),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if active is not None:
+            raise Conflict(
+                "A specialist stage is active; wait for it to finish or cancel it"
+            )
+
+    @staticmethod
     def _insert_events(connection: Connection, run_id: str, events: tuple[MeasurementEvent, ...]) -> None:
         if events:
             connection.execute(insert(run_events), [
@@ -1295,6 +1328,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
         try:
             with self.engine.begin() as connection:
                 current = self._read(connection, artifact.run_id, owner)
+                self._require_no_active_specialist_job(
+                    connection,
+                    artifact.run_id,
+                    owner,
+                )
                 existing = self._read_run_artifact(connection, artifact.run_id, owner)
                 if current.state == MeasurementState.EXPORTED:
                     if existing is None:
@@ -1603,6 +1641,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
 
     def mutate(self, run_id: str, owner: OwnerIdentity, revision: int, operation: Mutation) -> MeasurementRun:
         with self.engine.begin() as connection:
+            self._require_no_active_specialist_job(connection, run_id, owner)
             return self._mutate_run(connection, self._read(connection, run_id, owner), revision, operation)
 
     @staticmethod
@@ -1767,6 +1806,8 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 ):
                     raise Conflict("Idempotency key is bound to a different job request")
                 return existing, current
+            if job_type != JobType.AGENT_STAGE:
+                self._require_no_active_specialist_job(connection, run_id, owner)
             if current.revision != revision:
                 raise Conflict("Stale measurement revision; reload the run")
             if job_type == JobType.PREPARE:
@@ -1797,6 +1838,17 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     raise Conflict("Evaluator recovery requires failed evaluator results")
                 next_state = MeasurementState.QUEUED
                 event_type = "evaluator-recovery-queued"
+            elif job_type == JobType.AGENT_STAGE:
+                stage_request = SpecialistStageRequest.model_validate(expected.request)
+                if (
+                    current.measurement is None
+                    or current.state not in {MeasurementState.READY, MeasurementState.PARTIAL}
+                ):
+                    raise Conflict("Specialist stages require saved measurement results")
+                next_state = current.state
+                event_type = f"{stage_request.role.value}-queued"
+            else:
+                raise Conflict("Unsupported workflow job type")
             self._lock_admission(connection)
             self._validate_queue_capacity(connection, owner)
             job_id = identifier()
@@ -1819,17 +1871,38 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     operation_ceiling=operation_ceiling,
                     job_id=job_id,
                 )
-            updated_run = self._mutate_run(
-                connection,
-                current,
-                revision,
-                lambda run: run.model_copy(update={
+            def queue_mutation(run: MeasurementRun) -> MeasurementRun:
+                updates: dict[str, Any] = {
                     "state": next_state,
                     "events": (*run.events, MeasurementEvent(
                         sequence=len(run.events) + 1,
                         event_type=event_type,
                     )),
-                }),
+                }
+                if job_type == JobType.AGENT_STAGE:
+                    binding = (
+                        AgentBindingSnapshot.model_validate(stage_request.binding)
+                        if stage_request.binding is not None
+                        else None
+                    )
+                    updates["agent_stages"] = upsert_stage(
+                        run.agent_stages,
+                        AgentStageRecord(
+                            role=stage_request.role,
+                            status=AgentStageStatus.QUEUED,
+                            provider_mode=stage_request.provider_mode,
+                            job_id=job_id,
+                            binding=binding,
+                            input_hash=digest(run.measurement.model_dump(mode="json")),
+                        ),
+                    )
+                return run.model_copy(update=updates)
+
+            updated_run = self._mutate_run(
+                connection,
+                current,
+                revision,
+                queue_mutation,
             )
             job = WorkflowJob.create(
                 updated_run,
@@ -1893,6 +1966,72 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     workflow_jobs.c.owner_key == owner.key,
                 )
                 .order_by(workflow_jobs.c.created_at.desc(), workflow_jobs.c.job_id.desc())
+                .limit(limit)
+            ).all()
+            return tuple(self._job_from_row(row) for row in rows)
+
+    def list_unreconciled_specialist_jobs(
+        self,
+        limit: int = 100,
+        *,
+        policy_id: str | None = None,
+        policy_hash: str | None = None,
+        owner_key: str | None = None,
+    ) -> tuple[WorkflowJob, ...]:
+        if not 1 <= limit <= 100:
+            raise Conflict("Reconciliation job limit must be between 1 and 100")
+        child = workflow_jobs.alias("specialist_child")
+        prior_stage = workflow_jobs.alias("prior_specialist_stage")
+        conditions = [
+            workflow_jobs.c.state == JobState.COMPLETED.value,
+            workflow_jobs.c.job_type.in_((
+                JobType.EVALUATE.value,
+                JobType.RECOVER_EVALUATORS.value,
+            )),
+            or_(
+                (
+                    (workflow_jobs.c.job_type == JobType.EVALUATE.value)
+                    & (
+                        func.json_extract(
+                            workflow_jobs.c.payload,
+                            "$.request.include_recommendations",
+                        )
+                        == 1
+                    )
+                ),
+                (
+                    (workflow_jobs.c.job_type == JobType.RECOVER_EVALUATORS.value)
+                    & select(prior_stage.c.job_id).where(
+                        prior_stage.c.run_id == workflow_jobs.c.run_id,
+                        prior_stage.c.owner_key == workflow_jobs.c.owner_key,
+                        prior_stage.c.job_type == JobType.AGENT_STAGE.value,
+                    ).exists()
+                ),
+            ),
+            ~select(child.c.job_id).where(
+                child.c.run_id == workflow_jobs.c.run_id,
+                child.c.owner_key == workflow_jobs.c.owner_key,
+                child.c.job_type == JobType.AGENT_STAGE.value,
+                func.json_extract(
+                    child.c.payload,
+                    "$.request.source_job_id",
+                )
+                == workflow_jobs.c.job_id,
+            ).exists(),
+        ]
+        if policy_id is not None:
+            conditions.append(workflow_jobs.c.policy_id == policy_id)
+        if policy_hash is not None:
+            conditions.append(workflow_jobs.c.policy_hash == policy_hash)
+        if owner_key is not None:
+            conditions.append(workflow_jobs.c.owner_key == owner_key)
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(workflow_jobs).where(*conditions)
+                .order_by(
+                    workflow_jobs.c.completed_at.desc(),
+                    workflow_jobs.c.job_id.desc(),
+                )
                 .limit(limit)
             ).all()
             return tuple(self._job_from_row(row) for row in rows)
@@ -2060,6 +2199,36 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                             event_type="evaluating",
                         )),
                     }),
+                )
+            elif job.job_type == JobType.AGENT_STAGE:
+                request = SpecialistStageRequest.model_validate(job.request)
+
+                def start_stage(item: MeasurementRun) -> MeasurementRun:
+                    existing = next(
+                        (stage for stage in item.agent_stages if stage.role == request.role),
+                        None,
+                    )
+                    if existing is None or existing.job_id != job.job_id:
+                        raise Conflict("Queued specialist stage does not match the run")
+                    return item.model_copy(update={
+                        "agent_stages": upsert_stage(
+                            item.agent_stages,
+                            existing.model_copy(update={
+                                "status": AgentStageStatus.RUNNING,
+                                "updated_at": current_time,
+                            }),
+                        ),
+                        "events": (*item.events, MeasurementEvent(
+                            sequence=len(item.events) + 1,
+                            event_type=f"{request.role.value}-running",
+                        )),
+                    })
+
+                run = self._mutate_run(
+                    connection,
+                    run,
+                    run.revision,
+                    start_stage,
                 )
             leased = job.model_copy(update={
                 "run_revision": run.revision,
@@ -2505,6 +2674,10 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     MeasurementState.PARTIAL,
                     MeasurementState.FAILED,
                 },
+                JobType.AGENT_STAGE: {
+                    MeasurementState.READY,
+                    MeasurementState.PARTIAL,
+                },
             }
             if updated_run.state not in allowed_states[job.job_type]:
                 raise Conflict("Job completion produced an invalid measurement state")
@@ -2555,17 +2728,47 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 "completed_at": now,
                 "updated_at": now,
             })
+            def failure_mutation(item: MeasurementRun) -> MeasurementRun:
+                if job.job_type != JobType.AGENT_STAGE:
+                    return item.model_copy(update={
+                        "state": MeasurementState.NEEDS_REVIEW,
+                        "events": (*item.events, MeasurementEvent(
+                            sequence=len(item.events) + 1,
+                            event_type="job-failed",
+                        )),
+                    })
+                request = SpecialistStageRequest.model_validate(job.request)
+                existing = next(
+                    (stage for stage in item.agent_stages if stage.role == request.role),
+                    None,
+                )
+                stage = AgentStageRecord(
+                    role=request.role,
+                    status=AgentStageStatus.FAILED,
+                    provider_mode=request.provider_mode,
+                    job_id=job.job_id,
+                    binding=existing.binding if existing is not None else None,
+                    input_hash=(
+                        existing.input_hash if existing is not None
+                        else digest(item.measurement.model_dump(mode="json"))
+                    ),
+                    error_code=error_code,
+                    created_at=existing.created_at if existing is not None else now,
+                    updated_at=now,
+                )
+                return item.model_copy(update={
+                    "agent_stages": upsert_stage(item.agent_stages, stage),
+                    "events": (*item.events, MeasurementEvent(
+                        sequence=len(item.events) + 1,
+                        event_type=f"{request.role.value}-failed",
+                    )),
+                })
+
             updated_run = self._mutate_run(
                 connection,
                 run,
                 run.revision,
-                lambda item: item.model_copy(update={
-                    "state": MeasurementState.NEEDS_REVIEW,
-                    "events": (*item.events, MeasurementEvent(
-                        sequence=len(item.events) + 1,
-                        event_type="job-failed",
-                    )),
-                }),
+                failure_mutation,
             )
             self._write_job(connection, failed)
             self._write_worker_heartbeat(connection, worker_id, None, now)
@@ -2596,17 +2799,42 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 "completed_at": now,
                 "updated_at": now,
             })
+            def cancellation_mutation(item: MeasurementRun) -> MeasurementRun:
+                if job.job_type != JobType.AGENT_STAGE:
+                    return item.model_copy(update={
+                        "state": MeasurementState.CANCELLED,
+                        "events": (*item.events, MeasurementEvent(
+                            sequence=len(item.events) + 1,
+                            event_type="cancelled",
+                        )),
+                    })
+                request = SpecialistStageRequest.model_validate(job.request)
+                existing = next(
+                    (stage for stage in item.agent_stages if stage.role == request.role),
+                    None,
+                )
+                if existing is None:
+                    raise Conflict("Cancelled specialist stage does not match the run")
+                return item.model_copy(update={
+                    "agent_stages": upsert_stage(
+                        item.agent_stages,
+                        existing.model_copy(update={
+                            "status": AgentStageStatus.FAILED,
+                            "error_code": "cancelled",
+                            "updated_at": now,
+                        }),
+                    ),
+                    "events": (*item.events, MeasurementEvent(
+                        sequence=len(item.events) + 1,
+                        event_type=f"{request.role.value}-cancelled",
+                    )),
+                })
+
             updated_run = self._mutate_run(
                 connection,
                 run,
                 run.revision,
-                lambda item: item.model_copy(update={
-                    "state": MeasurementState.CANCELLED,
-                    "events": (*item.events, MeasurementEvent(
-                        sequence=len(item.events) + 1,
-                        event_type="cancelled",
-                    )),
-                }),
+                cancellation_mutation,
             )
             self._write_job(connection, cancelled)
             return cancelled, updated_run
@@ -2655,17 +2883,42 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 )
                 if changed.rowcount != 1:
                     continue
+                def interruption_mutation(item: MeasurementRun) -> MeasurementRun:
+                    if job.job_type != JobType.AGENT_STAGE:
+                        return item.model_copy(update={
+                            "state": MeasurementState.NEEDS_REVIEW,
+                            "events": (*item.events, MeasurementEvent(
+                                sequence=len(item.events) + 1,
+                                event_type="job-interrupted",
+                            )),
+                        })
+                    request = SpecialistStageRequest.model_validate(job.request)
+                    existing = next(
+                        (stage for stage in item.agent_stages if stage.role == request.role),
+                        None,
+                    )
+                    if existing is None:
+                        raise Conflict("Interrupted specialist stage does not match the run")
+                    return item.model_copy(update={
+                        "agent_stages": upsert_stage(
+                            item.agent_stages,
+                            existing.model_copy(update={
+                                "status": AgentStageStatus.FAILED,
+                                "error_code": "lease-expired",
+                                "updated_at": current_time,
+                            }),
+                        ),
+                        "events": (*item.events, MeasurementEvent(
+                            sequence=len(item.events) + 1,
+                            event_type=f"{request.role.value}-interrupted",
+                        )),
+                    })
+
                 self._mutate_run(
                     connection,
                     run,
                     run.revision,
-                    lambda item: item.model_copy(update={
-                        "state": MeasurementState.NEEDS_REVIEW,
-                        "events": (*item.events, MeasurementEvent(
-                            sequence=len(item.events) + 1,
-                            event_type="job-interrupted",
-                        )),
-                    }),
+                    interruption_mutation,
                 )
                 if job.lease_holder is not None:
                     self._write_worker_heartbeat(

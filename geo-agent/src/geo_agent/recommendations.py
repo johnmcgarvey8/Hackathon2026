@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 from geo_agent.contracts import Contract, EvidenceQuote, MeasurementResults, ModelCall, Source, digest
 from geo_agent.evaluation import comparable_url, match_citations
 from geo_agent.foundry import Foundry
+from geo_agent.specialist_agents import SpecialistAgentCall
 from geo_agent.webiq import ProviderError
 
 
@@ -133,6 +134,7 @@ class RecommendationReport(Contract):
     limitations: str = Field(min_length=1, max_length=1800, default=LIMITATIONS)
     comparison_sources: tuple[ComparisonSource, ...] = Field(max_length=10)
     model_call: ModelCall | None = None
+    agent_call: SpecialistAgentCall | None = None
 
     @model_validator(mode="after")
     def validate_report(self) -> "RecommendationReport":

@@ -17,6 +17,7 @@ from geo_agent.project_chat import UnavailableProjectAgent
 from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
 from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
+from geo_agent.specialist_foundry import SpecialistFoundrySettings
 
 
 def _required(environment: Mapping[str, str], name: str) -> str:
@@ -71,6 +72,7 @@ def create_runtime_from_environment(
     repository = SQLiteMeasurementRepository(data_dir / "runs.sqlite3")
     try:
         settings = ProjectFoundrySettings.from_environment(environment)
+        specialist_settings = SpecialistFoundrySettings.from_environment(environment)
         project_agent = (
             HostedProjectAgent(
                 repository,
@@ -80,7 +82,11 @@ def create_runtime_from_environment(
             if settings is not None else UnavailableProjectAgent()
         )
         chat_workflow = ProjectMeasurementChatWorkflow(repository, policy)
-        automatic = ProjectMeasurementOrchestrator(repository, policy)
+        automatic = ProjectMeasurementOrchestrator(
+            repository,
+            policy,
+            specialist_settings,
+        )
 
         def reconcile(job, run) -> None:
             automatic.reconcile_job(job, run)
