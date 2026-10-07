@@ -181,12 +181,26 @@ class EvidenceQuote(Contract):
 class QueryPair(Contract):
     query_id: str = Field(pattern=r"^q-[1-5]$")
     priority: int = Field(ge=1, le=5)
+    mission: Literal[
+        "functional-planning",
+        "functional-constraint",
+        "transition-to-discovery",
+        "emotive-discovery",
+        "decision-validation",
+    ] | None = None
+    moment: Literal[
+        "before-journey",
+        "early-journey",
+        "mid-journey",
+        "inspiration",
+        "point-of-decision",
+    ] | None = None
     rationale: str = Field(min_length=1, max_length=500)
     intent: str = Field(min_length=1, max_length=500)
     branded: bool = False
     chat_query: str = Field(min_length=1, max_length=500)
     grounding_query: str = Field(min_length=1, max_length=500)
-    evidence: tuple[EvidenceQuote, ...] = Field(max_length=2)
+    evidence: tuple[EvidenceQuote, ...] = Field(min_length=1, max_length=2)
 
     def as_query(self, *, grounding: bool = False) -> Query:
         return Query(query_id=self.query_id, text=self.grounding_query if grounding else self.chat_query,
@@ -205,6 +219,19 @@ class QueryPlan(Contract):
         for field in ("chat_query", "grounding_query"):
             if len({" ".join(getattr(query, field).casefold().split()) for query in self.queries}) != 5:
                 raise ValueError(f"Duplicate {field} in query plan")
+        if any(query.mission is not None or query.moment is not None for query in self.queries):
+            expected = {
+                "q-1": ("functional-planning", "before-journey"),
+                "q-2": ("functional-constraint", "early-journey"),
+                "q-3": ("transition-to-discovery", "mid-journey"),
+                "q-4": ("emotive-discovery", "inspiration"),
+                "q-5": ("decision-validation", "point-of-decision"),
+            }
+            if any(
+                (query.mission, query.moment) != expected[query.query_id]
+                for query in self.queries
+            ):
+                raise ValueError("Query plan contains an invalid mission and moment combination")
         return self
 
     def validate_evidence(self, snapshot: PageSnapshot) -> None:
@@ -216,7 +243,7 @@ class QueryPlan(Contract):
                 raise ValueError("Query plan contains an unsupported page reference or quote")
 
 
-class EvaluatorProfile(Contract):
+class SimulationProfile(Contract):
     profile_id: Literal["chatgpt-style", "claude-backed", "copilot-style"]
     provider: Literal["openai-responses", "anthropic-messages"]
     deployment: str = Field(min_length=1, max_length=200)
@@ -226,15 +253,15 @@ class EvaluatorProfile(Contract):
     simulation: Literal[True] = True
 
     @model_validator(mode="after")
-    def validate_provider(self) -> "EvaluatorProfile":
+    def validate_provider(self) -> "SimulationProfile":
         expected = "anthropic-messages" if self.profile_id == "claude-backed" else "openai-responses"
         if self.provider != expected:
-            raise ValueError("Evaluator profile does not match the configured provider")
+            raise ValueError("Simulation label does not match the configured provider")
         return self
 
 
-# Compatibility alias for persisted v2 inputs and existing integrations.
-SimulationProfile = EvaluatorProfile
+# Compatibility name used by the project-scoped workflow.
+EvaluatorProfile = SimulationProfile
 
 
 class MeasurementInputs(Contract):
@@ -242,7 +269,7 @@ class MeasurementInputs(Contract):
     brief: Brief
     snapshot: PageSnapshot
     query_plan: QueryPlan
-    profiles: tuple[EvaluatorProfile, ...] = Field(min_length=1, max_length=3)
+    profiles: tuple[SimulationProfile, ...] = Field(min_length=1, max_length=3)
     policy_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     method_version: Literal["exact-page-citation/v1"] = "exact-page-citation/v1"
     retrieval_mode: Literal["controlled-evidence-packet"] = "controlled-evidence-packet"
@@ -255,7 +282,7 @@ class MeasurementInputs(Contract):
         if len({profile.profile_id for profile in self.profiles}) != len(self.profiles):
             raise ValueError("Profile IDs must be unique")
         if len({(profile.endpoint, profile.deployment) for profile in self.profiles}) != len(self.profiles):
-            raise ValueError("Evaluator profiles require distinct deployments")
+            raise ValueError("Simulation profiles require distinct deployments")
         self.query_plan.validate_evidence(self.snapshot)
         return self
 

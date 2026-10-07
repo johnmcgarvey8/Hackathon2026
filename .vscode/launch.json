@@ -52,7 +52,7 @@
         "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
         "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
         "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
-        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-policy.json",
         "GEO_PORT": "8090",
         "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
       },
@@ -60,16 +60,15 @@
       "justMyCode": true
     },
     {
-      "name": "GEO: Live Measurement Worker",
+      "name": "GEO: Local Synthetic Backend",
       "type": "debugpy",
       "request": "launch",
-      "python": "${workspaceFolder}/geo-agent/.venv/Scripts/python.exe",
-      "module": "geo_agent.measurement_worker",
+      "module": "geo_agent",
       "cwd": "${workspaceFolder}",
       "env": {
-        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v2.json",
-        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}/geo-agent/measurement-live-budget-grant-10-runs.json",
-        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
+        "PYTHONPATH": "${workspaceFolder}/geo-agent/src",
+        "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data",
+        "GEO_PORT": "8088"
       },
       "console": "integratedTerminal",
       "justMyCode": true

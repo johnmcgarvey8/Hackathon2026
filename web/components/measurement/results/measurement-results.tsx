@@ -11,7 +11,7 @@ import type {
 } from "@/lib/types";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { MeasurementLoadingState } from "@/components/measurement/measurement-loading-state";
-import { evidencePresentation, formatGroundingQueryTitle } from "@/lib/evidence-presentation";
+import { evidencePresentation } from "@/lib/evidence-presentation";
 import { isMeasurementResultPending } from "@/lib/measurement-runtime";
 import { surveyModelRoster } from "@/lib/survey-models";
 
@@ -101,6 +101,7 @@ export function MeasurementResultsView({
       ? left.localeCompare(right)
       : leftNumber - rightNumber;
   });
+  const scenarioQueries = [...queries].sort((left, right) => left.priority - right.priority);
   const brandName = assessment?.brand_definition?.definition.name || "Brand";
   const groundingFindings = assessment?.assessment?.queries || [];
   const answerBrandFindings = assessment?.assessment?.answers || [];
@@ -152,9 +153,44 @@ export function MeasurementResultsView({
 
   return (
     <div className="result-sections">
+      <section className="card result-section" id="user-scenarios">
+        <div className="card-heading"><h2>User scenarios</h2><span className="pill blue">Moments and missions simulation</span></div>
+        <p className="muted">These scenarios model the user need, mission and moment sent to the LLM provider survey.</p>
+        {queriesPending ? <MeasurementLoadingState stage="queries" /> : scenarioQueries.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before user scenarios could be saved." : "No user scenarios were saved for this run."}</p> : (
+          <div className="measurement-query-list">
+            {scenarioQueries.map((query) => (
+              <details className="measurement-query-group" key={`scenario-${query.query_id}`}>
+                <summary>
+                  <span className="measurement-query-title">
+                    <strong>{query.intent}</strong>
+                    <span>{query.chat_query}</span>
+                  </span>
+                  <span className="measurement-query-counts">Priority {query.priority}</span>
+                </summary>
+                <div className="measurement-query-content">
+                  <section className="measurement-query-section">
+                    <div className="section-heading-inline">
+                      <h3>Mission and moment</h3>
+                      {query.mission && <span className="pill">{query.mission.replaceAll("-", " ")}</span>}
+                      {query.moment && <span className="pill">{query.moment.replaceAll("-", " ")}</span>}
+                      {query.branded && <span className="pill">Branded</span>}
+                    </div>
+                    <p><strong>User scenario:</strong> {query.chat_query}</p>
+                    <p><strong>Rationale:</strong> {query.rationale}</p>
+                    <small><strong>Page evidence used to design this scenario:</strong> {query.evidence.length
+                      ? query.evidence.map((item) => `${item.evidence_id}: ${item.quote}`).join(" | ")
+                      : "No exact page quote was retained."}</small>
+                  </section>
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="card result-section" id="query-plan">
-        <div className="card-heading"><h2>Grounding queries and brand presence</h2><span className="pill">{queryIds.length} queries</span></div>
-        <p className="muted">Each query groups the WebIQ retrieval input with the grounding citations supplied to the LLM during inference and flags literal brand presence in the saved results.</p>
+        <div className="card-heading"><h2>Grounding queries</h2><span className="pill">{queryIds.length} queries</span></div>
+        <p className="muted">Each Web IQ query is shown with the grounding citations supplied to the LLM during inference and literal brand presence in the saved results.</p>
         {queriesPending ? <MeasurementLoadingState stage="queries" /> : queryIds.length === 0 ? <p className="muted">{run.latest_job?.state === "failed" ? "Preparation stopped before grounding queries could be saved." : "No grounding queries were saved for this run."}</p> : (
           <div className="measurement-query-list">
             {queryIds.map((queryId) => {
@@ -170,13 +206,13 @@ export function MeasurementResultsView({
               const competitorSources = new Map(
                 (brandFinding?.sources || []).map((source) => [source.evidence_id, source.competitor_domain]),
               );
-              const queryTitle = query?.grounding_query || retrieval?.grounding_query || queryId;
+              const groundingQuery = query?.grounding_query || retrieval?.grounding_query || queryId;
               return (
                 <details className="measurement-query-group" key={queryId}>
                   <summary>
                     <span className="measurement-query-title">
-                      <strong>{formatGroundingQueryTitle("", queryId)}</strong>
-                      <span>{queryTitle}</span>
+                      <strong>{groundingQuery}</strong>
+                      {query?.intent && <span>{query.intent}</span>}
                     </span>
                     <span className="measurement-query-counts">
                       <span>{retrieval?.sources.length || 0} grounding {retrieval?.sources.length === 1 ? "citation" : "citations"}</span>
@@ -184,23 +220,6 @@ export function MeasurementResultsView({
                     </span>
                   </summary>
                   <div className="measurement-query-content">
-                    {query && (
-                      <section className="measurement-query-section">
-                        <div className="section-heading-inline">
-                          <h3>Inference inputs</h3>
-                          <span className="pill blue">Priority {query.priority}</span>
-                          {query.branded && <span className="pill">Branded</span>}
-                        </div>
-                        <p><strong>LLM survey prompt:</strong> {query.chat_query}</p>
-                        <p><strong>WebIQ grounding query:</strong> {query.grounding_query}</p>
-                        <p><strong>Intent:</strong> {query.intent}</p>
-                        <p><strong>Rationale:</strong> {query.rationale}</p>
-                        <small><strong>Page evidence used to design this query:</strong> {query.evidence.length
-                          ? query.evidence.map((item) => `${item.evidence_id}: ${item.quote}`).join(" | ")
-                          : "No exact page quote was retained."}</small>
-                      </section>
-                    )}
-
                     <section className="measurement-query-section">
                       <div className="section-heading-inline">
                         <h3>Grounding supplied to the LLM</h3>

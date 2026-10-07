@@ -332,7 +332,7 @@ def test_streamable_http_transport_uses_separate_agent_identity(tmp_path):
         assert httpx.get(
             f"{base_url}/api/v2/policy",
             headers={"Authorization": "Bearer " + AGENT_TOKEN},
-        ).status_code == 401
+        ).status_code == 404
         initialization = httpx.post(
             f"{base_url}/mcp",
             headers={

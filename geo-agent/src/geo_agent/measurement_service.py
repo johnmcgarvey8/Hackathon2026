@@ -384,7 +384,13 @@ class MeasurementApplicationService:
         input_hash: str | None,
         lifetime_seconds: int,
     ) -> AgentExecutionAuthorization:
-        ceiling = 3 if stage == ExecutionStage.PREPARE else 5 + 5 * len(self.policy.profiles)
+        ceiling = (
+            self.policy.max_browse_calls
+            + self.policy.max_page_analysis_calls
+            + self.policy.max_query_plan_calls
+            if stage == ExecutionStage.PREPARE
+            else 5 + 5 * len(self.policy.profiles)
+        )
         return self.repository.issue_execution_authorization(
             run_id=run_id,
             owner=owner,
@@ -424,7 +430,11 @@ class MeasurementApplicationService:
             execution_authorization_id=execution_authorization_id,
             policy_id=self.policy.policy_id,
             policy_hash=self.policy.policy_hash,
-            operation_ceiling=3,
+            operation_ceiling=(
+                self.policy.max_browse_calls
+                + self.policy.max_page_analysis_calls
+                + self.policy.max_query_plan_calls
+            ),
         )
         return self._envelope(
             "queued",
@@ -462,7 +472,11 @@ class MeasurementApplicationService:
             ),
             policy_id=self.policy.policy_id,
             policy_hash=self.policy.policy_hash,
-            operation_ceiling=3,
+            operation_ceiling=(
+                self.policy.max_browse_calls
+                + self.policy.max_page_analysis_calls
+                + self.policy.max_query_plan_calls
+            ),
         )
 
     def _text_page(

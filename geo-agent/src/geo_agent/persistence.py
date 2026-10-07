@@ -48,6 +48,7 @@ from geo_agent.measurement_budget import (
     MeasurementCapacity,
     MeasurementOperationAllowances,
     MeasurementOperationCapacity,
+    measurement_budget_operation_type,
 )
 from geo_agent.measurement_workflow import (
     MeasurementApproval,
@@ -2363,10 +2364,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 ).scalar_one()
                 if attempted >= job.operation_ceiling:
                     raise Conflict("Agent execution authorization operation ceiling is exhausted")
+            budget_operation_type = measurement_budget_operation_type(operation_type)
             budget_grant_id = self._consume_measurement_budget(
                 connection,
                 job,
-                operation_type,
+                budget_operation_type,
             )
             claim = OperationClaim(
                 job_id=job.job_id,
@@ -2392,7 +2394,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     connection.execute(insert(measurement_budget_consumptions).values(
                         claim_id=claim.claim_id,
                         grant_id=budget_grant_id,
-                        operation_type=operation_type,
+                        operation_type=budget_operation_type,
                         created_at=current_time.isoformat(),
                     ))
             except IntegrityError as error:

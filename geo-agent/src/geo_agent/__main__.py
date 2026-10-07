@@ -117,6 +117,10 @@ def main() -> None:
         ),
         default_mcp_agent_principal_id=mcp_principal_id,
         allow_live_mcp=os.environ.get("GEO_MCP_ALLOW_LIVE", "").casefold() == "true",
+        projects_url=os.environ.get(
+            "GEO_PROJECTS_URL",
+            "http://127.0.0.1:3000/projects",
+        ),
     )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))
 

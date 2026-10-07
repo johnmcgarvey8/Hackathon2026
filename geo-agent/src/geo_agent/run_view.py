@@ -30,17 +30,24 @@ def operation_estimates(
         return None
     query_count = len(run.inputs.query_plan.queries) if run.inputs is not None else 5
     profile_count = len(run.inputs.profiles) if run.inputs is not None else len(policy.profiles)
+    preparation = {
+        "webiq-browse": policy.max_browse_calls,
+        "page-analysis-model": policy.max_page_analysis_calls,
+    }
+    if policy.execution_mode == "live" and policy.max_query_plan_calls == 2:
+        preparation.update({
+            "missions-query-plan": 1,
+            "paired-query-plan-fallback": 1,
+        })
+    else:
+        preparation["paired-query-plan"] = policy.max_query_plan_calls
+    preparation["total"] = (
+        policy.max_browse_calls
+        + policy.max_page_analysis_calls
+        + policy.max_query_plan_calls
+    )
     return {
-        "preparation": {
-            "webiq-browse": policy.max_browse_calls,
-            "page-analysis-model": policy.max_page_analysis_calls,
-            "paired-query-plan": policy.max_query_plan_calls,
-            "total": (
-                policy.max_browse_calls
-                + policy.max_page_analysis_calls
-                + policy.max_query_plan_calls
-            ),
-        },
+        "preparation": preparation,
         "evaluation": {
             "webiq-search": min(query_count, policy.max_search_calls),
             "profile-evaluator": min(

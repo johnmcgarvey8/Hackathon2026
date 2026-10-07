@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 
 const sections = [
   { id: "brief", label: "Brief" },
-  { id: "query-plan", label: "Grounding & Brand Presence" },
+  { id: "user-scenarios", label: "User Scenarios" },
+  { id: "query-plan", label: "Grounding Queries" },
   { id: "model-answers", label: "LLM Provider Survey" },
   { id: "citation-performance", label: "Citation Performance" },
   { id: "recommendations", label: "Recommendations" },

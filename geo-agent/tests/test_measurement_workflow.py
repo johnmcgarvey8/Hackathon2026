@@ -17,13 +17,10 @@ from geo_agent.contracts import (
 )
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
-    MeasurementEvent,
-    MeasurementRun,
     MeasurementState,
     OwnerIdentity,
 )
-from geo_agent.jobs import JobState, JobType, WorkflowJob
-from geo_agent.persistence import SQLAlchemyMeasurementRepository, SQLiteMeasurementRepository
+from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.providers import simulation_instructions
 from geo_agent.workflow import Conflict, NotFound, RunStore
 
@@ -175,14 +172,7 @@ def test_alembic_upgrade_preserves_legacy_table(tmp_path):
         "measurement_budget_grants",
         "measurement_budget_usage",
         "measurement_budget_consumptions",
-        "projects",
-        "project_runs",
-        "project_conversations",
-        "project_conversation_runs",
-        "project_agent_budgets",
-        "project_llm_operations",
         "artifacts",
-        "artifact_create_requests",
         "agent_conversations",
         "agent_capabilities",
     } <= tables

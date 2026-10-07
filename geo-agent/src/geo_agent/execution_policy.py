@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from geo_agent.contracts import Brief, Contract, EvaluatorProfile, digest
+from geo_agent.contracts import Brief, Contract, SimulationProfile, digest
 from geo_agent.workflow import Conflict
 
 
@@ -14,13 +14,13 @@ class MeasurementExecutionPolicy(Contract):
     owner_role: Literal["Geo.Operator"] = "Geo.Operator"
     allowed_domains: tuple[str, ...] = Field(default=(), max_length=20)
     locale: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
-    profiles: tuple[EvaluatorProfile, ...] = Field(min_length=1, max_length=3)
+    profiles: tuple[SimulationProfile, ...] = Field(min_length=1, max_length=3)
     retention_days: int = Field(default=30, ge=1, le=365)
     max_output_tokens_per_call: int = Field(default=2000, ge=1, le=4000)
     max_concurrent_workers: int = Field(default=1, ge=1, le=10)
     max_browse_calls: Literal[1] = 1
     max_page_analysis_calls: Literal[1] = 1
-    max_query_plan_calls: Literal[1] = 1
+    max_query_plan_calls: Literal[1, 2] = 1
     max_search_calls: Literal[5] = 5
     max_evaluator_calls_per_profile: Literal[5] = 5
     max_recommendation_calls: Literal[1] = 1
@@ -33,10 +33,8 @@ class MeasurementExecutionPolicy(Contract):
             raise ValueError("Explicit-domain policies require allowed domains and a locale")
         if self.scope == "project-bound" and (self.allowed_domains or self.locale is not None):
             raise ValueError("Project-bound policies derive domains and locale from the saved Project")
-        if self.execution_mode == "live" and (
-            self.budget_grant_id is None or len(self.profiles) not in {1, 3}
-        ):
-            raise ValueError("Live execution requires an approved budget and a one- or three-profile roster")
+        if self.execution_mode == "live" and self.budget_grant_id is None:
+            raise ValueError("Live execution requires an approved budget")
         if len({profile.profile_id for profile in self.profiles}) != len(self.profiles):
             raise ValueError("Execution policy profile IDs must be unique")
         return self

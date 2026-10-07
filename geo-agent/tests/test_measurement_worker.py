@@ -21,6 +21,11 @@ def worker_environment(tmp_path, *, policy=None, grant=None):
         "WEBIQ_API_KEY": "test-webiq-key",
         "AZURE_OPENAI_ENDPOINT": "https://geo-runtime.services.ai.azure.com/openai/v1/",
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": "test-preparation",
+        "GEO_QUERY_AGENT_ENDPOINT": (
+            "https://geo-runtime.services.ai.azure.com/api/projects/runtime/agents/"
+            "MissionsAndMoments/endpoint/protocols/openai/responses"
+        ),
+        "GEO_QUERY_AGENT_VERSION": "7",
     }
 
 
@@ -57,37 +62,14 @@ def test_worker_accepts_direct_responses_endpoint_compatibility_fallback(tmp_pat
         runtime.close()
 
 
-def test_worker_loads_explicit_additive_grants_without_resetting_capacity(tmp_path):
-    execution_policy = live_policy()
-    environment = worker_environment(tmp_path, policy=execution_policy)
-    additional = budget_grant(execution_policy).model_copy(update={
-        "grant_id": "clarity-live-runtime-additional-grant",
-        "approval": "Approved additive worker capacity",
-    })
-    additional_path = tmp_path / "measurement-additional-grant.json"
-    additional_path.write_text(additional.model_dump_json(indent=2), encoding="utf-8")
-    environment["GEO_MEASUREMENT_ADDITIONAL_BUDGET_GRANTS"] = json.dumps([
-        str(additional_path),
-    ])
-
-    runtime = create_runtime_from_environment(
-        environment,
-        token_provider=lambda: "unexpected-token",
-    )
-    try:
-        capacity = runtime.repository.measurement_capacity(additional.owner, execution_policy)
-        assert capacity.authorized_runs == 2
-        assert capacity.remaining_runs == 2
-    finally:
-        runtime.close()
-
-
 @pytest.mark.parametrize("missing", [
     "GEO_MEASUREMENT_POLICY",
     "GEO_MEASUREMENT_BUDGET_GRANT",
     "WEBIQ_API_KEY",
     "AZURE_OPENAI_ENDPOINT",
     "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+    "GEO_QUERY_AGENT_ENDPOINT",
+    "GEO_QUERY_AGENT_VERSION",
 ])
 def test_worker_startup_requires_every_live_setting(tmp_path, missing):
     environment = worker_environment(tmp_path)

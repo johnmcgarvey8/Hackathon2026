@@ -18,6 +18,18 @@ MeasurementOperationType = Literal[
     "recommendation-model",
 ]
 
+QUERY_PLAN_BUDGET_OPERATION = "paired-query-plan"
+QUERY_PLAN_CLAIM_OPERATIONS = {
+    "missions-query-plan",
+    "paired-query-plan-fallback",
+}
+
+
+def measurement_budget_operation_type(operation_type: str) -> str:
+    if operation_type in QUERY_PLAN_CLAIM_OPERATIONS:
+        return QUERY_PLAN_BUDGET_OPERATION
+    return operation_type
+
 
 class MeasurementOperationAllowances(Contract):
     webiq_browse: int = Field(default=1, ge=0, le=100)

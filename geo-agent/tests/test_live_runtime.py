@@ -17,15 +17,13 @@ from geo_agent.measurement_workflow import MeasurementCoordinator, MeasurementSt
 from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.preparation import PreparationHandler, PreparationRequest
 from geo_agent.providers import ClaudeMessagesEvaluator, OpenAIResponsesEvaluator, simulation_instructions
+from geo_agent.query_agent import HostedQueryPlanner, QueryAgentSettings
 from geo_agent.webiq import BROWSE_ENDPOINT, SEARCH_ENDPOINT
-from geo_agent.workflow import Conflict
 from test_foundry import response_payload
 from test_providers import claude_payload
 
 
-def live_policy(
-    profile_ids=("chatgpt-style", "claude-backed", "copilot-style"),
-) -> MeasurementExecutionPolicy:
+def live_policy() -> MeasurementExecutionPolicy:
     endpoint = "https://geo-runtime.services.ai.azure.com"
     profiles = tuple(
         SimulationProfile(
@@ -36,7 +34,7 @@ def live_policy(
             prompt_version="geo-evaluator-v2",
             instructions=simulation_instructions(profile_id),
         )
-        for profile_id in profile_ids
+        for profile_id in ("chatgpt-style", "claude-backed", "copilot-style")
     )
     return MeasurementExecutionPolicy(
         policy_id="clarity-live-runtime-test",
@@ -44,23 +42,20 @@ def live_policy(
         allowed_domains=("clarity.microsoft.com",),
         locale="en-GB",
         profiles=profiles,
+        max_query_plan_calls=2,
         budget_grant_id="clarity-live-runtime-test-grant",
     )
 
 
-def budget_grant(policy, owner=None, *, recommendations=False, authorized_runs=1):
+def budget_grant(policy, owner=None, *, recommendations=False):
     return MeasurementBudgetGrant(
         grant_id=policy.budget_grant_id,
         policy_id=policy.policy_id,
         policy_hash=policy.policy_hash,
         owner=owner or OwnerIdentity(tenant_id="tenant-a", object_id="user-a"),
         allowances=MeasurementOperationAllowances(
-            webiq_browse=authorized_runs,
-            page_analysis_model=authorized_runs,
-            paired_query_plan=authorized_runs,
-            webiq_search=5 * authorized_runs,
-            profile_evaluator=5 * len(policy.profiles) * authorized_runs,
-            recommendation_model=authorized_runs if recommendations else 0,
+            paired_query_plan=policy.max_query_plan_calls,
+            recommendation_model=1 if recommendations else 0
         ),
         maximum_authorized_cost_usd=Decimal("50.00"),
         approval="Approved intercepted live-runtime test budget",
@@ -68,36 +63,14 @@ def budget_grant(policy, owner=None, *, recommendations=False, authorized_runs=1
     )
 
 
-def recovery_grant(policy, owner=None, evaluator_calls=5):
-    return MeasurementBudgetGrant(
-        grant_id=policy.budget_grant_id,
-        purpose="failed-evaluator-recovery",
-        policy_id=policy.policy_id,
-        policy_hash=policy.policy_hash,
-        owner=owner or OwnerIdentity(tenant_id="tenant-a", object_id="user-a"),
-        allowances=MeasurementOperationAllowances(
-            webiq_browse=0,
-            page_analysis_model=0,
-            paired_query_plan=0,
-            webiq_search=0,
-            profile_evaluator=evaluator_calls,
-            recommendation_model=0,
+def query_agent_settings() -> QueryAgentSettings:
+    return QueryAgentSettings(
+        protocol_endpoint=(
+            "https://geo-runtime.services.ai.azure.com/api/projects/runtime/agents/"
+            "MissionsAndMoments/endpoint/protocols/openai/responses"
         ),
-        maximum_authorized_cost_usd=Decimal("10.00"),
-        approval="Approved failed-evaluator recovery test",
-        approved_at=datetime(2026, 9, 18, tzinfo=timezone.utc),
+        agent_version="7",
     )
-
-
-def test_recovery_grant_authorizes_only_evaluator_calls():
-    execution_policy = live_policy(("chatgpt-style",))
-    grant = recovery_grant(execution_policy)
-    grant.validate_for(execution_policy)
-    invalid = grant.model_copy(update={
-        "allowances": grant.allowances.model_copy(update={"webiq_search": 1}),
-    })
-    with pytest.raises(Conflict, match="only a bounded evaluator batch"):
-        invalid.validate_for(execution_policy)
 
 
 def test_live_runtime_composes_real_adapters_without_provider_calls(tmp_path):
@@ -113,49 +86,20 @@ def test_live_runtime_composes_real_adapters_without_provider_calls(tmp_path):
         webiq_api_key="test-webiq-key",
         preparation_endpoint="https://geo-runtime.services.ai.azure.com/openai/v1/",
         preparation_deployment="test-preparation",
+        query_agent_settings=query_agent_settings(),
         token_provider=reject_token_call,
     )
 
     preparation = runtime.worker.handlers[JobType.PREPARE]
     evaluation = runtime.worker.handlers[JobType.EVALUATE]
     assert isinstance(preparation, PreparationHandler)
+    assert isinstance(preparation.query_planner, HostedQueryPlanner)
+    assert preparation.fallback_query_planner is not None
+    assert preparation.query_planner_operation_type == "missions-query-plan"
     assert isinstance(evaluation, EvaluationHandler)
     assert isinstance(evaluation.evaluators["chatgpt-style"], OpenAIResponsesEvaluator)
     assert isinstance(evaluation.evaluators["claude-backed"], ClaudeMessagesEvaluator)
     assert isinstance(evaluation.evaluators["copilot-style"], OpenAIResponsesEvaluator)
-
-
-def test_live_runtime_accepts_one_profile_and_rejects_two(tmp_path):
-    single_profile_policy = live_policy(("chatgpt-style",))
-    runtime = LiveMeasurementRuntime(
-        SQLiteMeasurementRepository(tmp_path / "single.sqlite3"),
-        single_profile_policy,
-        budget_grant=budget_grant(single_profile_policy),
-        webiq_api_key="test-webiq-key",
-        preparation_endpoint="https://geo-runtime.services.ai.azure.com/openai/v1/",
-        preparation_deployment="test-preparation",
-        token_provider=lambda: "test-token",
-    )
-    assert set(runtime.worker.handlers[JobType.EVALUATE].evaluators) == {"chatgpt-style"}
-
-    invalid_payload = live_policy().model_dump(mode="json")
-    invalid_payload["profiles"] = invalid_payload["profiles"][:2]
-    with pytest.raises(ValueError, match="one- or three-profile roster"):
-        MeasurementExecutionPolicy.model_validate(invalid_payload)
-
-
-def test_live_runtime_rejects_cross_resource_openai_evaluator_endpoint(tmp_path):
-    execution_policy = live_policy(("chatgpt-style",))
-    with pytest.raises(ValueError, match="environment-configured Azure OpenAI endpoint"):
-        LiveMeasurementRuntime(
-            SQLiteMeasurementRepository(tmp_path / "cross-resource.sqlite3"),
-            execution_policy,
-            budget_grant=budget_grant(execution_policy),
-            webiq_api_key="test-webiq-key",
-            preparation_endpoint="https://different.services.ai.azure.com/openai/v1/",
-            preparation_deployment="test-preparation",
-            token_provider=lambda: "test-token",
-        )
 
 
 def test_live_runtime_rejects_mock_policy(tmp_path):
@@ -212,8 +156,23 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
                     "content": "Behavioural analytics evidence from the exact target page.",
                 }],
             })
+        if body.get("agent_reference"):
+            calls["query-agent"] += 1
+            assert json.loads(body["input"]) == {
+                "url": str(brief.url),
+                "locale": brief.locale,
+                "audience": brief.audience,
+                "goal": brief.goal,
+            }
+            assert body["agent_reference"] == {
+                "type": "agent_reference",
+                "name": "MissionsAndMoments",
+                "version": "7",
+            }
+            assert "tools" not in body and "tool_choice" not in body
+            return httpx.Response(200, json=response_payload({"queries": queries}))
         schema = body.get("text", {}).get("format", {}).get("name")
-        if schema == "PreparationAnalysis":
+        if schema in {"PageAnalysis", "PreparationAnalysis"}:
             calls["page-analysis"] += 1
             finding = {
                 "text": "Website behavioural analytics",
@@ -221,11 +180,6 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
                 "evidence": [{"passage_id": "page-1", "quote": quote}],
             }
             return httpx.Response(200, json=response_payload({
-                "brand": {
-                    "definition": {"name": "Microsoft Clarity", "aliases": [{"text": "Clarity", "ambiguous": True}],
-                                   "domains": ["clarity.microsoft.com"]},
-                    "evidence": finding["evidence"], "rationale": "The page identifies Microsoft Clarity.",
-                },
                 "purpose": finding,
                 "audience": {**finding, "basis": "inferred"},
                 "entities": [],
@@ -233,9 +187,6 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
                 "observations": [],
                 "improvements": [],
             }))
-        if schema == "QueryPlan":
-            calls["query-plan"] += 1
-            return httpx.Response(200, json=response_payload({"queries": queries}))
         if url.endswith("/anthropic/v1/messages"):
             calls["claude-backed"] += 1
             payload = json.loads(body["messages"][0]["content"])
@@ -263,6 +214,7 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         webiq_api_key="test-webiq-key",
         preparation_endpoint="https://geo-runtime.services.ai.azure.com/openai/v1/",
         preparation_deployment="test-preparation",
+        query_agent_settings=query_agent_settings(),
         token_provider=lambda: "test-token",
         webiq_transport=httpx.MockTransport(handler),
         foundry_transport=httpx.MockTransport(handler),
@@ -285,7 +237,7 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         PreparationRequest(brief=brief, confirm_preparation_calls=True),
         policy_id=execution_policy.policy_id,
         policy_hash=execution_policy.policy_hash,
-        operation_ceiling=3,
+        operation_ceiling=4,
     )
 
     runtime.run_once()
@@ -307,7 +259,7 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         EvaluationRequest(confirm_evaluation_calls=True),
         policy_id=execution_policy.policy_id,
         policy_hash=execution_policy.policy_hash,
-        operation_ceiling=5 + 5 * len(execution_policy.profiles),
+        operation_ceiling=20,
     )
 
     runtime.run_once()
@@ -320,7 +272,7 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
     assert calls == {
         "browse": 1,
         "page-analysis": 1,
-        "query-plan": 1,
+        "query-agent": 1,
         "search": 5,
         "chatgpt-style": 5,
         "claude-backed": 5,
@@ -333,3 +285,112 @@ def test_live_runtime_executes_bounded_durable_score_only_workflow(tmp_path, mon
         ).fetchone()[0]
     assert operation_count == 23
     assert budget_count == 23
+
+
+def test_live_runtime_records_failed_agent_and_budgeted_fallback(tmp_path):
+    calls = Counter()
+    page_text = "Microsoft Clarity helps product teams understand website behaviour."
+    quote = "Microsoft Clarity helps product teams"
+    queries = [{
+        "query_id": f"q-{index}",
+        "priority": index,
+        "rationale": f"Compare behavioural analytics option {index}",
+        "intent": f"Discover analytics tools {index}",
+        "branded": False,
+        "chat_query": f"Which behavioural analytics tools support use case {index}?",
+        "grounding_query": f"behavioural analytics tools use case {index}",
+        "evidence": [{"evidence_id": "page-1", "quote": quote}],
+    } for index in range(1, 6)]
+
+    def handler(request):
+        body = json.loads(request.content)
+        url = str(request.url)
+        if url == BROWSE_ENDPOINT:
+            calls["browse"] += 1
+            return httpx.Response(200, json={
+                "url": body["url"],
+                "title": "Microsoft Clarity",
+                "content": page_text,
+                "traceId": "trace-browse",
+            })
+        if body.get("agent_reference"):
+            calls["query-agent"] += 1
+            return httpx.Response(500, json={"error": {"message": "agent failure"}})
+        schema = body.get("text", {}).get("format", {}).get("name")
+        if schema in {"PageAnalysis", "PreparationAnalysis"}:
+            calls["page-analysis"] += 1
+            finding = {
+                "text": "Website behavioural analytics",
+                "basis": "observed",
+                "evidence": [{"passage_id": "page-1", "quote": quote}],
+            }
+            return httpx.Response(200, json=response_payload({
+                "purpose": finding,
+                "audience": {**finding, "basis": "inferred"},
+                "entities": [],
+                "questions_answered": [],
+                "observations": [],
+                "improvements": [],
+            }))
+        if schema == "QueryPlan":
+            calls["query-fallback"] += 1
+            return httpx.Response(200, json=response_payload({"queries": queries}))
+        pytest.fail(f"Unexpected request: {url}")
+
+    repository = SQLiteMeasurementRepository(tmp_path / "fallback-runtime.sqlite3")
+    execution_policy = live_policy()
+    runtime = LiveMeasurementRuntime(
+        repository,
+        execution_policy,
+        budget_grant=budget_grant(execution_policy),
+        webiq_api_key="test-webiq-key",
+        preparation_endpoint="https://geo-runtime.services.ai.azure.com/openai/v1/",
+        preparation_deployment="test-preparation",
+        query_agent_settings=query_agent_settings(),
+        token_provider=lambda: "test-token",
+        webiq_transport=httpx.MockTransport(handler),
+        foundry_transport=httpx.MockTransport(handler),
+        webiq_url_validator=lambda value: value,
+    )
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    brief = Brief(
+        url="https://clarity.microsoft.com/",
+        audience="Digital marketers and product teams",
+        goal="Compare website behavioural analytics tools",
+        locale="en-GB",
+    )
+    draft = repository.create(owner, brief=brief)
+    JobService(repository).enqueue(
+        draft.run_id,
+        owner,
+        draft.revision,
+        JobType.PREPARE,
+        "prepare-live-fallback",
+        PreparationRequest(brief=brief, confirm_preparation_calls=True),
+        policy_id=execution_policy.policy_id,
+        policy_hash=execution_policy.policy_hash,
+        operation_ceiling=4,
+    )
+
+    runtime.run_once()
+    prepared = repository.get(draft.run_id, owner)
+    assert prepared.state == MeasurementState.AWAITING_APPROVAL
+    assert prepared.inputs is not None
+    assert prepared.inputs.query_generation.model == "model-version-test"
+    assert [event.event_type for event in prepared.events][-2:] == [
+        "query-plan-fallback-used",
+        "awaiting-query-approval",
+    ]
+    assert calls == {
+        "browse": 1,
+        "page-analysis": 1,
+        "query-agent": 1,
+        "query-fallback": 1,
+    }
+    with sqlite3.connect(tmp_path / "fallback-runtime.sqlite3") as connection:
+        operation_count = connection.execute("SELECT COUNT(*) FROM operation_claims").fetchone()[0]
+        budget_count = connection.execute(
+            "SELECT SUM(consumed) FROM measurement_budget_usage"
+        ).fetchone()[0]
+    assert operation_count == 4
+    assert budget_count == 4

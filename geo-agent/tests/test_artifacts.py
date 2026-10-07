@@ -1,6 +1,5 @@
 import io
 import json
-import platform
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
@@ -188,9 +187,6 @@ def test_legacy_export_still_uses_original_manifest_contract():
 
 @pytest.mark.parametrize("failed_profile", [None, "claude-backed"])
 def test_mocked_six_stage_components_route_and_export_without_live_calls(measurement, monkeypatch, failed_profile):
-    # Warm the Windows platform cache before subprocess access is forbidden.
-    platform.platform()
-
     def forbidden(*args, **kwargs):
         pytest.fail("Integration test must not authenticate or open a network connection")
 
