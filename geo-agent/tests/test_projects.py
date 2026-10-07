@@ -1421,6 +1421,41 @@ def test_deleting_measurement_run_reconciles_retained_chat(tmp_path):
         ).status_code == 200
 
 
+def test_deleting_run_releases_unfulfilled_export_idempotency_key(tmp_path):
+    repository = SQLiteMeasurementRepository(tmp_path / "delete-export-request.sqlite3")
+    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
+    project = repository.create_project(
+        owner,
+        ProjectCreate.model_validate(project_payload()),
+    )
+    first = repository.create(
+        owner,
+        brief=inputs().brief,
+        project_id=project.project_id,
+    )
+    assert repository.reserve_export_request(
+        owner,
+        first.run_id,
+        "reusable-export-key",
+        "a" * 64,
+    ) is None
+
+    repository.delete_project_run(project.project_id, first.run_id, owner)
+    second = repository.create(
+        owner,
+        brief=inputs().brief,
+        project_id=project.project_id,
+    )
+
+    assert repository.reserve_export_request(
+        owner,
+        second.run_id,
+        "reusable-export-key",
+        "b" * 64,
+    ) is None
+    repository.close()
+
+
 def test_active_run_and_project_deletion_are_blocked(tmp_path):
     database = tmp_path / "active-delete.sqlite3"
     repository = SQLAlchemyMeasurementRepository(

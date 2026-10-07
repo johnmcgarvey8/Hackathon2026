@@ -227,7 +227,7 @@ def test_sqlite_repository_upgrades_recognized_unversioned_pre_mcp_schema(tmp_pa
     with repository.engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalar_one() == "0005_nullable_export_reservations"
+        ).scalar_one() == "0008_export_request_run_scope"
         assert connection.exec_driver_sql(
             "SELECT COUNT(*) FROM runs"
         ).scalar_one() == 0
@@ -352,10 +352,34 @@ def test_revision_0004_export_reservation_is_upgraded_to_nullable(tmp_path, owne
         assert artifact_id[3] == 0
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalar_one() == "0005_nullable_export_reservations"
+        ).scalar_one() == "0008_export_request_run_scope"
+        run_id = next(
+            row
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(artifact_create_requests)"
+            )
+            if row[1] == "run_id"
+        )
+        assert run_id[3] == 0
+    run = repository.create(owner, inputs())
     assert repository.reserve_export_request(
         owner,
+        run.run_id,
         "post-upgrade-export",
         "a" * 64,
     ) is None
+    repository.close()
+
+
+def test_sqlite_repository_uses_wal_and_waits_for_concurrent_writers(tmp_path):
+    repository = SQLiteMeasurementRepository(tmp_path / "sqlite-concurrency.sqlite3")
+
+    with repository.engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "PRAGMA journal_mode"
+        ).scalar_one().casefold() == "wal"
+        assert connection.exec_driver_sql(
+            "PRAGMA busy_timeout"
+        ).scalar_one() == 30000
+
     repository.close()

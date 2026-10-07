@@ -1,12 +1,12 @@
 # GEO MCP Server: Next Gates Plan
 
-18 September 2026 | Developer handoff | Gates D and E remain approval-gated
+30 September 2026 | Developer handoff | Gate C.5 interactive check, Gate D and Gate E remain gated
 
 ## Executive Summary
 
-The local MCP implementation is complete and has passed Gates A-C. The next developer should not redesign the measurement workflow or expand the tool catalogue. The job is to make the existing server safe and operable in a shared remote environment, prove it under the real network and identity topology, then run separately authorised live canaries.
+The local MCP implementation is complete, the committed VS Code workspace path has passed its automated Gate C.5 proof, and the integrated Python baseline is green at 615 tests. One interactive step remains: reload the workspace, approve MCP trust and complete a Copilot-driven synthetic run.
 
-The three priorities are **production identity**, **shared durable infrastructure** and **measured live acceptance**. Preserve the existing human checkpoints, scientific semantics, provider-operation counts and immutable exports. Do not enable live MCP merely because the local mock workflow is successful.
+The three priorities are **close local acceptance**, **confirm production decisions** and **then harden the governed service**. Preserve the existing human checkpoints, scientific semantics, provider-operation counts and immutable exports. Do not start Gate D or enable live MCP merely because the local mock workflow is successful.
 
 Current source and operating guidance:
 
@@ -16,21 +16,22 @@ Current source and operating guidance:
 - [Agent identity and execution authorisation](geo-agent/src/geo_agent/agent_access.py)
 - [Persistence and job lifecycle](geo-agent/src/geo_agent/persistence.py)
 - [Local performance baseline](geo-agent/docs/mcp-local-performance-baseline.json)
+- [VS Code integration baseline](geo-agent/docs/mcp-vscode-integration-baseline.json)
 
 ## Planning Framework
 
 | Section | Description | Notes |
 | --- | --- | --- |
-| Startle | The local MCP control path is already well below the two-second target, but that result says nothing about remote identity, storage or live provider completion time. | Local Streamable HTTP p95 was 82 ms across 200 requests with five clients and 1,000 saved runs. |
-| WIIFM | A shared MCP endpoint lets local and hosted agents use the same governed GEO workflow as the human UI. | Agents gain preparation, measurement, evidence and export access without gaining human approval rights. |
-| Needs and Challenges | The remote service needs durable multi-instance storage, real identity, worker isolation, migrations, observability and controlled live spend. | The current loopback bearer setup and local filesystem are development-only. |
-| Define Questions | Can the existing local server preserve owner isolation and responsiveness through a real hosted topology, then complete one- and three-profile live runs with exact accounting? | Gate D answers remote readiness. Gate E answers live acceptance. |
-| Cornerstone | Productionise the existing bounded asynchronous workflow; do not replace it with long-running MCP calls or a second orchestration engine. | REST, UI and MCP must continue to share one application service and one durable job model. |
+| Startle | The automated Copilot-equivalent journey completes all 23 synthetic operations, reconnects after restart and now sits on a 615-test green baseline. | Only the interactive VS Code trust and Copilot check remains in Gate C.5. |
+| WIIFM | A committed workspace path gives Copilot the governed GEO workflow without copied configuration or live-provider spend. | Agents gain preparation, measurement, evidence and export access without gaining human approval rights. |
+| Needs and Challenges | Close the interactive trust check before adding remote identity, storage, worker isolation, observability and controlled live spend. | The stdio MCP path and repository-wide baseline are proven locally. |
+| Define Questions | Can the workspace pass a real Copilot run, then preserve owner isolation and responsiveness through a hosted topology? | Gate C.5 closes local usability. Gate D answers remote readiness. Gate E answers live acceptance. |
+| Cornerstone | Finish and stabilise the existing bounded asynchronous workflow before productionising it. | REST, UI and MCP must continue to share one application service and one durable job model. |
 | Supporting Evidence 1 | All 20 tools work over real stdio and Streamable HTTP clients. | Tool discovery, structured results and early-return submissions are tested. |
 | Supporting Evidence 2 | Lifecycle blockers found during assessment have regression coverage. | Renewable fenced leases, stable replay, checkpointed output, queue limits and migration recovery are implemented. |
-| Supporting Evidence 3 | The local performance and payload gates pass with margin. | Catalogue 17,970 bytes; maximum measured response 4,982 bytes. |
-| Repeat Cornerstone | The route to shared use is operational hardening and measured acceptance, not workflow reinvention. | Keep the human approval and authorisation boundaries intact. |
-| Conclusion and next steps | Complete Gate D in an explicitly approved non-production deployment, then request separate authority for Gate E. | Stop if identity isolation, migration safety, remote p95 or live completion experience fails. |
+| Supporting Evidence 3 | The current local performance and payload gates pass with margin. | Stdio p95 19 ms; Streamable HTTP p95 117 ms; catalogue 17,970 bytes; maximum measured response 4,982 bytes. |
+| Repeat Cornerstone | Close the interactive local check, then harden the same workflow for shared use. | Keep the human approval and authorisation boundaries intact. |
+| Conclusion and next steps | Complete the interactive Gate C.5 check before an approved Gate D deployment. | Stop if identity isolation, migration safety, remote p95 or live completion experience fails. |
 
 ## 1. Current Baseline
 
@@ -41,17 +42,18 @@ Current source and operating guidance:
 | A. SDK and contract proof | Complete | Official `mcp==2.2.0`; 20 tools; real stdio and Streamable HTTP clients; structured results; no provider activity during import or discovery. |
 | B. Workflow and governance parity | Complete locally | Six-stage mock journey; exact human query approval; separate agent execution authorisation; owner-scoped reads; 23-operation three-profile path; deterministic recommendations add no provider call. |
 | C. Local performance and payloads | Complete | Five clients per transport, 1,000 representative saved runs, one active job and 200 requests per transport. See [baseline](geo-agent/docs/mcp-local-performance-baseline.json). |
+| C.5. VS Code and Copilot integration | Automated proof complete; interactive check pending | Committed `.vscode/mcp.json`; 20-tool discovery; synthetic human/API/worker flow; 23 operations; export read; restart/reconnect. See [evidence](geo-agent/docs/mcp-vscode-integration-baseline.json). |
 
 ### Verified local measurements
 
 | Measure | stdio | Streamable HTTP | Gate |
 | --- | ---: | ---: | ---: |
-| Warm p95 | 15 ms | 82 ms | At most 2 seconds |
-| Maximum request duration | 126 ms | 100 ms | Reported separately from p95 |
+| Warm p95 | 19 ms | 117 ms | At most 2 seconds |
+| Maximum request duration | 136 ms | 169 ms | Reported separately from p95 |
 | Maximum response | 4,972 bytes | 4,982 bytes | Default at most 16 KiB; progress at most 8 KiB |
 | Tool catalogue | 17,970 bytes | 17,970 bytes | At most 32 KiB |
 
-The final local Python suite passed **526 tests**. The existing browser and accessibility harness passed, including the new **Authorise agent preparation** and **Authorise agent measurement** actions.
+The MCP, human handoff, configuration, evaluation and worker suites passed **58 tests**. The browser and accessibility harness passed with no external calls. The complete repository suite passed **615 tests** with 19 existing Pydantic serialization warnings.
 
 ### Implemented safety properties
 
@@ -81,6 +83,7 @@ The following are not defects in the local milestone. They are release gates:
 - No remote topology performance result.
 - No live MCP canary or new provider allowance.
 - No proof that the three-profile live roster and every configured deployment are currently accessible.
+- No recorded interactive VS Code trust and Copilot run against the committed `geoAgent` entry.
 
 Do not describe the current loopback bearer middleware as production authentication. Do not expose it publicly.
 
@@ -103,7 +106,7 @@ Before provisioning or editing production configuration, obtain and record:
 | Providers | Approved Web IQ and model endpoints, managed identities/connections and egress policy. |
 | Spend | Non-production hosting budget only. Live provider allowance remains a separate Gate E decision. |
 
-**Stop condition:** do not provision a default architecture when ownership, tenant, region, data retention or ingress is unresolved.
+**Stop condition:** do not provision a default architecture while the interactive Gate C.5 check, ownership, tenant, region, data retention or ingress is unresolved.
 
 ### D1. Generalise persistence and artifacts
 
@@ -111,7 +114,12 @@ Before provisioning or editing production configuration, obtain and record:
 2. Keep SQLite for local development; use PostgreSQL for shared hosting.
 3. Run Alembic to `head`, including:
    - [0004 MCP foundation](geo-agent/migrations/versions/0004_mcp_execution_foundation.py)
+   - [0004 projects](geo-agent/migrations/versions/0004_projects.py)
+   - [0005 project agent budgets](geo-agent/migrations/versions/0005_project_agent_budgets.py)
+   - [0006 project conversation runs](geo-agent/migrations/versions/0006_project_conversation_runs.py)
+   - [0007 project LLM operations](geo-agent/migrations/versions/0007_project_llm_operations.py)
    - [0005 nullable export reservations](geo-agent/migrations/versions/0005_nullable_export_reservations.py)
+   - [0008 export request run scope](geo-agent/migrations/versions/0008_export_request_run_scope.py)
 4. Do not use `metadata.create_all()` as the shared-deployment migration mechanism.
 5. Rehearse upgrade and rollback/recovery on copied or synthetic databases.
 6. Exercise real PostgreSQL transactions for:
@@ -315,7 +323,8 @@ Release choices:
 
 | ID | Work item | Completion evidence | Depends on |
 | --- | --- | --- | --- |
-| `remote-decisions` | Confirm hosting, identity, data, network, provider and budget owners | Approved decision record | Current Gates A-C |
+| `interactive-vscode-proof` | Reload VS Code, approve `geoAgent` trust and complete one Copilot-driven synthetic run | Saved interactive acceptance note | Automated Gate C.5 |
+| `remote-decisions` | Confirm hosting, identity, data, network, provider and budget owners | Approved decision record | `interactive-vscode-proof` |
 | `postgres-artifacts` | Add PostgreSQL and durable artifact configuration/adapters | Integration tests and migration rehearsal | `remote-decisions` |
 | `entra-mcp-auth` | Implement MCP SDK OAuth/Entra resource validation and delegation | Identity matrix | `remote-decisions` |
 | `human-web-auth` | Implement production human sessions and CSRF | Browser security tests | `remote-decisions` |
@@ -333,23 +342,33 @@ Do not parallelise edits to persistence, migration, execution authorisation and 
 
 1. Read this plan and the [GEO agent instructions](geo-agent/AGENTS.md).
 2. Read [README: MCP Agent Flow](geo-agent/README.md#mcp-agent-flow).
-3. Confirm the branch is based on the MCP implementation commit and the worktree is clean.
-4. Create the agent-local environment and install the pinned project:
+3. Confirm `.vscode/mcp.json` contains the secret-free `geoAgent` entry and the worktree is clean.
+4. Run **GEO: Bootstrap Python Environment**, or create the environment directly:
 
    ```powershell
    python -m venv geo-agent\.venv
    & '.\geo-agent\.venv\Scripts\python.exe' -m pip install -e '.\geo-agent[test]'
    ```
 
-5. Re-run the local baseline before changing infrastructure:
+5. Re-run the MCP and VS Code acceptance baseline before changing infrastructure:
 
    ```powershell
-   & '.\geo-agent\.venv\Scripts\python.exe' -m pytest geo-agent\tests -q -p no:cacheprovider
-   node geo-agent\tests\check_measurement_browser.cjs
+   & '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp.py'
+   & '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp_e2e.py'
+   & '.\geo-agent\.venv\Scripts\python.exe' -m pytest `
+       '.\geo-agent\tests\test_api.py' `
+       '.\geo-agent\tests\test_configuration.py' `
+       '.\geo-agent\tests\test_evaluation_workflow.py' `
+       '.\geo-agent\tests\test_mcp_server.py' `
+       '.\geo-agent\tests\test_mcp_workspace.py' `
+       '.\geo-agent\tests\test_measurement_api.py' `
+       '.\geo-agent\tests\test_measurement_worker.py' -q -p no:cacheprovider
+   node '.\geo-agent\tests\check_measurement_browser.cjs'
    & '.\geo-agent\.venv\Scripts\python.exe' geo-agent\tests\measure_mcp_performance.py
    ```
 
-6. Inspect these code surfaces before changing them:
+6. Run the full Python suite and confirm the 615-test baseline before Gate D.
+7. Inspect these code surfaces before changing them:
    - [MCP registration and transports](geo-agent/src/geo_agent/mcp_server.py)
    - [Application service and bounded views](geo-agent/src/geo_agent/measurement_service.py)
    - [Principal and execution-authorisation contracts](geo-agent/src/geo_agent/agent_access.py)
@@ -357,8 +376,9 @@ Do not parallelise edits to persistence, migration, execution authorisation and 
    - [Lease heartbeat and failure finalisation](geo-agent/src/geo_agent/worker.py)
    - [Web/UI bootstrap](geo-agent/src/geo_agent/api.py)
    - [Live worker composition](geo-agent/src/geo_agent/live_runtime.py)
-7. Obtain the D0 decisions before provisioning anything.
-8. Keep `GEO_MCP_ALLOW_LIVE` unset or false until Gate E authority is recorded.
+8. Complete the interactive VS Code trust and Copilot run.
+9. Obtain the D0 decisions before provisioning anything.
+10. Keep `GEO_MCP_ALLOW_LIVE` unset or false until Gate E authority is recorded.
 
 ## 7. Invariants the Next Developer Must Preserve
 
@@ -395,4 +415,4 @@ The next developer should leave:
 
 ## Recommendation
 
-Proceed with Gate D only after the platform owner approves the target environment and identity model. Keep the current local MCP release available for development and demos. Do not provision live provider capacity or set `GEO_MCP_ALLOW_LIVE=true` until Gate D has passed and Gate E has separate written authorisation.
+Proceed with Gate D only after the interactive Gate C.5 check passes and the platform owner approves the target environment and identity model. Keep the current synthetic MCP path available for development and demos. Do not provision live provider capacity or set `GEO_MCP_ALLOW_LIVE=true` until Gate D has passed and Gate E has separate written authorisation.

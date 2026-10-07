@@ -48,7 +48,9 @@ scores = measurement_scores(measurement)
 
 The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, validated outputs are checkpointed with their claims, and interrupted or ambiguous calls are not automatically replayed. Renewable fenced leases prevent late workers from committing after cancellation or lease loss. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
 
-Verification: **526 tests passed**, with one existing Starlette/AnyIO dependency deprecation warning. The [MCP tests](tests/test_mcp_server.py) exercise all twenty tools, real stdio and Streamable HTTP clients, separate agent identity, human-issued execution authorization, terminal replay, job-scoped progress, bounded maximal query packets and immutable export reads. The [live runtime test](tests/test_live_runtime.py) uses SDK mock transports and the durable budget ledger to exercise one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 charged operations with no external traffic. Focused tests also prove proportional multi-run allowances, one-active/20-global/4-owner admission, renewable fenced leases, checkpoint survival, migration recovery, owner isolation, failed-call charging, complete human recommendation decisions, sanitized accepted-task exports and the Copilot-style evidence-gap guard. The browser checks cover the six-stage UI and both agent-authorization handoffs, including accessibility, reload recovery, safe rendering and ZIP integrity.
+Gate C.5 verification: **58 MCP and human-handoff tests passed**. The [MCP tests](tests/test_mcp_server.py) exercise all twenty tools, real stdio and Streamable HTTP clients, separate agent identity, human-issued execution authorization, terminal replay, job-scoped progress, bounded maximal query packets and immutable export reads. The workspace verifier starts the committed `geoAgent` entry, and the end-to-end verifier completes one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 synthetic operations with no external traffic. The browser checks cover the six-stage UI and both agent-authorisation handoffs, including accessibility, reload recovery, safe rendering and ZIP integrity.
+
+The complete repository suite passes **615 tests** with 19 existing Pydantic serialization warnings. The repaired migration graph has one Alembic head, project and MCP persistence coexist, and export reservations are run-scoped so deleting a run cannot permanently consume an unfulfilled idempotency key. See the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
 
 ### Grounding and Answer Assessment
 
@@ -239,7 +241,7 @@ The transport counts every attempted model HTTP request before sending it. SQLit
 
 The MCP interface covers the six human stages without turning a provider workflow into one long tool call:
 
-The completed local implementation and the remaining remote/live release work are documented in the [MCP next-gates developer plan](../geo-agent-mcp-next-gates-plan.md). A [Word companion](../geo-agent-mcp-next-gates-plan.docx) is included for stakeholder review.
+The local implementation and the remaining remote/live release work are documented in the [MCP next-gates developer plan](../geo-agent-mcp-next-gates-plan.md). A [Word companion](../geo-agent-mcp-next-gates-plan.docx) is included for stakeholder review. The latest automated VS Code integration result is recorded in the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
 
 1. The agent calls `geo_create_run`.
 2. A human opens the returned `/measurements?run=...` link and selects **Authorise agent preparation**.
@@ -253,17 +255,47 @@ Exact-query approval and legacy recommendation acceptance remain human-only REST
 
 The catalogue contains 20 tools across discovery, run creation, preparation, queries, brand configuration, measurement, progress/results, evidence/assessment, recommendations, cancellation and exports. Default responses are capped at 16 KiB, progress at 8 KiB and explicit details at 64 KiB. Lists use signed owner-bound continuations. Admission permits one active job, 20 globally queued jobs and four queued jobs per owner.
 
-### Local stdio
+### VS Code Copilot workspace
 
-Copy [examples/vscode-mcp.json](examples/vscode-mcp.json) into your chosen VS Code MCP configuration location or merge its `geo-agent` server entry. Do not place bearer tokens in the JSON. Start the separate synthetic worker against the same data directory:
+The workspace commits a secret-free [`geoAgent` stdio configuration](../.vscode/mcp.json). VS Code owns the MCP process; do not start a second `geo_agent.mcp_server` process manually.
+
+From the workspace:
+
+1. Run **Tasks: Run Task > GEO: Bootstrap Python Environment** once.
+2. Reload the VS Code window so it discovers `.vscode\mcp.json`.
+3. Approve the workspace MCP trust prompt, then use **MCP: List Servers** to confirm `geoAgent` is running.
+4. Run **GEO: Verify MCP Workspace Setup**. It starts the configured interpreter, discovers all 20 tools and calls `geo_get_capabilities` against temporary data.
+5. Start **GEO: Start Synthetic MCP Prerequisites**, or press F5 with **GEO: Synthetic MCP Prerequisites**. This starts the human API and polling mock worker on the same mock policy and data directory.
+
+The committed MCP entry uses `measurement-policy.json`, local owner identity and `.data`. It contains no bearer token, Web IQ key or provider credential. Import, initialization and tool discovery do not start a worker or acquire provider credentials.
+
+The full synthetic proof is also reproducible without VS Code UI interaction:
 
 ```powershell
-$env:GEO_DATA_DIR = (Resolve-Path '.\geo-agent\.data').Path
-$env:GEO_MEASUREMENT_POLICY = (Resolve-Path '.\geo-agent\measurement-policy.json').Path
-& '.\geo-agent\.venv\Scripts\python.exe' -m geo_agent.mock_measurement_worker
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp.py'
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp_e2e.py'
 ```
 
-The stdio server command is `python -m geo_agent.mcp_server`. Import, initialization and tool discovery do not start a worker or acquire provider credentials.
+The end-to-end proof creates a run through the configured stdio server, uses authenticated human API calls for both execution authorisations and exact-query approval, completes five queries across three profiles, verifies all 23 synthetic operations, reads an export manifest and reconnects to the persisted run. It uses temporary data and no live provider calls.
+
+For the interactive Copilot check:
+
+1. Ask Copilot to call `geo_get_capabilities`, then `geo_create_run`.
+2. Open the returned local human URL and select **Authorise agent preparation**.
+3. Ask Copilot to refresh the run, prepare it and inspect the five-query plan.
+4. Approve the exact query hash and select **Authorise agent measurement** in the UI.
+5. Ask Copilot to start measurement, monitor progress, read results and evidence, then create and inspect a measurement export.
+
+The API writes its local human token to `.data\local-api-token`. Keep it local and do not add it to MCP configuration.
+
+| Symptom | Action |
+| --- | --- |
+| Configured interpreter is missing | Run **GEO: Bootstrap Python Environment**. |
+| `geoAgent` is not listed | Reopen the workspace, approve trust, then inspect **MCP: List Servers** and the MCP output log. |
+| Preparation or measurement remains queued | Start **GEO: Run Mock Measurement Worker** and confirm it reports `Mock measurement worker ready`. |
+| The human link does not open | Start **GEO: Run Synthetic Human API** and confirm port 8088 is free. |
+| Synthetic tasks use unexpected settings | Stop the processes and inspect task environment values. Existing environment variables take precedence over `.env`. |
+| Live mode is requested | Stop. The workspace proof must use `measurement-policy.json`; do not set `GEO_MCP_ALLOW_LIVE`. |
 
 ### Loopback Streamable HTTP
 
@@ -286,17 +318,17 @@ It creates temporary data only, loads 1,000 full three-profile saved runs, holds
 From the workspace root, using Python 3.11 or later:
 
 ```powershell
-python -m venv geo-agent/.venv
-& './geo-agent/.venv/Scripts/python.exe' -m pip install -e "./geo-agent[test]"
-& './geo-agent/.venv/Scripts/python.exe' -m pytest geo-agent/tests -q
-& './geo-agent/.venv/Scripts/python.exe' -m geo_agent
+python -m venv '.\geo-agent\.venv'
+& '.\geo-agent\.venv\Scripts\python.exe' -m pip install -e '.\geo-agent[test]'
+& '.\geo-agent\.venv\Scripts\python.exe' -m pytest '.\geo-agent\tests' -q
+& '.\geo-agent\.venv\Scripts\python.exe' -m geo_agent
 ```
 
 Use the configured Python interpreter if `python` resolves to a different installation. Direct dependencies are pinned to versions exercised on Windows with Python 3.13, including MCP 2.2.0, Agent Framework core 1.17.0 and OpenAI integration 1.14.2. The agent-local virtual environment is configured; a transitive dependency lock remains outstanding. [Agent Framework source](https://github.com/microsoft/agent-framework/tree/main/python).
 
 Open http://127.0.0.1:8088/docs. The server binds only to loopback. On first launch it generates a local human API token in `.data/local-api-token`, excluded from Git. Open that file locally and enter its value in the documentation's **Authorize** control. It is a local development credential, not a Foundry or Web IQ key. Do not share it or reuse it as `GEO_MCP_AGENT_TOKEN`. The local data directory relies on your user account's filesystem permissions; remote Entra authentication and deployment hardening remain a separate release gate.
 
-Press F5 with **GEO: Local Synthetic Backend** selected to debug the API. This is not yet an Agent Inspector endpoint. Stop the running server first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing environment variables take precedence. Restart the server after changing settings. See [.env.example](.env.example) for the configuration template.
+Press F5 with **GEO: Synthetic MCP Prerequisites** selected to debug the synthetic API and mock worker together. This is not an Agent Inspector endpoint. Stop running instances first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing task and process environment variables take precedence. Restart the processes after changing settings. See [.env.example](.env.example) for the configuration template.
 
 ## Web IQ Configuration
 

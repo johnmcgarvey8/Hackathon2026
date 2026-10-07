@@ -7,7 +7,10 @@ import sqlalchemy as sa
 
 
 revision: str = "0005_nullable_export_reservations"
-down_revision: str | None = "0004_mcp_execution_foundation"
+down_revision: str | Sequence[str] | None = (
+    "0004_mcp_execution_foundation",
+    "0007_project_llm_operations",
+)
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
