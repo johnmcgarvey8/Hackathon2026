@@ -19,6 +19,9 @@ from geo_agent.foundry import InferredBrand, PreparationAnalysis, PageEvidence, 
 from geo_agent.jobs import JobRepository, JobType
 from geo_agent.preparation import PreparationHandler
 from geo_agent.recommendations import RecommendationProposal, RecommendationReport, validate_recommendations
+from geo_agent.specialist_foundry import HostedSpecialistAgent
+from geo_agent.specialist_workflow import SpecialistStageHandler
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.worker import Worker
 
 
@@ -164,27 +167,33 @@ class MockMeasurementRuntime:
         if policy.execution_mode != "mock":
             raise ValueError("The local mock runtime requires a mock execution policy")
         preparation = SyntheticPreparationModel()
-        self.worker = Worker(
-            repository,
-            "local-mock-worker",
-            {
-                JobType.PREPARE: PreparationHandler(
-                    policy,
-                    SyntheticBrowse(),
-                    preparation,
-                    preparation,
-                ),
-                JobType.EVALUATE: EvaluationHandler(
-                    repository,
-                    policy,
-                    SyntheticSearch(),
-                    tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
-                    SyntheticRecommendations(),
-                ),
-            },
+        recommendations = SyntheticRecommendations()
+        specialist_orchestrator = ProjectMeasurementOrchestrator(repository, policy)
+
+        def reconcile(job, run):
+            if on_job_finished is not None:
+                on_job_finished(job, run)
+            elif job.job_type == JobType.EVALUATE:
+                specialist_orchestrator.reconcile_job(job, run)
+
+        self.worker = Worker(repository, "local-mock-worker", {
+            JobType.PREPARE: PreparationHandler(policy, SyntheticBrowse(), preparation, preparation),
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                policy,
+                SyntheticSearch(),
+                tuple(SyntheticEvaluator(profile) for profile in policy.profiles),
+                recommendations,
+            ),
+            JobType.AGENT_STAGE: SpecialistStageHandler(
+                repository,
+                recommendations,
+                HostedSpecialistAgent(token_provider=lambda: "unused-in-mock"),
+            ),
+        },
             policy_id=policy.policy_id,
             policy_hash=policy.policy_hash,
-            on_job_finished=on_job_finished,
+            on_job_finished=reconcile,
         )
         self._lock = Lock()
         self._pending = Event()
@@ -197,8 +206,10 @@ class MockMeasurementRuntime:
             try:
                 while True:
                     self._pending.clear()
-                    while self.worker.run_once() is not None:
-                        pass
+                    while True:
+                        result = self.worker.run_once()
+                        if result is None:
+                            break
                     if not self._pending.is_set():
                         break
             finally:

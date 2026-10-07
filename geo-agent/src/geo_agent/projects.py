@@ -10,6 +10,7 @@ from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.jobs import JobRepository, WorkflowJob
 from geo_agent.measurement_budget import MeasurementCapacity
 from geo_agent.measurement_workflow import MeasurementRepository, MeasurementRun, OwnerIdentity
+from geo_agent.specialist_agents import SpecialistAgentRole
 
 
 def normalize_domain(value: str) -> str:
@@ -70,6 +71,11 @@ class FoundryProjectBinding(Contract):
         return value.strip().rstrip("/")
 
 
+class SpecialistAgentBinding(Contract):
+    role: SpecialistAgentRole
+    binding: FoundryProjectBinding
+
+
 class ProjectCreate(Contract):
     name: str = Field(min_length=1, max_length=120)
     primary_domain: str
@@ -79,6 +85,7 @@ class ProjectCreate(Contract):
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str = Field(default="#0067b8", pattern=r"^#[0-9a-fA-F]{6}$")
     foundry: FoundryProjectBinding | None = None
+    specialist_agents: tuple[SpecialistAgentBinding, ...] = Field(default=(), max_length=3)
 
     @field_validator("name")
     @classmethod
@@ -107,6 +114,8 @@ class ProjectCreate(Contract):
             raise ValueError("Competitor domains must be unique")
         if set(domains) & set(self.competitor_domains):
             raise ValueError("Competitor domains cannot overlap project domains")
+        if len({item.role for item in self.specialist_agents}) != len(self.specialist_agents):
+            raise ValueError("Specialist agent roles must be unique")
         return self
 
 
@@ -120,6 +129,10 @@ class ProjectUpdate(Contract):
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     foundry: FoundryProjectBinding | None = None
+    specialist_agents: tuple[SpecialistAgentBinding, ...] | None = Field(
+        default=None,
+        max_length=3,
+    )
 
     @field_validator("name")
     @classmethod
@@ -157,6 +170,7 @@ class Project(Contract):
     active_goal: str | None = Field(default=None, max_length=500)
     colour: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     foundry: FoundryProjectBinding | None = None
+    specialist_agents: tuple[SpecialistAgentBinding, ...] = ()
     archived: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -169,6 +183,15 @@ class Project(Contract):
     @property
     def domains(self) -> tuple[str, ...]:
         return (self.primary_domain, *self.additional_domains)
+
+    def specialist_binding(
+        self,
+        role: SpecialistAgentRole,
+    ) -> FoundryProjectBinding | None:
+        return next(
+            (item.binding for item in self.specialist_agents if item.role == role),
+            None,
+        )
 
 
 class ProjectRepository(Protocol):

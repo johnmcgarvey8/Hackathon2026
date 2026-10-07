@@ -26,6 +26,26 @@ test("measurement runtime uses explicit actions and saved operation totals", () 
   assert.equal(runtime.actionAllowed({ allowed: false }), false);
   assert.equal(runtime.shouldPollRun({ state: "evaluating" }), true);
   assert.equal(runtime.shouldPollRun({ state: "awaiting-query-approval" }), false);
+  assert.equal(runtime.isMeasurementResultPending({
+    state: "evaluating",
+    result_availability: { evidence: false },
+  }, "evidence"), true);
+  assert.equal(runtime.isMeasurementResultPending({
+    state: "ready",
+    result_availability: { evidence: false },
+  }, "evidence"), false);
+  assert.equal(runtime.isMeasurementResultPending({
+    state: "recommending",
+    agent_stages: [{ role: "recommendations", status: "running" }],
+  }, "recommendations"), true);
+  assert.equal(runtime.measurementOperationState({
+    planned: 2,
+    completed: 1,
+    failed: 0,
+    in_flight: 1,
+    unresolved: 0,
+    not_attempted: 0,
+  }), "running");
   const totals = runtime.operationTotals({
     operations: [
       { planned: 5, completed: 2, failed: 1 },
@@ -70,6 +90,9 @@ test("polling is bounded, visibility aware, and GET only", () => {
 
 test("results are grouped by query and provider answers use safe markdown", () => {
   const results = read("components/measurement/results/measurement-results.tsx");
+  const loading = read("components/measurement/measurement-loading-state.tsx");
+  const progress = read("components/measurement/run-progress.tsx");
+  const styles = read("app/globals.css");
   for (const heading of [
     "Grounding queries and brand presence",
     "Inference inputs",
@@ -104,6 +127,18 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /formatGroundingQueryTitle/);
   assert.match(results, /Grounding citation/);
   assert.match(results, /providerAnswerCitations/);
+  assert.match(results, /isMeasurementResultPending/);
+  assert.match(results, /MeasurementLoadingState stage="evidence"/);
+  assert.match(results, /MeasurementLoadingState stage="answers"/);
+  assert.match(results, /MeasurementLoadingState stage="scores"/);
+  assert.match(results, /MeasurementLoadingState stage="recommendations"/);
+  assert.match(loading, /role="status"/);
+  assert.match(loading, /aria-live="polite"/);
+  assert.match(progress, /measurementOperationState/);
+  assert.match(progress, /progress-track \$\{progressInFlight \? "in-progress"/);
+  assert.match(styles, /\.measurement-pending-state/);
+  assert.match(styles, /\.progress-track\.in-progress::after/);
+  assert.match(styles, /prefers-reduced-motion[\s\S]*\.measurement-loading-ring/);
   assert.match(results, /<AssistantMarkdown/);
   assert.match(results, /content=\{answer\.answer\}/);
   assert.match(results, /onCitationClick/);

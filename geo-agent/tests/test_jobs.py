@@ -567,12 +567,11 @@ def test_progress_totals_and_unresolved_cancelled_work(repository, owner, profil
     repository.claim_operation(job.job_id, "worker-a", "progress:search", "webiq-search")
     repository.cancel_job(job.job_id, owner)
     progress = repository.get_run_progress(run.run_id, owner)
-    assert [item.planned for item in progress.operations] == [5, 5 * profile_count, 1]
+    assert [item.planned for item in progress.operations] == [5, 5 * profile_count]
     assert progress.operations[0].unresolved == 1
     assert progress.operations[0].in_flight == 0
     assert progress.operations[0].not_attempted == 4
     assert progress.operations[1].not_attempted == 5 * profile_count
-    assert progress.operations[2].optional
     assert progress.current_operation is None
 
 

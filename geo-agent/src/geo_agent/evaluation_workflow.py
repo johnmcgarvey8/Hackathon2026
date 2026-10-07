@@ -68,11 +68,8 @@ class EvaluationHandler:
             )
         ):
             raise Conflict("Evaluation job does not match the worker execution policy")
-        request = (
-            EvaluatorRecoveryRequest.model_validate(job.request)
-            if recovery
-            else EvaluationRequest.model_validate(job.request)
-        )
+        recovery = job.job_type == JobType.RECOVER_EVALUATORS
+        request = EvaluationRequest.model_validate(job.request)
         run = self.repository.get(job.run_id, job.owner)
         if run.state != MeasurementState.EVALUATING or run.inputs is None or run.approval is None:
             raise Conflict("Evaluation requires leased, approved measurement inputs")
@@ -187,26 +184,12 @@ class EvaluationHandler:
             if completed
             else MeasurementState.FAILED
         )
-        report = None
-        if request.include_recommendations and self.recommendations is not None and completed:
-            try:
-                report = operations.call(
-                    f"{job.job_id}:recommend",
-                    "recommendation-model",
-                    lambda: self._recommendation_call(measurement),
-                )
-            except Conflict:
-                raise
-            except Exception:
-                state = MeasurementState.PARTIAL
-                report = None
-
         def mutation(current: MeasurementRun) -> MeasurementRun:
             if current.state != MeasurementState.EVALUATING or current.inputs != measurement.inputs:
                 raise Conflict("Evaluation result no longer matches the run")
             return current.model_copy(update={
                 "measurement": measurement,
-                "recommendations": report,
+                "recommendations": None,
                 "recommendation_review": None,
                 "state": state,
                 "events": (*current.events, MeasurementEvent(

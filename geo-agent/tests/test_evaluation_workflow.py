@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from geo_agent.contracts import EvaluationResult, Source
 from geo_agent.evaluation_workflow import (
     EvaluationHandler,
@@ -9,8 +11,17 @@ from geo_agent.evaluation_workflow import (
 from geo_agent.jobs import JobService, JobState, JobType
 from geo_agent.measurement_workflow import MeasurementCoordinator, MeasurementState, OwnerIdentity
 from geo_agent.persistence import SQLiteMeasurementRepository
+from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.recommendations import RecommendationProposal, validate_recommendations
+from geo_agent.specialist_agents import (
+    AgentStageStatus,
+    SpecialistAgentRole,
+    SpecialistProviderMode,
+)
+from geo_agent.specialist_foundry import HostedSpecialistAgent
+from geo_agent.specialist_workflow import SpecialistStageHandler, SpecialistStageRequest
 from geo_agent.worker import Worker
+from geo_agent.workflow import Conflict
 from test_measurement_workflow import inputs
 from test_preparation import policy
 
@@ -390,7 +401,7 @@ def test_project_evaluation_rejects_synthetic_inputs_before_provider_calls(tmp_p
     assert evaluator.calls == []
 
 
-def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):
+def test_recommendations_run_once_in_independent_baseline_stage(tmp_path):
     execution_policy = policy()
     prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
     repository = SQLiteMeasurementRepository(tmp_path / "recommend.sqlite3")
@@ -423,16 +434,257 @@ def test_recommendations_are_invoked_once_after_complete_measurement(tmp_path):
     assert result is not None
     _, completed_run = result
 
+    assert recommendations.calls == 0
+    assert completed_run.state == MeasurementState.READY
+    assert completed_run.recommendations is None
+
+    stage_job, queued_run = JobService(repository).enqueue(
+        completed_run.run_id,
+        owner,
+        completed_run.revision,
+        JobType.AGENT_STAGE,
+        "recommendations-1",
+        SpecialistStageRequest(
+            role=SpecialistAgentRole.RECOMMENDATIONS,
+            provider_mode=SpecialistProviderMode.BASELINE_PROVIDER,
+            confirm_provider_call=True,
+        ),
+        operation_ceiling=1,
+    )
+    assert queued_run.state == MeasurementState.READY
+    assert queued_run.agent_stages[0].status == AgentStageStatus.QUEUED
+    stage_result = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.AGENT_STAGE: SpecialistStageHandler(
+                repository,
+                recommendations,
+                HostedSpecialistAgent(token_provider=lambda: "unused"),
+            ),
+        },
+    ).run_once()
+    assert stage_result is not None
+    _, completed_run = stage_result
+
     assert recommendations.calls == 1
     assert completed_run.state == MeasurementState.READY
     assert completed_run.recommendations is not None
     assert completed_run.recommendations.status == "insufficient-evidence"
+    assert completed_run.agent_stages[0].status == AgentStageStatus.COMPLETED
+    assert completed_run.agent_stages[0].provider_mode == SpecialistProviderMode.BASELINE_PROVIDER
     with sqlite3.connect(tmp_path / "recommend.sqlite3") as connection:
         recommendation_claims = connection.execute(
             "SELECT COUNT(*) FROM operation_claims WHERE operation_key = ?",
-            (f"{job.job_id}:recommend",),
+            (f"{stage_job.job_id}:recommend",),
         ).fetchone()[0]
     assert recommendation_claims == 1
+
+
+def test_recommendation_retry_replay_returns_existing_job(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "recommend-retry.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-retry",
+        EvaluationRequest(confirm_evaluation_calls=True, include_recommendations=True),
+    )
+    completed_job, completed_run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                FakeSearch(),
+                (FakeEvaluator(prepared.profiles[0]),),
+            ),
+        },
+    ).run_once()
+    orchestrator = ProjectMeasurementOrchestrator(repository, execution_policy)
+    stage_job, _ = orchestrator.reconcile_job(completed_job, completed_run)
+    with pytest.raises(Conflict, match="specialist stage is active"):
+        repository.mutate(
+            completed_run.run_id,
+            owner,
+            repository.get(completed_run.run_id, owner).revision,
+            lambda run: run,
+        )
+    repository.lease_one_job("worker-a")
+    _, failed_run = repository.fail_job(
+        stage_job.job_id,
+        "worker-a",
+        "ProviderError",
+    )
+    with pytest.raises(Conflict):
+        orchestrator.retry_recommendations(
+            failed_run,
+            expected_revision=failed_run.revision,
+            idempotency_key=stage_job.idempotency_key,
+        )
+
+    retry_job, _ = orchestrator.retry_recommendations(
+        failed_run,
+        expected_revision=failed_run.revision,
+        idempotency_key="retry-recommendations",
+    )
+    replay_job, replay_run = orchestrator.retry_recommendations(
+        failed_run,
+        expected_revision=failed_run.revision,
+        idempotency_key="retry-recommendations",
+    )
+
+    assert replay_job.job_id == retry_job.job_id
+    assert replay_run.agent_stages[0].status == AgentStageStatus.QUEUED
+
+
+def test_evaluator_recovery_requeues_recommendations_for_new_measurement(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "recommend-recovery.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-recovery",
+        EvaluationRequest(confirm_evaluation_calls=True, include_recommendations=True),
+    )
+    failed_evaluator = FakeEvaluator(prepared.profiles[0], fail_query="q-2")
+    completed_job, partial_run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                FakeSearch(),
+                (failed_evaluator,),
+            ),
+        },
+    ).run_once()
+    orchestrator = ProjectMeasurementOrchestrator(repository, execution_policy)
+    orchestrator.reconcile_job(completed_job, partial_run)
+    queued_stage_run = repository.get(partial_run.run_id, owner)
+    with pytest.raises(Conflict, match="specialist stage is active"):
+        JobService(repository).enqueue(
+            queued_stage_run.run_id,
+            owner,
+            queued_stage_run.revision,
+            JobType.RECOVER_EVALUATORS,
+            "blocked-recovery",
+            EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+        )
+    _, recommended_run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.AGENT_STAGE: SpecialistStageHandler(
+                repository,
+                FakeRecommendations(),
+                HostedSpecialistAgent(token_provider=lambda: "unused"),
+            ),
+        },
+    ).run_once()
+    old_input_hash = recommended_run.agent_stages[0].input_hash
+    JobService(repository).enqueue(
+        recommended_run.run_id,
+        owner,
+        recommended_run.revision,
+        JobType.RECOVER_EVALUATORS,
+        "recover-evaluators",
+        EvaluatorRecoveryRequest(confirm_evaluation_calls=True),
+    )
+    recovery_result = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.RECOVER_EVALUATORS: EvaluationHandler(
+                repository,
+                execution_policy,
+                FakeSearch(),
+                (FakeEvaluator(prepared.profiles[0]),),
+            ),
+        },
+        on_job_finished=orchestrator.reconcile_job,
+    ).run_once()
+
+    assert recovery_result is not None
+    recovered = repository.get(recommended_run.run_id, owner)
+    assert recovered.state == MeasurementState.READY
+    assert recovered.recommendations is None
+    assert recovered.agent_stages[0].status == AgentStageStatus.QUEUED
+    assert recovered.agent_stages[0].input_hash != old_input_hash
+
+
+def test_completed_evaluation_is_durably_reconciled_after_callback_failure(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "durable-reconciliation.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "e" * 200,
+        EvaluationRequest(confirm_evaluation_calls=True, include_recommendations=True),
+    )
+    evaluation_result = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                FakeSearch(),
+                (FakeEvaluator(prepared.profiles[0]),),
+            ),
+        },
+        on_job_finished=lambda _job, _run: (_ for _ in ()).throw(
+            RuntimeError("synthetic callback failure")
+        ),
+    ).run_once()
+    assert evaluation_result is not None
+    assert evaluation_result[1].recommendations is None
+
+    orchestrator = ProjectMeasurementOrchestrator(repository, execution_policy)
+    stage_result = Worker(
+        repository,
+        "worker-b",
+        {
+            JobType.AGENT_STAGE: SpecialistStageHandler(
+                repository,
+                FakeRecommendations(),
+                HostedSpecialistAgent(token_provider=lambda: "unused"),
+            ),
+        },
+        on_job_finished=orchestrator.reconcile_job,
+    ).run_once()
+
+    assert stage_result is not None
+    assert stage_result[0].job_type == JobType.AGENT_STAGE
+    assert len(stage_result[0].idempotency_key) <= 200
+    assert stage_result[1].recommendations is not None
+    assert stage_result[1].agent_stages[0].status == AgentStageStatus.COMPLETED
 
 
 def test_recommendations_are_not_invoked_without_explicit_request(tmp_path):

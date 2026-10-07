@@ -9,7 +9,7 @@ import { useRunPolling } from "@/components/measurement/use-run-polling";
 import { ScreenHeader } from "@/components/screen-header";
 import { LoadingState, UnavailableState } from "@/components/status-state";
 import { api, ApiError } from "@/lib/api";
-import { actionAllowed, actionReason, pageUrl, runObjective } from "@/lib/measurement-runtime";
+import { actionAllowed, actionReason, isRunActive, pageUrl, runObjective } from "@/lib/measurement-runtime";
 import type {
   ArtifactMetadata,
   BinaryArtifact,
@@ -104,6 +104,7 @@ export default function MeasurementRunPage() {
   const actions = run?.available_actions || {};
   const cancelAction = actions.cancel;
   const reviewAction = actions.review_recommendations;
+  const retryRecommendationsAction = actions.retry_recommendations;
   const exportAction = actions.export;
   const discussAction = actions.discuss;
   const cancellableJob = useMemo(
@@ -150,6 +151,13 @@ export default function MeasurementRunPage() {
         decision: recommendationDecisions[task.task_id] || "rejected",
       })),
     ));
+
+  const retryRecommendations = () => mutation("Recommendation retry", async () =>
+    (await api.retryRecommendations(
+      project.project_id,
+      params.runId,
+      run!.revision,
+    )).run);
 
   const exportRun = () => mutation("Export", async () => {
     const response = await api.exportRun(project.project_id, params.runId, run!.revision);
@@ -233,7 +241,7 @@ export default function MeasurementRunPage() {
   if (error && !run) return <section className="screen"><UnavailableState title="Measurement unavailable" message={error} /></section>;
   if (!run) return null;
 
-  const runActive = ["preparing", "queued", "evaluating", "recommending"].includes(run.state.toLowerCase());
+  const runActive = isRunActive(run);
 
   return (
     <section className="screen measurement-run">
@@ -277,7 +285,7 @@ export default function MeasurementRunPage() {
             </section>
             <section className="card">
               <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-              <RunProgressPanel progress={progress} />
+              <RunProgressPanel progress={progress} active={runActive} />
             </section>
           </div>
 
@@ -290,6 +298,14 @@ export default function MeasurementRunPage() {
           )}
 
           <MeasurementResultsView run={run} assessment={assessment} strategy={strategy} onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)} />
+
+          {actionAllowed(retryRecommendationsAction) && (
+            <section className="card">
+              <div className="card-heading"><h2>Recommendation recovery</h2><span className="pill amber">Explicit retry</span></div>
+              <p>The measurement evidence is saved. Retry only the failed recommendation stage using the currently resolved provider.</p>
+              <button className="button" type="button" disabled={busy !== null} title={actionReason(retryRecommendationsAction) || undefined} onClick={() => void retryRecommendations()}>Retry recommendations</button>
+            </section>
+          )}
 
           {run.recommendations?.tasks.length && !run.recommendation_review ? (
             <section className="card">

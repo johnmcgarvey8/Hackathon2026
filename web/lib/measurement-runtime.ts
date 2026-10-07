@@ -29,6 +29,57 @@ export function isRunActive(run: MeasurementRun): boolean {
   return activeStates.has(run.state.toLowerCase());
 }
 
+export type MeasurementResultStage =
+  | "queries"
+  | "evidence"
+  | "answers"
+  | "scores"
+  | "recommendations";
+
+export type MeasurementOperationState = "queued" | "running" | "completed" | "failed";
+
+export function isMeasurementResultPending(
+  run: MeasurementRun,
+  stage: MeasurementResultStage,
+): boolean {
+  if (!isRunActive(run)) return false;
+
+  if (stage === "recommendations") {
+    const recommendationStage = (run.agent_stages || []).find(
+      (item) => item.role === "recommendations",
+    );
+    if (recommendationStage?.status === "queued" || recommendationStage?.status === "running") {
+      return true;
+    }
+    if (["completed", "failed", "skipped"].includes(recommendationStage?.status || "")) {
+      return false;
+    }
+    return run.result_availability?.recommendations !== true && !run.recommendations;
+  }
+
+  const availabilityKey = {
+    queries: "query_plan",
+    evidence: "evidence",
+    answers: "answers",
+    scores: "citations",
+  }[stage] as "query_plan" | "evidence" | "answers" | "citations";
+
+  return run.result_availability?.[availabilityKey] !== true;
+}
+
+export function measurementOperationState(
+  operation: OperationProgress,
+): MeasurementOperationState {
+  if (operation.in_flight > 0) return "running";
+  if (operation.failed > 0 && operation.completed + operation.failed >= operation.planned) {
+    return "failed";
+  }
+  if (operation.planned > 0 && operation.completed + operation.failed >= operation.planned) {
+    return "completed";
+  }
+  return "queued";
+}
+
 export function shouldPollRun(run: MeasurementRun | null): boolean {
   if (!run) return false;
   const state = run.state.toLowerCase();

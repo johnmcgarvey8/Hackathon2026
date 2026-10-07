@@ -17,6 +17,7 @@ from geo_agent.contracts import (
 from geo_agent.foundry import PageAnalysis, PreparationAnalysis
 from geo_agent.evidence_assessment import BrandDefinition, BrandDefinitionRecord
 from geo_agent.recommendations import RecommendationReport
+from geo_agent.specialist_agents import AgentStageRecord
 from geo_agent.workflow import Conflict, NotFound
 
 
@@ -107,6 +108,7 @@ class MeasurementRun(Contract):
     measurement: MeasurementResults | None = None
     recommendations: RecommendationReport | None = None
     recommendation_review: RecommendationReview | None = None
+    agent_stages: tuple[AgentStageRecord, ...] = ()
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     events: tuple[MeasurementEvent, ...] = ()
@@ -134,6 +136,8 @@ class MeasurementRun(Contract):
             if self.recommendation_review.actor != self.owner:
                 raise ValueError("Recommendation review actor must own the run")
             self.recommendation_review.validate_for(self.measurement, self.recommendations)
+        if len({stage.role for stage in self.agent_stages}) != len(self.agent_stages):
+            raise ValueError("Measurement agent stages must have unique roles")
         if self.events and [event.sequence for event in self.events] != list(range(1, len(self.events) + 1)):
             raise ValueError("Measurement event sequence must be contiguous")
         return self

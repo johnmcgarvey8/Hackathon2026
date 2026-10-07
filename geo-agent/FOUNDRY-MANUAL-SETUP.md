@@ -16,6 +16,49 @@ GEO_FOUNDRY_AGENT_VERSION=<numeric-version>
 
 Current and future app projects inherit this default unless they have an explicit `foundry` binding. No knowledge base or model deployment name is required: the hosted agent already defines its model. Authentication uses the developer's Azure CLI sign-in; credentials are never sent to Next.js browser code.
 
+## Recommendations specialist agent
+
+The recommendation stage can use a separate pinned agent. Configure all three
+values or leave all three blank:
+
+```dotenv
+GEO_FOUNDRY_RECOMMENDATIONS_AGENT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>/agents/<agent-name>/endpoint/protocols/openai/responses
+GEO_FOUNDRY_RECOMMENDATIONS_AGENT_NAME=<agent-name>
+GEO_FOUNDRY_RECOMMENDATIONS_AGENT_VERSION=<numeric-version>
+```
+
+When these settings are absent, the stage uses the existing direct model
+recommendation provider. If the configured agent invocation fails, the stage is
+saved as failed and requires an explicit retry. It does not make a second
+provider call through the direct model.
+
+The agent must return only JSON matching the application
+`RecommendationProposal` contract. The application remains responsible for
+evidence-ID validation, exact-quote validation, measurement and approval hash
+binding, persistence, human review, and publishing restrictions.
+
+Projects can override the environment default with a role-specific binding:
+
+```json
+{
+  "expected_revision": 1,
+  "specialist_agents": [
+    {
+      "role": "recommendations",
+      "binding": {
+        "project_endpoint": "https://<resource>.services.ai.azure.com/api/projects/<project>",
+        "agent_name": "<agent-name>",
+        "agent_version": "<numeric-version>"
+      }
+    }
+  ]
+}
+```
+
+The reserved role names are `grounding-query` and `llm-survey`. Their current
+application implementations remain active until corresponding hosted-agent
+adapters are implemented.
+
 The runtime derives the project endpoint and calls its `/openai/v1/responses` API with an explicit `agent_reference` name and version. This avoids relying on the stable agent endpoint's potentially latest-version routing. It does not change Azure endpoint configuration.
 
 Each explicit submission sends at most one request with at most 512,000 input bytes, 2,000 output tokens, `tool_choice: none` and `store: false`. Only the selected local conversation and deterministic `geo-context/v2` packet for its immutable project-bound run are included. The packet separates query plan, WebIQ evidence, model answers, citation performance, literal brand presence, recommendations, and limitations/provenance. No response ID or cloud conversation ID is reused.

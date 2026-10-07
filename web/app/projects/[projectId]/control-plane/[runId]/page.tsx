@@ -275,7 +275,7 @@ export default function ControlPlaneRunPage() {
               </section>
               <section>
                 <div className="card-heading"><h2>Durable progress</h2><span className="pill">{progress?.job_state || "No active job"}</span></div>
-                <RunProgressPanel progress={progress} />
+                <RunProgressPanel progress={progress} active={isRunActive(run)} />
               </section>
             </div>
           </details>
