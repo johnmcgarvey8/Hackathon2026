@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field
 
@@ -73,7 +73,8 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
                mcp_cursor_secret: bytes | None = None,
                human_base_url: str = "http://127.0.0.1:8088",
                default_mcp_agent_principal_id: str | None = None,
-               allow_live_mcp: bool = False) -> FastAPI:
+               allow_live_mcp: bool = False,
+               projects_url: str = "http://127.0.0.1:3000/projects") -> FastAPI:
     if not api_tokens or any(len(token) < 32 or not owner for token, owner in api_tokens.items()):
         raise ValueError("Configure at least one 32-character token mapped to an owner")
     if measurement_mcp_principals and set(api_tokens).intersection(measurement_mcp_principals):
@@ -200,16 +201,6 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         goal_summaries,
     )
 
-    if measurement_policy is not None and measurement_application is not None:
-        app.include_router(create_measurement_router(
-            measurement_repository,
-            measurement_policy,
-            authenticate_operator,
-            measurement_artifacts,
-            mock_runtime.drain if mock_runtime is not None else None,
-            service=measurement_application,
-            default_agent_principal_id=default_agent_principal_id,
-        ))
     app.include_router(create_project_router(
         measurement_repository,
         measurement_policy,
@@ -230,20 +221,16 @@ def create_app(database: Path, api_tokens: dict[str, str], live: LiveWorkflow | 
         None,
     ))
 
+    @app.get("/", include_in_schema=False)
+    def project_workspace() -> RedirectResponse:
+        return RedirectResponse(projects_url, status_code=307)
+
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     def browser_chat() -> HTMLResponse:
         return HTMLResponse(Path(__file__).with_name("chat.html").read_text(encoding="utf-8"), headers={
             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-        })
-
-    @app.get("/measurements", response_class=HTMLResponse, include_in_schema=False)
-    def browser_measurements() -> HTMLResponse:
-        return HTMLResponse(Path(__file__).with_name("measurement.html").read_text(encoding="utf-8"), headers={
-            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
         })
 
     def chat_service(owner: str) -> ConversationAgent:

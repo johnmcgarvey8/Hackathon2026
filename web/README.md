@@ -2,6 +2,8 @@
 
 Frontend-only Next.js App Router implementation of the approved Microsoft GEO Optimizer mockup. The browser calls local Next.js BFF route handlers. Those handlers add the FastAPI bearer token server-side and proxy project-scoped requests to `/api/v2`.
 
+`/projects` is the default product surface. The legacy FastAPI `/measurements` page is intentionally disconnected.
+
 ## Start locally
 
 1. Install dependencies:

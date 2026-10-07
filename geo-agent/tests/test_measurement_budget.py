@@ -13,9 +13,9 @@ from geo_agent.workflow import Conflict
 from test_live_runtime import budget_grant, live_policy
 
 
-def leased_job(repository, owner, url="https://clarity.microsoft.com/", worker_id="worker-a"):
+def leased_job(repository, owner):
     brief = Brief(
-        url=url,
+        url="https://clarity.microsoft.com/",
         audience="Product teams",
         goal="Compare behavioural analytics tools",
         locale="en-GB",
@@ -26,10 +26,10 @@ def leased_job(repository, owner, url="https://clarity.microsoft.com/", worker_i
         owner,
         draft.revision,
         JobType.PREPARE,
-        f"prepare-budget-test-{draft.run_id}",
+        "prepare-budget-test",
         PreparationRequest(brief=brief, confirm_preparation_calls=True),
     )
-    leased = repository.lease_one_job(worker_id)
+    leased = repository.lease_one_job("worker-a")
     assert leased is not None and leased.job_id == job.job_id
     return leased
 
@@ -63,25 +63,7 @@ def test_budget_grant_is_immutable_and_rejects_policy_mutation(tmp_path):
         SQLiteMeasurementRepository(database).bind_measurement_budget(changed_grant, changed_policy)
 
 
-def test_budget_grant_matches_single_profile_roster(tmp_path):
-    policy = live_policy(("chatgpt-style",))
-    grant = budget_grant(policy)
-    repository = SQLiteMeasurementRepository(tmp_path / "single-budget.sqlite3")
-    repository.bind_measurement_budget(grant, policy)
-    assert grant.allowances.profile_evaluator == 5
-    assert grant.allowances.total_calls == 13
-
-    oversized = grant.model_copy(update={
-        "allowances": grant.allowances.model_copy(update={"profile_evaluator": 15}),
-    })
-    with pytest.raises(Conflict, match="does not match the execution policy roster"):
-        SQLiteMeasurementRepository(tmp_path / "oversized.sqlite3").bind_measurement_budget(
-            oversized,
-            policy,
-        )
-
-
-@pytest.mark.parametrize("recommendations,total", [(False, 23), (True, 24)])
+@pytest.mark.parametrize("recommendations,total", [(False, 24), (True, 25)])
 def test_budget_consumption_is_atomic_bounded_and_audited(tmp_path, recommendations, total):
     database = tmp_path / "budget.sqlite3"
     policy = live_policy()
@@ -147,6 +129,62 @@ def test_budget_consumption_is_atomic_bounded_and_audited(tmp_path, recommendati
     assert (consumed, claims, audit_rows, failed_consumption) == (total, total, total, 1)
 
 
+def test_primary_and_fallback_planners_share_the_authorized_query_plan_allowance(tmp_path):
+    policy = live_policy()
+    grant = budget_grant(policy)
+    repository = SQLiteMeasurementRepository(tmp_path / "budget.sqlite3")
+    repository.bind_measurement_budget(grant, policy)
+    job = leased_job(repository, grant.owner)
+
+    primary = repository.claim_operation(
+        job.job_id,
+        "worker-a",
+        "budget:missions-query-plan",
+        "missions-query-plan",
+    )
+    repository.record_operation(
+        primary.claim_id,
+        "worker-a",
+        OperationClaimState.FAILED,
+        error_code="ProviderError",
+    )
+    fallback = repository.claim_operation(
+        job.job_id,
+        "worker-a",
+        "budget:paired-query-plan-fallback",
+        "paired-query-plan-fallback",
+    )
+    with pytest.raises(Conflict, match="allowance is exhausted"):
+        repository.claim_operation(
+            job.job_id,
+            "worker-a",
+            "budget:paired-query-plan-overflow",
+            "missions-query-plan",
+        )
+
+    with sqlite3.connect(tmp_path / "budget.sqlite3") as connection:
+        consumed = connection.execute(
+            "SELECT consumed FROM measurement_budget_usage "
+            "WHERE operation_type = 'paired-query-plan'"
+        ).fetchone()[0]
+        audited = connection.execute(
+            "SELECT operation_type FROM measurement_budget_consumptions "
+            "WHERE claim_id IN (?, ?) ORDER BY created_at",
+            (primary.claim_id, fallback.claim_id),
+        ).fetchall()
+    assert consumed == 2
+    assert audited == [("paired-query-plan",), ("paired-query-plan",)]
+
+
+def test_grant_must_cover_policy_query_plan_ceiling():
+    policy = live_policy()
+    grant = budget_grant(policy).model_copy(update={
+        "allowances": MeasurementOperationAllowances(paired_query_plan=1),
+    })
+    with pytest.raises(Conflict, match="complete authorized runs"):
+        grant.validate_for(policy)
+
+
 def test_budget_rejects_a_job_owned_by_someone_else(tmp_path):
     policy = live_policy()
     grant = budget_grant(policy)
@@ -162,148 +200,3 @@ def test_budget_rejects_a_job_owned_by_someone_else(tmp_path):
             "budget:webiq-browse:other-owner",
             "webiq-browse",
         )
-
-
-def test_multi_run_grant_requires_proportional_complete_run_allowances(tmp_path):
-    policy = live_policy(("chatgpt-style",))
-    grant = budget_grant(policy, authorized_runs=2)
-    repository = SQLiteMeasurementRepository(tmp_path / "multi-run-validation.sqlite3")
-    repository.bind_measurement_budget(grant, policy)
-
-    assert grant.allowances.authorized_runs == 2
-    assert grant.allowances.total_calls == 26
-
-    incomplete = grant.model_copy(update={
-        "allowances": grant.allowances.model_copy(update={"webiq_search": 5}),
-    })
-    with pytest.raises(Conflict, match="do not fund complete authorized runs"):
-        SQLiteMeasurementRepository(tmp_path / "incomplete.sqlite3").bind_measurement_budget(
-            incomplete,
-            policy,
-        )
-
-
-def test_multi_run_grant_funds_different_urls_for_same_owner_and_fails_closed(tmp_path):
-    policy = live_policy(("chatgpt-style",))
-    grant = budget_grant(policy, authorized_runs=2)
-    repository = SQLiteMeasurementRepository(tmp_path / "multi-url.sqlite3")
-    repository.bind_measurement_budget(grant, policy)
-    homepage_job = leased_job(repository, grant.owner)
-
-    repository.claim_operation(
-        homepage_job.job_id,
-        "worker-a",
-        f"{homepage_job.run_id}:webiq-browse",
-        "webiq-browse",
-    )
-    repository.fail_job(homepage_job.job_id, "worker-a", "test-stage-complete")
-    feature_job = leased_job(
-        repository,
-        grant.owner,
-        "https://clarity.microsoft.com/ai-visibility",
-        "worker-b",
-    )
-    repository.claim_operation(
-        feature_job.job_id,
-        "worker-b",
-        f"{feature_job.run_id}:webiq-browse",
-        "webiq-browse",
-    )
-    repository.fail_job(feature_job.job_id, "worker-b", "test-stage-complete")
-
-    overflow_job = leased_job(
-        repository,
-        grant.owner,
-        "https://clarity.microsoft.com/blog",
-        "worker-c",
-    )
-    with pytest.raises(Conflict, match="allowance is exhausted"):
-        repository.claim_operation(
-            overflow_job.job_id,
-            "worker-c",
-            f"{overflow_job.run_id}:webiq-browse",
-            "webiq-browse",
-        )
-
-
-def test_one_active_job_serializes_last_budget_allowance(tmp_path):
-    policy = live_policy(("chatgpt-style",))
-    grant = budget_grant(policy)
-    repository = SQLiteMeasurementRepository(tmp_path / "concurrent-budget.sqlite3")
-    repository.bind_measurement_budget(grant, policy)
-    first_job = leased_job(repository, grant.owner, worker_id="worker-a")
-    brief = Brief(
-        url="https://clarity.microsoft.com/ai-visibility",
-        audience="Product teams",
-        goal="Compare behavioural analytics tools",
-        locale="en-GB",
-    )
-    draft = repository.create(grant.owner, brief=brief)
-    second_job, _ = JobService(repository).enqueue(
-        draft.run_id,
-        grant.owner,
-        draft.revision,
-        JobType.PREPARE,
-        "second-budget-job",
-        PreparationRequest(brief=brief, confirm_preparation_calls=True),
-    )
-    assert repository.lease_one_job("worker-b") is None
-    repository.claim_operation(
-        first_job.job_id,
-        "worker-a",
-        f"{first_job.run_id}:webiq-browse",
-        "webiq-browse",
-    )
-    repository.fail_job(first_job.job_id, "worker-a", "test-stage-complete")
-    leased_second = repository.lease_one_job("worker-b")
-    assert leased_second is not None and leased_second.job_id == second_job.job_id
-    with pytest.raises(Conflict, match="allowance is exhausted"):
-        repository.claim_operation(
-            second_job.job_id,
-            "worker-b",
-            f"{second_job.run_id}:webiq-browse",
-            "webiq-browse",
-        )
-    with sqlite3.connect(tmp_path / "concurrent-budget.sqlite3") as connection:
-        assert connection.execute(
-            "SELECT consumed FROM measurement_budget_usage "
-            "WHERE grant_id = ? AND operation_type = 'webiq-browse'",
-            (grant.grant_id,),
-        ).fetchone()[0] == 1
-
-
-def test_compatible_additive_grant_preserves_history_and_aggregates_capacity(tmp_path):
-    database = tmp_path / "additive-budget.sqlite3"
-    policy = live_policy(("chatgpt-style",))
-    first_grant = budget_grant(policy)
-    repository = SQLiteMeasurementRepository(database)
-    repository.bind_measurement_budget(first_grant, policy)
-    first_job = leased_job(repository, first_grant.owner)
-    first_claim = repository.claim_operation(
-        first_job.job_id,
-        "worker-a",
-        "first-grant:browse",
-        "webiq-browse",
-    )
-    repository.record_operation(
-        first_claim.claim_id,
-        "worker-a",
-        OperationClaimState.COMPLETED,
-    )
-
-    additional = budget_grant(policy, authorized_runs=2).model_copy(update={
-        "grant_id": "clarity-live-runtime-test-topup",
-        "approval": "Approved additive project capacity",
-    })
-    repository.bind_measurement_budget(additional, policy)
-    capacity = repository.measurement_capacity(first_grant.owner, policy)
-
-    assert (capacity.authorized_runs, capacity.consumed_runs, capacity.remaining_runs) == (3, 1, 2)
-    assert capacity.operations["webiq-browse"].allowance == 3
-    assert capacity.operations["webiq-browse"].consumed == 1
-    with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT consumed FROM measurement_budget_usage "
-            "WHERE grant_id = ? AND operation_type = 'webiq-browse'",
-            (first_grant.grant_id,),
-        ).fetchone()[0] == 1

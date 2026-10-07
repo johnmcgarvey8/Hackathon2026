@@ -94,8 +94,10 @@ test("results are grouped by query and provider answers use safe markdown", () =
   const progress = read("components/measurement/run-progress.tsx");
   const styles = read("app/globals.css");
   for (const heading of [
-    "Grounding queries and brand presence",
-    "Inference inputs",
+    "User scenarios",
+    "Moments and missions simulation",
+    "Mission and moment",
+    "Grounding queries",
     "Grounding supplied to the LLM",
     "LLM Provider Survey",
     "Citation performance",
@@ -117,14 +119,19 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /answerBrandPresentation\(brandFinding\.brand\.status, brandName\)/);
   assert.match(results, /\$\{brandName\} mentioned/);
   assert.doesNotMatch(results, />\{answer\.status\}<\/span>/);
+  assert.ok(results.indexOf('id="query-plan"') > results.indexOf('id="user-scenarios"'));
   assert.ok(results.indexOf('id="model-answers"') > results.indexOf('id="query-plan"'));
   assert.match(results, /query\?\.chat_query \|\| "Prompt unavailable"/);
+  assert.match(results, /query\.mission\.replaceAll/);
+  assert.match(results, /query\.moment\.replaceAll/);
   assert.doesNotMatch(results, /providerSurveyLabel|Survey response #/);
   assert.match(results, /surveyModelRoster/);
   assert.match(results, /configured deployment/);
   assert.match(results, /modelByProfile/);
   assert.doesNotMatch(results, />\{answer\.profile_id\}/);
-  assert.match(results, /formatGroundingQueryTitle/);
+  assert.match(results, /<strong>\{query\.intent\}<\/strong>/);
+  assert.match(results, /<strong>\{groundingQuery\}<\/strong>/);
+  assert.doesNotMatch(results, /formatGroundingQueryTitle/);
   assert.match(results, /Grounding citation/);
   assert.match(results, /providerAnswerCitations/);
   assert.match(results, /isMeasurementResultPending/);
@@ -176,7 +183,8 @@ test("measurement detail provides accessible responsive section navigation", () 
   const styles = read("app/globals.css");
   for (const [id, label] of [
     ["brief", "Brief"],
-    ["query-plan", "Grounding & Brand Presence"],
+    ["user-scenarios", "User Scenarios"],
+    ["query-plan", "Grounding Queries"],
     ["model-answers", "LLM Provider Survey"],
     ["citation-performance", "Citation Performance"],
     ["recommendations", "Recommendations"],

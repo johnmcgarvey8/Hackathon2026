@@ -380,8 +380,8 @@ def test_project_bound_policy_derives_scope_from_each_saved_project(tmp_path):
         assert run["brief"]["url"] == brief["url"]
 
         direct = client.post("/api/v2/briefs", json=brief)
-        assert direct.status_code == 409
-        assert direct.json()["detail"] == "This measurement policy requires a project-bound run"
+        assert direct.status_code == 404
+        assert direct.json()["detail"] == "Not Found"
 
         prepared = client.post(
             f"/api/v2/projects/{project['project_id']}/runs/{run['run_id']}/prepare",
@@ -1027,9 +1027,8 @@ def test_project_scoped_run_contract_jobs_and_cancellation(tmp_path):
         assert run["result_availability"]["query_plan"] is False
         assert run["operation_estimates"]["preparation"]["total"] == 3
         assert run["progress"]["job_id"] is None
-        assert client.get(route).json() == client.get(
-            f"/api/v2/runs/{run['run_id']}",
-        ).json()
+        assert client.get(route).status_code == 200
+        assert client.get(f"/api/v2/runs/{run['run_id']}").status_code == 404
         assert client.get(
             f"/api/v2/projects/{second['project_id']}/runs/{run['run_id']}",
         ).status_code == 404

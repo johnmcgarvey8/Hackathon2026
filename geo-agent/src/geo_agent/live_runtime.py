@@ -10,6 +10,7 @@ from geo_agent.measurement_budget import MeasurementBudgetGrant
 from geo_agent.persistence import SQLAlchemyMeasurementRepository
 from geo_agent.preparation import PreparationHandler
 from geo_agent.providers import create_evaluator
+from geo_agent.query_agent import HostedQueryPlanner, QueryAgentSettings
 from geo_agent.recommendations import RecommendationService
 from geo_agent.specialist_foundry import HostedSpecialistAgent
 from geo_agent.specialist_workflow import SpecialistStageHandler
@@ -28,15 +29,19 @@ class LiveMeasurementRuntime:
         webiq_api_key: str,
         preparation_endpoint: str,
         preparation_deployment: str,
+        query_agent_settings: QueryAgentSettings | None = None,
         token_provider: Callable[[], str] = azure_cli_token,
         webiq_transport: httpx.BaseTransport | None = None,
         foundry_transport: httpx.BaseTransport | None = None,
+        query_agent_transport: httpx.BaseTransport | None = None,
         webiq_url_validator: Callable[[str], str] | None = None,
         worker_id: str = "local-live-worker",
         on_job_finished=None,
     ):
         if policy.execution_mode != "live":
             raise ValueError("The live measurement runtime requires a live execution policy")
+        if query_agent_settings is not None and policy.max_query_plan_calls != 2:
+            raise ValueError("Hosted query-agent fallback requires two query-plan calls in the live policy")
         preparation_base_url = model_base_url(preparation_endpoint)
         if any(
             profile.provider == "openai-responses"
@@ -59,20 +64,42 @@ class LiveMeasurementRuntime:
             token_provider=token_provider,
             transport=foundry_transport,
         )
+        query_planner = (
+            HostedQueryPlanner(
+                query_agent_settings,
+                token_provider=token_provider,
+                transport=query_agent_transport or foundry_transport,
+            )
+            if query_agent_settings is not None
+            else preparation
+        )
         evaluators = tuple(
             create_evaluator(profile, token_provider=token_provider, transport=foundry_transport)
             for profile in policy.profiles
         )
         recommendations = RecommendationService(preparation)
+        evaluation_handler = EvaluationHandler(
+            repository,
+            policy,
+            webiq,
+            evaluators,
+            recommendations,
+        )
         self.worker = Worker(repository, worker_id, {
-            JobType.PREPARE: PreparationHandler(policy, webiq, preparation, preparation),
-            JobType.EVALUATE: EvaluationHandler(
-                repository,
+            JobType.PREPARE: PreparationHandler(
                 policy,
                 webiq,
-                evaluators,
-                recommendations,
+                preparation,
+                query_planner,
+                preparation if query_agent_settings is not None else None,
+                query_planner_operation_type=(
+                    "missions-query-plan"
+                    if query_agent_settings is not None
+                    else "paired-query-plan"
+                ),
             ),
+            JobType.EVALUATE: evaluation_handler,
+            JobType.RECOVER_EVALUATORS: evaluation_handler,
             JobType.AGENT_STAGE: SpecialistStageHandler(
                 repository,
                 recommendations,

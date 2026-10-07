@@ -17,6 +17,7 @@ from geo_agent.project_chat import UnavailableProjectAgent
 from geo_agent.project_chat_workflow import ProjectMeasurementChatWorkflow
 from geo_agent.project_measurements import ProjectMeasurementOrchestrator
 from geo_agent.project_foundry import HostedProjectAgent, ProjectFoundrySettings
+from geo_agent.query_agent import QueryAgentSettings
 from geo_agent.specialist_foundry import SpecialistFoundrySettings
 
 
@@ -71,6 +72,12 @@ def create_runtime_from_environment(
     data_dir.mkdir(parents=True, exist_ok=True)
     repository = SQLiteMeasurementRepository(data_dir / "runs.sqlite3")
     try:
+        query_agent_settings = QueryAgentSettings.from_environment(environment)
+        if query_agent_settings is None:
+            raise ValueError(
+                "GEO_QUERY_AGENT_ENDPOINT and GEO_QUERY_AGENT_VERSION are required for the live "
+                "measurement worker"
+            )
         settings = ProjectFoundrySettings.from_environment(environment)
         specialist_settings = SpecialistFoundrySettings.from_environment(environment)
         project_agent = (
@@ -101,6 +108,7 @@ def create_runtime_from_environment(
             webiq_api_key=_required(environment, "WEBIQ_API_KEY"),
             preparation_endpoint=_preparation_endpoint(environment),
             preparation_deployment=_required(environment, "AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+            query_agent_settings=query_agent_settings,
             token_provider=token_provider,
             webiq_transport=webiq_transport,
             foundry_transport=foundry_transport,
@@ -127,7 +135,7 @@ def run_worker(
 def main() -> None:
     load_dotenv(
         Path(__file__).resolve().parents[2] / ".env",
-        override=True,
+        override=False,
         interpolate=False,
     )
     runtime = create_runtime_from_environment(os.environ)

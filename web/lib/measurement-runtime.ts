@@ -106,6 +106,8 @@ export function operationLabel(operation: OperationProgress | string | null): st
     "webiq-browse": "Page retrieval",
     "page-analysis-model": "Page analysis",
     "paired-query-plan": "Query planning",
+    "missions-query-plan": "Mission and moment query generation",
+    "paired-query-plan-fallback": "Fallback query planning",
     "webiq-search": "WebIQ search",
     "profile-evaluator": "Model evaluation",
     "recommendation-model": "Recommendations",

@@ -1,0 +1,23 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "missions-moments-live-demo-2026-10-07-v2-grant",
+  "policy_id": "missions-moments-live-demo-2026-10-07-v2",
+  "policy_hash": "06913476f23e49c746cca27612b9d9af5b2bf829dbd8a4084158d21124dbe357",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 10,
+    "page_analysis_model": 10,
+    "paired_query_plan": 20,
+    "webiq_search": 50,
+    "profile_evaluator": 50,
+    "recommendation_model": 10
+  },
+  "maximum_authorized_cost_usd": "250.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "On 2026-10-07 the user explicitly requested increased budget and relaxed constraints to test the MissionsAndMoments live workflow through Foundry, Web IQ and evaluator LLMs. Version 2 binds the approved same-tenant Foundry endpoint after the initial canary exposed an obsolete cross-tenant endpoint. It authorizes up to ten one-profile runs, including a separately accounted query-planner fallback and one recommendation call per run, with no retries.",
+  "approved_at": "2026-10-07T11:37:48+01:00"
+}

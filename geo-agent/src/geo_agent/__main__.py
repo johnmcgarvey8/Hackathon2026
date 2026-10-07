@@ -23,7 +23,7 @@ from geo_agent.workflow import RunStore
 
 def load_environment(env_file: Path | None = None) -> None:
     path = env_file if env_file is not None else Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(path, override=True, interpolate=False)
+    load_dotenv(path, override=False, interpolate=False)
 
 
 def main() -> None:
@@ -117,6 +117,10 @@ def main() -> None:
         ),
         default_mcp_agent_principal_id=mcp_principal_id,
         allow_live_mcp=os.environ.get("GEO_MCP_ALLOW_LIVE", "").casefold() == "true",
+        projects_url=os.environ.get(
+            "GEO_PROJECTS_URL",
+            "http://127.0.0.1:3000/projects",
+        ),
     )
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEO_PORT", "8088")))
 

@@ -65,6 +65,21 @@ Each explicit submission sends at most one request with at most 512,000 input by
 
 Opening the UI makes no model call. The first sent message checks Azure access. The application does not impose a hosted-chat lifetime allowance; Azure service quota, rate limits, access, and consumption still apply. The Azure identity must have permission to invoke the existing agent. The UI surfaces authentication, quota, missing-agent and interrupted-request errors without automatic replay.
 
+## Hosted query planner for v2 measurement
+
+Configure the separate query-planning agent for the live measurement worker:
+
+```dotenv
+GEO_QUERY_AGENT_ENDPOINT=https://hackathon-2026-geo-optimiser.services.ai.azure.com/api/projects/proj-default/agents/MissionsAndMoments/endpoint/protocols/openai/responses
+GEO_QUERY_AGENT_VERSION=7
+```
+
+The worker derives the project `/openai/v1/responses` route and pins `MissionsAndMoments` version 7 through `agent_reference`. It sends the canonical URL, locale, audience and goal from the approved measurement brief, sets `store: false`, does not reuse cloud response or conversation state, and does not inject caller-defined tools. The pinned agent may use only the tools attached to that version.
+
+The final assistant output must be one raw JSON object matching the existing five-pair `QueryPlan`, including the five required mission-and-moment combinations. The backend rejects duplicate or out-of-order pairs and anchors every returned exact quote to the correct passage in the page snapshot independently saved through Web IQ Browse. A provider, schema or evidence-validation failure is recorded before the direct Foundry planner is claimed as a separate fallback. There are no retries.
+
+The live policy and immutable grant must authorise two query-plan calls. With one evaluator profile, the maximum outer-operation ceiling is 14 for score-only and 15 with recommendations. With three profiles, the corresponding ceilings are 24 and 25. Internal prompt-agent tool activity is controlled by the pinned agent and is not represented as separate local operation claims, so retain a conservative monetary ceiling and review one canary before broader use. Historical one-call grants must not be mutated or reused.
+
 ## Required manual outcome
 
 | Component | Manual action | Value needed by the local app |

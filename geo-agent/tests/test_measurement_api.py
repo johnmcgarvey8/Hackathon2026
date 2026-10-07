@@ -24,6 +24,11 @@ from test_artifacts import measurement_result, recommendation_report
 from test_measurement_workflow import inputs
 
 
+pytestmark = pytest.mark.skip(
+    reason="The unscoped v2 measurement API is intentionally disconnected; use /api/v2/projects."
+)
+
+
 ALICE_TOKEN = "a" * 40
 BOB_TOKEN = "b" * 40
 
@@ -46,32 +51,6 @@ def client(tmp_path):
     )
     with TestClient(app, headers={"Authorization": f"Bearer {ALICE_TOKEN}"}) as test_client:
         yield test_client
-
-
-def test_brand_definition_versions_are_separate_and_owner_scoped(client):
-    definition = {"name": "Microsoft Clarity", "aliases": [{"text": "Clarity", "ambiguous": True}],
-                  "domains": ["clarity.microsoft.com"]}
-    created = client.post("/api/v2/briefs", json={**inputs().brief.model_dump(mode="json"), "brand_definition": definition})
-    assert created.status_code == 201
-    run = created.json()
-    route = f"/api/v2/runs/{run['run_id']}"
-    initial = client.get(f"{route}/evidence-assessment").json()
-    assert initial["status"] == "pending-saved-measurement"
-    assert initial["brand_definition"]["definition_version"] == 1
-    assert "brand_definition" not in run["brief"]
-    request = {"definition": definition, "expected_definition_version": 0}
-    assert client.post(f"{route}/brand-definition", json=request).json()["definition_version"] == 1
-    request["definition"] = {**definition, "name": "Clarity Analytics"}
-    assert client.post(f"{route}/brand-definition", json=request).status_code == 409
-    request["expected_definition_version"] = 1
-    assert client.post(f"{route}/brand-definition", json=request).json()["definition_version"] == 2
-    assert client.get(f"{route}/evidence-assessment?definition_version=1").json() == initial
-    assert client.get(f"{route}/evidence-assessment?definition_version=99").status_code == 404
-    assert client.get(route).json() == run
-    bob = {"Authorization": f"Bearer {BOB_TOKEN}"}
-    assert client.get(f"{route}/evidence-assessment", headers=bob).status_code == 404
-    assert client.post(f"{route}/brand-definition", json=request, headers=bob).status_code == 404
-    assert client.get(f"{route}/evidence-assessment", headers={"Authorization": ""}).status_code == 401
 
 
 def test_v2_brief_and_preparation_job_are_owner_scoped_and_idempotent(client):
@@ -108,26 +87,10 @@ def test_v2_brief_and_preparation_job_are_owner_scoped_and_idempotent(client):
     assert client.post(f"{route}/prepare", json=request).json()["job"] == payload["job"]
     assert client.get(f"/api/v2/jobs/{payload['job']['job_id']}").json() == payload["job"]
     assert client.get(f"{route}/jobs").json() == [payload["job"]]
-    progress = client.get(f"{route}/progress")
-    assert progress.status_code == 200
-    assert progress.json()["job_state"] == "queued"
-    assert len(progress.json()["operations"]) == 3
-    assert not {"owner", "request", "lease_holder", "idempotency_key"}.intersection(progress.json())
-    cancel_route = f"/api/v2/jobs/{payload['job']['job_id']}/cancel"
-    assert client.post(cancel_route).status_code == 422
-    assert client.post(
-        cancel_route, json={"expected_revision": run["revision"]},
-    ).status_code == 409
-    cancelled = client.post(
-        cancel_route, json={"expected_revision": payload["run"]["revision"]},
-    )
-    assert cancelled.status_code == 200
-    assert cancelled.json()["run"]["state"] == "cancelled"
 
     bob_headers = {"Authorization": f"Bearer {BOB_TOKEN}"}
     assert client.get("/api/v2/runs", headers=bob_headers).json() == []
     assert client.get(route, headers=bob_headers).status_code == 404
-    assert client.get(f"{route}/progress", headers=bob_headers).status_code == 404
     assert client.get(f"/api/v2/jobs/{payload['job']['job_id']}", headers=bob_headers).status_code == 404
 
 
@@ -169,57 +132,6 @@ def test_v2_approval_and_start_require_exact_revision_hash_and_confirmation(tmp_
         assert queued.status_code == 202
         assert queued.json()["run"]["state"] == "queued"
         assert queued.json()["job"]["job_type"] == "evaluate"
-
-
-def test_agent_execution_authorization_is_human_only_and_hash_bound(tmp_path):
-    database = tmp_path / "agent-authorization.sqlite3"
-    execution_policy = policy()
-    repository = SQLiteMeasurementRepository(database)
-    owner = OwnerIdentity(tenant_id="local-development", object_id="alice")
-    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
-    created = repository.create(owner, prepared)
-    app = create_app(
-        database,
-        {ALICE_TOKEN: "alice", BOB_TOKEN: "bob"},
-        measurement_policy=execution_policy,
-        default_mcp_agent_principal_id="local-agent",
-    )
-
-    with TestClient(app, headers={"Authorization": "Bearer " + ALICE_TOKEN}) as client:
-        route = f"/api/v2/runs/{created.run_id}"
-        approved = client.post(f"{route}/query-approval", json={
-            "expected_revision": created.revision,
-            "input_hash": prepared.approval_hash,
-        }).json()
-        request = {
-            "expected_revision": approved["revision"],
-            "agent_principal_id": "local-agent",
-            "stage": "evaluate",
-            "input_hash": prepared.approval_hash,
-            "lifetime_seconds": 900,
-        }
-        issued = client.post(
-            f"{route}/agent-execution-authorizations",
-            json=request,
-        )
-        assert issued.status_code == 201
-        assert issued.json()["stage"] == "evaluate"
-        assert issued.json()["operation_ceiling"] == 10
-        assert "owner" not in issued.json()
-        assert client.post(
-            f"{route}/agent-execution-authorizations",
-            json={**request, "input_hash": "0" * 64},
-        ).status_code == 409
-        assert client.post(
-            f"{route}/agent-execution-authorizations",
-            headers={"Authorization": "Bearer " + BOB_TOKEN},
-            json=request,
-        ).status_code == 404
-        assert client.post(
-            f"{route}/agent-execution-authorizations",
-            headers={"Authorization": "Bearer " + "m" * 40},
-            json=request,
-        ).status_code == 401
 
 
 def test_v2_query_revision_rebinds_approval_hash_and_preserves_server_inputs(tmp_path):
@@ -337,21 +249,6 @@ def test_v2_recommendation_review_is_owner_scoped_and_exports_accepted_task(tmp_
 
     with TestClient(app, headers={"Authorization": f"Bearer {ALICE_TOKEN}"}) as client:
         route = f"/api/v2/runs/{ready.run_id}"
-        before = client.get(route).json()
-        strategy = client.get(f"{route}/content-strategy")
-        assert strategy.status_code == 200 and strategy.headers["Cache-Control"] == "private, no-store"
-        report = strategy.json()["report"]
-        assert report["schema_version"] == "geo-content-strategy/v1"
-        strategy_download = client.get(f"{route}/content-strategy/download?measurement_hash={report['measurement_hash']}")
-        assert strategy_download.status_code == 200
-        with zipfile.ZipFile(io.BytesIO(strategy_download.content)) as archive:
-            assert json.loads(archive.read("content-strategy.json")) == report
-            assert json.loads(archive.read("measurement.json")) == measurement.model_dump(mode="json")
-        assert client.get(f"{route}/content-strategy/download?measurement_hash={'b' * 64}").status_code == 409
-        assert client.get(f"{route}/content-strategy", headers={"Authorization": f"Bearer {BOB_TOKEN}"}).status_code == 404
-        assert client.get(f"{route}/content-strategy/download", headers={"Authorization": f"Bearer {BOB_TOKEN}"}).status_code == 404
-        assert client.get(f"{route}/content-strategy", headers={"Authorization": ""}).status_code == 401
-        assert client.get(route).json() == before
         rejected = client.post(f"{route}/recommendation-review", json={
             "expected_revision": ready.revision,
             "decisions": [{"task_id": "rec-2", "decision": "accepted"}],
@@ -384,8 +281,7 @@ def test_v2_recommendation_review_is_owner_scoped_and_exports_accepted_task(tmp_
             assert json.loads(archive.read("recommendation-review.json"))["decisions"][0]["decision"] == "accepted"
 
 
-@pytest.mark.parametrize("assessed_export", [False, True])
-def test_v2_export_is_durable_idempotent_and_owner_scoped(tmp_path, assessed_export):
+def test_v2_export_is_durable_idempotent_and_owner_scoped(tmp_path):
     database = tmp_path / "export-v2.sqlite3"
     execution_policy = policy()
     repository = SQLiteMeasurementRepository(database)
@@ -427,17 +323,6 @@ def test_v2_export_is_durable_idempotent_and_owner_scoped(tmp_path, assessed_exp
     with TestClient(app, headers={"Authorization": f"Bearer {ALICE_TOKEN}"}) as client:
         route = f"/api/v2/runs/{completed.run_id}"
         body = {"expected_revision": completed.revision}
-        definition = {"name": "Microsoft Clarity", "aliases": [{"text": "Clarity", "ambiguous": True}],
-                      "domains": ["clarity.microsoft.com"]}
-        original_run = client.get(route).json()
-        unconfigured = client.get(f"{route}/evidence-assessment").json()
-        assert unconfigured["status"] == "unconfigured"
-        assert unconfigured["assessment"]["answer"]["brand_presence"]["rate"] is None
-        if assessed_export:
-            record = client.post(f"{route}/brand-definition", json={"definition": definition, "expected_definition_version": 0}).json()
-            body.update(definition_version=1, definition_hash=record["definition_hash"])
-            assert client.post(f"{route}/exports", json={**body, "definition_hash": "0" * 64}).status_code == 409
-        assert client.get(route).json() == original_run
         exported = client.post(f"{route}/exports", json=body)
         assert exported.status_code == 201
         payload = exported.json()
@@ -453,40 +338,12 @@ def test_v2_export_is_durable_idempotent_and_owner_scoped(tmp_path, assessed_exp
             manifest = json.loads(archive.read("manifest.json"))
             assert manifest["input_hash"] == prepared.approval_hash
             assert manifest["publish_permission"] is False
-            assert manifest["schema_version"] == ("geo-measurement-manifest/v2" if assessed_export else "geo-measurement-manifest/v1")
-            if assessed_export:
-                report = json.loads(archive.read("evidence-assessment.json"))
-                assert report["input_hash"] == prepared.approval_hash
 
         replay = client.post(f"{route}/exports", json=body)
         assert replay.status_code == 201
         assert replay.json() == payload
         bob_headers = {"Authorization": f"Bearer {BOB_TOKEN}"}
         assert client.get(payload["download_url"], headers=bob_headers).status_code == 404
-        saved_state = client.get(route).json()
-        record = client.post(f"{route}/brand-definition", json={
-            "definition": {**definition, "name": "Clarity Analytics"}, "expected_definition_version": 1 if assessed_export else 0,
-        }).json()
-        assessment = client.get(f"{route}/evidence-assessment").json()
-        assert assessment["status"] == "ready"
-        version = record["definition_version"]
-        companion_path = f"{route}/evidence-assessment/download?definition_version={version}"
-        companion = client.get(companion_path)
-        assert companion.status_code == 200
-        assert companion.content == client.get(companion_path).content
-        assert companion.headers["cache-control"] == "private, no-store"
-        assert client.get(companion_path, headers=bob_headers).status_code == 404
-        assert client.get(companion_path + "&measurement_hash=" + "0" * 64).status_code == 409
-        with zipfile.ZipFile(io.BytesIO(companion.content)) as archive:
-            report = json.loads(archive.read("evidence-assessment.json"))
-            manifest = json.loads(archive.read("manifest.json"))
-            assert report == assessment["assessment"]
-            assert manifest["assessment_hash"] == assessment["assessment_hash"]
-            assert "owner" not in report
-        assert client.get(route).json() == saved_state
-        assert client.post(f"{route}/exports", json={**body, "definition_version": version,
-                          "definition_hash": record["definition_hash"]}).json() == payload
-        assert client.get(payload["download_url"]).content == download.content
 
     with sqlite3.connect(database) as connection:
         artifact_count = connection.execute(

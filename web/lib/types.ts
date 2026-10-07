@@ -107,6 +107,8 @@ export interface EvidenceQuote {
 export interface QueryPair {
   query_id: string;
   priority: number;
+  mission?: "functional-planning" | "functional-constraint" | "transition-to-discovery" | "emotive-discovery" | "decision-validation" | null;
+  moment?: "before-journey" | "early-journey" | "mid-journey" | "inspiration" | "point-of-decision" | null;
   rationale: string;
   intent: string;
   branded: boolean;

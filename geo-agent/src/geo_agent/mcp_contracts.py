@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from geo_agent.contracts import EvidenceQuote, QueryPair
 from geo_agent.evidence_assessment import BrandAlias, BrandDefinition
@@ -37,6 +37,14 @@ class MCPQueryEvidence(MCPInput):
 class MCPQueryPair(MCPInput):
     query_id: str = Field(pattern=r"^q-[1-5]$")
     priority: int = Field(ge=1, le=5)
+    mission: str = Field(
+        default="",
+        pattern=r"^(|functional-planning|functional-constraint|transition-to-discovery|emotive-discovery|decision-validation)$",
+    )
+    moment: str = Field(
+        default="",
+        pattern=r"^(|before-journey|early-journey|mid-journey|inspiration|point-of-decision)$",
+    )
     rationale: str = Field(min_length=1, max_length=500)
     intent: str = Field(min_length=1, max_length=500)
     branded: bool = False
@@ -44,10 +52,17 @@ class MCPQueryPair(MCPInput):
     grounding_query: str = Field(min_length=1, max_length=500)
     evidence: list[MCPQueryEvidence] = Field(min_length=1, max_length=2)
 
+    @field_validator("mission", "moment", mode="before")
+    @classmethod
+    def normalize_optional_scenario_fields(cls, value):
+        return "" if value is None else value
+
     def to_domain(self) -> QueryPair:
         return QueryPair(
             query_id=self.query_id,
             priority=self.priority,
+            mission=self.mission or None,
+            moment=self.moment or None,
             rationale=self.rationale,
             intent=self.intent,
             branded=self.branded,
