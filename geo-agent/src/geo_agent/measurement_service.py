@@ -81,6 +81,7 @@ class MeasurementApplicationRepository(
     def reserve_export_request(
         self,
         owner: OwnerIdentity,
+        run_id: str,
         idempotency_key: str,
         request_hash: str,
     ) -> Any | None: ...
@@ -1289,6 +1290,7 @@ class MeasurementApplicationService:
         })
         replay = self.repository.reserve_export_request(
             principal.owner,
+            run_id,
             idempotency_key,
             request_hash,
         )

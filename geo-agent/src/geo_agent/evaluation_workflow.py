@@ -59,6 +59,7 @@ class EvaluationHandler:
     def __call__(self, job: WorkflowJob, operations: ClaimedOperationRunner) -> Mutation:
         if job.job_type not in {JobType.EVALUATE, JobType.RECOVER_EVALUATORS}:
             raise Conflict("Evaluation handler requires an evaluation job")
+        recovery = job.job_type == JobType.RECOVER_EVALUATORS
         if (
             job.policy_id is not None
             and (

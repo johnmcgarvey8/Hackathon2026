@@ -35,7 +35,34 @@ measurement = MeasurementResults.model_validate_json(Path("measurement.json").re
 scores = measurement_scores(measurement)
 ```
 
-The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, and interrupted or ambiguous claims are not automatically replayed. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
+The exported input hash is an integrity fingerprint, not evidence that a human approved execution. V2 runs, approvals, jobs, operation claims and artifacts are durable and owner-scoped. Claims are committed before work is dispatched, validated outputs are checkpointed with their claims, and interrupted or ambiguous calls are not automatically replayed. Renewable fenced leases prevent late workers from committing after cancellation or lease loss. A missing recommendation report exports as JSON `null`, allowing saved scores to remain available without inventing recommendations.
+
+Gate C.5 verification: **58 MCP and human-handoff tests passed**. The [MCP tests](tests/test_mcp_server.py) exercise all twenty tools, real stdio and Streamable HTTP clients, separate agent identity, human-issued execution authorization, terminal replay, job-scoped progress, bounded maximal query packets and immutable export reads. The workspace verifier starts the committed `geoAgent` entry, and the end-to-end verifier completes one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 synthetic operations with no external traffic. The browser checks cover the six-stage UI and both agent-authorisation handoffs, including accessibility, reload recovery, safe rendering and ZIP integrity.
+
+The complete repository suite passes **615 tests** with 19 existing Pydantic serialization warnings. The repaired migration graph has one Alembic head, project and MCP persistence coexist, and export reservations are run-scoped so deleting a run cannot permanently consume an unfulfilled idempotency key. See the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
+
+### Grounding and Answer Assessment
+
+Returned evidence is not the same as a citation in the answer. The [evidence assessment](src/geo_agent/evidence_assessment.py) audits saved data without Web IQ, model or judge calls. It keeps the original exact-page score and approved measurement inputs unchanged. The Measure stage separates **Grounding evidence**, **Answer and citations**, and **Source trace**; Export retains a compact summary and a link back to Measure.
+
+New measurement asks only for URL, audience, goal and locale. After Browse, the existing [preparation analysis call](src/geo_agent/foundry.py) uses the saved page content plus model knowledge to infer the primary brand, distinctive/common-word aliases and brand domain. It returns a `PreparationAnalysis` response, preserving the legacy `PageAnalysis` API. Preparation still uses exactly one Browse, one analysis and one query-planning call, with the same 2,000-token limit and no automatic retries. No additional model or Web IQ call is added for brand setup.
+
+The inferred name or an alias must appear in a validated verbatim passage quote. Unsupported or unanchored suggestions are discarded; unclear pages can return no brand. Model knowledge may suggest a canonical name or alias, but cannot expand domain ownership: only the exact browsed hostname is retained when the model identifies a first-party page. For example, `Microsoft Clarity` can have ambiguous alias `Clarity` and domain `clarity.microsoft.com`; `microsoft.com` is never inferred as owned. This is model-generated configuration, not independent verification of names, aliases or ownership.
+
+The [preparation transaction](src/geo_agent/persistence.py) saves the definition with `source: page-analysis` alongside the prepared run, only if no definition already exists. Manual overrides win. The suggestion, rationale and page quotes survive reload in the saved preparation analysis. Query review shows a compact brand summary with optional **Brand details** and **Edit brand definition**; no separate brand-confirmation checkbox is required. If the brand is unidentified, query approval still works and brand metrics remain N/A. Existing runs can use **Set brand** without rerunning paid preparation. Corrections append a definition version without changing approved queries, evaluator prompts, run revisions or budgets. Names/aliases are limited to 120 characters, with up to ten aliases and ten domains. Domain matches require an exact host or dot-bounded subdomain.
+
+| Finding | Denominator and limits |
+| --- | --- |
+| Brand in Web IQ evidence | Successful query packets with a nonambiguous brand text match / successful packets. Titles and retained passages are inspected; domains are a separate signal. Successful empty packets count as absent. Failed/missing searches remain unknown and lower coverage. |
+| Brand in answers | Completed answers with a nonambiguous text match / completed answers. A negative mention still counts as a mention, not an endorsement. |
+| Supplied sources cited | Unique valid model-reported citation IDs / supplied source records across completed answers. Each profile answer is a separate opportunity; profiles do not multiply Web IQ retrieval counts. |
+| Brand-source conversion | Completed answers citing a brand-bearing source / completed answers supplied a brand-bearing source. The source-level branded cited fraction is also retained. Neither metric replaces answer brand presence or exact-page citation. |
+
+Matching is literal, Unicode-normalized and case-insensitive, with word/phrase boundaries. Ambiguous aliases count toward strict brand presence only when the same source also contains a distinctive alias/name or has a configured brand-owned host. Answers require corroboration in the answer itself, not the question or supplied packet. The query's `branded` flag describes the input query and is never used as an output brand finding. No saved definition means N/A brand metrics; valid citation inspection remains available. Matching results depend on the saved definition, including any model-inferred assumptions.
+
+Every source trace is scoped by query ID plus evidence ID. It shows cited, not cited or unknown; duplicate citation IDs count once and unsupported IDs remain explicit validity findings. Optional shared wording means at least six consecutive normalized words occur in both excerpt and answer; overlapping matches shared by multiple sources are marked non-unique. Original text and match spans are retained for safe highlights. No match does not establish lack of support. A citation is not proof of claim support, uncited evidence may influence output, and source-selection motives and claim-level citation alignment were not recorded. More citations are not inherently better. No hidden reasoning or semantic judge result is claimed.
+
+Authenticated owner/Geo.Operator routes in [measurement_api.py](src/geo_agent/measurement_api.py):
 
 Verification: **446 tests passed**, with two existing Starlette/AnyIO dependency deprecation warnings. The [live runtime test](tests/test_live_runtime.py) uses SDK mock transports and the durable budget ledger to exercise one Browse, one analysis, one paired plan, five searches and fifteen answer attempts: 23 charged operations with no external traffic. Focused tests also prove the 24-operation recommendation ceiling, immutable grant binding, owner isolation, failed-call charging, complete human recommendation decisions, sanitized accepted-task exports and the Copilot-style evidence-gap guard. The browser checks cover the five-stage UI against both intercepted responses and the durable mock worker, including explicit provenance, recommendation review, desktop/mobile layout, reload recovery, safe rendering and ZIP integrity.
 
@@ -157,22 +184,98 @@ The live conversation `0d393b56-065a-4162-ae8f-01e027fd83f0` used `get_run_statu
 
 The transport counts every attempted model HTTP request before sending it. SQLite enforces the original allowance plus immutable approved top-ups across restarts and concurrent conversations; each turn allows at most three model requests and six tool calls. Failed turns are retained, not silently replayed. A crash can leave a turn running and requires manual investigation. No automatic recovery or retries are enabled. Twelve turns per conversation and 4,000 characters per user message bound local history; start a new conversation when the turn limit is reached. This milestone explains existing evidence; it does not yet create briefs through chat, edit queries, generate validated recommendation tasks or offer a connected marketer dashboard.
 
+## MCP Agent Flow
+
+The MCP interface covers the six human stages without turning a provider workflow into one long tool call:
+
+The local implementation and the remaining remote/live release work are documented in the [MCP next-gates developer plan](../geo-agent-mcp-next-gates-plan.md). A [Word companion](../geo-agent-mcp-next-gates-plan.docx) is included for stakeholder review. The latest automated VS Code integration result is recorded in the [Gate C.5 evidence](docs/mcp-vscode-integration-baseline.json).
+
+1. The agent calls `geo_create_run`.
+2. A human opens the returned `/measurements?run=...` link and selects **Authorise agent preparation**.
+3. The agent refreshes `geo_get_run`, reads the issued authorization ID, and calls `geo_prepare_run`.
+4. A separately running worker prepares the page and five query pairs. The agent inspects them with `geo_get_preparation` and `geo_get_query_plan`.
+5. The human approves the exact query hash and selects **Authorise agent measurement**.
+6. The agent calls `geo_start_measurement`, polls `geo_get_progress`, and reads bounded results, evidence, assessment and deterministic recommendations.
+7. The agent creates immutable main or companion exports and reads allowlisted text entries. ZIP bytes and storage paths never enter model context.
+
+Exact-query approval and legacy recommendation acceptance remain human-only REST/UI actions. An MCP confirmation, boolean argument or model message cannot create either decision. Agent stage authorizations expire, are consumed atomically, and are bound to one owner, principal, run revision, policy and operation ceiling.
+
+The catalogue contains 20 tools across discovery, run creation, preparation, queries, brand configuration, measurement, progress/results, evidence/assessment, recommendations, cancellation and exports. Default responses are capped at 16 KiB, progress at 8 KiB and explicit details at 64 KiB. Lists use signed owner-bound continuations. Admission permits one active job, 20 globally queued jobs and four queued jobs per owner.
+
+### VS Code Copilot workspace
+
+The workspace commits a secret-free [`geoAgent` stdio configuration](../.vscode/mcp.json). VS Code owns the MCP process; do not start a second `geo_agent.mcp_server` process manually.
+
+From the workspace:
+
+1. Run **Tasks: Run Task > GEO: Bootstrap Python Environment** once.
+2. Reload the VS Code window so it discovers `.vscode\mcp.json`.
+3. Approve the workspace MCP trust prompt, then use **MCP: List Servers** to confirm `geoAgent` is running.
+4. Run **GEO: Verify MCP Workspace Setup**. It starts the configured interpreter, discovers all 20 tools and calls `geo_get_capabilities` against temporary data.
+5. Start **GEO: Start Synthetic MCP Prerequisites**, or press F5 with **GEO: Synthetic MCP Prerequisites**. This starts the human API and polling mock worker on the same mock policy and data directory.
+
+The committed MCP entry uses `measurement-policy.json`, local owner identity and `.data`. It contains no bearer token, Web IQ key or provider credential. Import, initialization and tool discovery do not start a worker or acquire provider credentials.
+
+The full synthetic proof is also reproducible without VS Code UI interaction:
+
+```powershell
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp.py'
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\verify_vscode_mcp_e2e.py'
+```
+
+The end-to-end proof creates a run through the configured stdio server, uses authenticated human API calls for both execution authorisations and exact-query approval, completes five queries across three profiles, verifies all 23 synthetic operations, reads an export manifest and reconnects to the persisted run. It uses temporary data and no live provider calls.
+
+For the interactive Copilot check:
+
+1. Ask Copilot to call `geo_get_capabilities`, then `geo_create_run`.
+2. Open the returned local human URL and select **Authorise agent preparation**.
+3. Ask Copilot to refresh the run, prepare it and inspect the five-query plan.
+4. Approve the exact query hash and select **Authorise agent measurement** in the UI.
+5. Ask Copilot to start measurement, monitor progress, read results and evidence, then create and inspect a measurement export.
+
+The API writes its local human token to `.data\local-api-token`. Keep it local and do not add it to MCP configuration.
+
+| Symptom | Action |
+| --- | --- |
+| Configured interpreter is missing | Run **GEO: Bootstrap Python Environment**. |
+| `geoAgent` is not listed | Reopen the workspace, approve trust, then inspect **MCP: List Servers** and the MCP output log. |
+| Preparation or measurement remains queued | Start **GEO: Run Mock Measurement Worker** and confirm it reports `Mock measurement worker ready`. |
+| The human link does not open | Start **GEO: Run Synthetic Human API** and confirm port 8088 is free. |
+| Synthetic tasks use unexpected settings | Stop the processes and inspect task environment values. Existing environment variables take precedence over `.env`. |
+| Live mode is requested | Stop. The workspace proof must use `measurement-policy.json`; do not set `GEO_MCP_ALLOW_LIVE`. |
+
+### Loopback Streamable HTTP
+
+Set a dedicated `GEO_MCP_AGENT_TOKEN` of at least 32 characters, distinct from `GEO_API_TOKEN`, before starting `python -m geo_agent`. The MCP endpoint is `http://127.0.0.1:8088/mcp`. Agent bearer tokens work only on the MCP mount and are rejected by human-only query approval, recommendation review and execution-authorization routes.
+
+This is a local transport proof, not an internet deployment template. Foundry Agent Service requires a remote HTTPS endpoint. Do not expose this loopback bearer configuration publicly. MCP refuses a live execution policy unless `GEO_MCP_ALLOW_LIVE=true` is also set deliberately. That switch is not remote approval: a remote release still requires OAuth/Entra resource validation, HTTPS/Origin policy, PostgreSQL migrations, durable shared artifacts, hosted credentials and remote performance/isolation validation.
+
+### Performance proof
+
+Run the reproducible local Gate C harness:
+
+```powershell
+& '.\geo-agent\.venv\Scripts\python.exe' '.\geo-agent\tests\measure_mcp_performance.py'
+```
+
+It creates temporary data only, loads 1,000 full three-profile saved runs, holds one job active, opens five clients per transport and measures 200 calls over real stdio and loopback Streamable HTTP. It fails if warm p95 exceeds two seconds, a default response exceeds 16 KiB, or the tool catalogue exceeds 32 KiB. Local results do not certify a remote topology or live provider completion time.
+
 ## Run Locally
 
 From the workspace root, using Python 3.11 or later:
 
 ```powershell
-python -m venv geo-agent/.venv
-& './geo-agent/.venv/Scripts/python.exe' -m pip install -e "./geo-agent[test]"
-& './geo-agent/.venv/Scripts/python.exe' -m pytest geo-agent/tests -q
-& './geo-agent/.venv/Scripts/python.exe' -m geo_agent
+python -m venv '.\geo-agent\.venv'
+& '.\geo-agent\.venv\Scripts\python.exe' -m pip install -e '.\geo-agent[test]'
+& '.\geo-agent\.venv\Scripts\python.exe' -m pytest '.\geo-agent\tests' -q
+& '.\geo-agent\.venv\Scripts\python.exe' -m geo_agent
 ```
 
 Use the configured Python interpreter if `python` resolves to a different installation. Direct dependencies are pinned to versions exercised on Windows ARM64 with Python 3.13, including Agent Framework core 1.17.0 and OpenAI integration 1.14.2. The agent-local virtual environment is configured; a transitive dependency lock remains outstanding. [Agent Framework source](https://github.com/microsoft/agent-framework/tree/main/python).
 
 Open http://127.0.0.1:8088/docs. The server binds only to loopback. On first launch it generates a local API token in `.data/local-api-token`, excluded from Git. Open that file locally and enter its value in the documentation's **Authorize** control. It is a local development credential, not a Foundry or Web IQ key. Do not share the token or expose this server publicly. The local data directory relies on your user account's filesystem permissions; Entra authentication and deployment hardening are not implemented.
 
-Press F5 with **GEO: Local Synthetic Backend** selected to debug the API. This is not yet an Agent Inspector endpoint. Stop the running server first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing environment variables take precedence. Restart the server after changing settings. See [.env.example](.env.example) for the configuration template.
+Press F5 with **GEO: Synthetic MCP Prerequisites** selected to debug the synthetic API and mock worker together. This is not an Agent Inspector endpoint. Stop running instances first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing task and process environment variables take precedence. Restart the processes after changing settings. See [.env.example](.env.example) for the configuration template.
 
 ## Web IQ Configuration
 

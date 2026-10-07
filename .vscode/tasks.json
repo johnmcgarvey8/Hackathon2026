@@ -2,6 +2,109 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "GEO: Bootstrap Python Environment",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "python -m venv '${workspaceFolder}\\geo-agent\\.venv'; & '${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe' -m pip install -e '${workspaceFolder}\\geo-agent[test]'"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "GEO: Check Synthetic API Port",
+      "type": "aitk",
+      "command": "debug-check-prerequisites",
+      "args": { "portOccupancy": [8088] }
+    },
+    {
+      "label": "GEO: Run Synthetic Human API",
+      "type": "process",
+      "command": "${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "geo_agent"],
+      "isBackground": true,
+      "dependsOn": "GEO: Check Synthetic API Port",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "GEO_DATA_DIR": "${workspaceFolder}\\geo-agent\\.data",
+          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}\\geo-agent\\measurement-policy.json",
+          "GEO_HUMAN_BASE_URL": "http://127.0.0.1:8088",
+          "GEO_PORT": "8088"
+        }
+      },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^(.+):(\\d+): (.+)$", "file": 1, "line": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Application startup complete|Uvicorn running on"
+        }
+      }
+    },
+    {
+      "label": "GEO: Run Mock Measurement Worker",
+      "type": "process",
+      "command": "${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "geo_agent.mock_measurement_worker"],
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "GEO_DATA_DIR": "${workspaceFolder}\\geo-agent\\.data",
+          "GEO_MEASUREMENT_POLICY": "${workspaceFolder}\\geo-agent\\measurement-policy.json",
+          "GEO_MEASUREMENT_WORKER_POLL_SECONDS": "0.25"
+        }
+      },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^(.+):(\\d+): (.+)$", "file": 1, "line": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Mock measurement worker ready"
+        }
+      }
+    },
+    {
+      "label": "GEO: Start Synthetic MCP Prerequisites",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "Write-Output 'Synthetic MCP prerequisites ready at http://127.0.0.1:8088/measurements'"
+      ],
+      "dependsOn": [
+        "GEO: Run Synthetic Human API",
+        "GEO: Run Mock Measurement Worker"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "GEO: Verify MCP Workspace Setup",
+      "type": "process",
+      "command": "${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe",
+      "args": ["${workspaceFolder}\\geo-agent\\tests\\verify_vscode_mcp.py"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "GEO: Verify MCP End to End",
+      "type": "process",
+      "command": "${workspaceFolder}\\geo-agent\\.venv\\Scripts\\python.exe",
+      "args": ["${workspaceFolder}\\geo-agent\\tests\\verify_vscode_mcp_e2e.py"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "GEO: Check Chat Ports",
       "type": "aitk",
       "command": "debug-check-prerequisites",

@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 JobHandler = Callable[[WorkflowJob, ClaimedOperationRunner], Mutation]
-logger = logging.getLogger(__name__)
 
 
 class LeaseHeartbeat:
@@ -204,3 +203,17 @@ class Worker:
         except LeaseLost:
             logger.warning("Worker could not complete job %s after lease loss", job.job_id)
             return None
+
+    def _notify_finished(
+        self,
+        result: tuple[WorkflowJob, MeasurementRun],
+    ) -> None:
+        if self.on_job_finished is None:
+            return
+        try:
+            self.on_job_finished(*result)
+        except Exception:
+            logger.exception(
+                "Post-job reconciliation failed for job %s",
+                result[0].job_id,
+            )
