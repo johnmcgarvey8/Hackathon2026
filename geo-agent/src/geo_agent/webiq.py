@@ -51,6 +51,13 @@ class ProviderError(ValueError):
         self.safe_detail = safe_detail
 
 
+def _provider_error(
+    message: str,
+    code: ProviderFailure = ProviderFailure.UNKNOWN,
+) -> ProviderError:
+    return ProviderError(message, code=code, safe_detail=message)
+
+
 def public_url(value: str, resolve: bool = True) -> str:
     try:
         parsed = urlsplit(value)
@@ -74,7 +81,10 @@ def public_url(value: str, resolve: bool = True) -> str:
                 raise ValueError
         return str(url)
     except (ValueError, OSError):
-        raise ProviderError("URL policy rejected the page or its resolved addresses") from None
+        raise _provider_error(
+            "URL policy rejected the page or its resolved addresses",
+            ProviderFailure.REQUEST,
+        ) from None
 
 
 def _same_browse_page(requested: str, returned: str) -> bool:
@@ -115,9 +125,12 @@ class WebIQ:
         url_validator: Callable[[str], str] = public_url,
     ):
         if not api_key.strip():
-            raise ProviderError("Web IQ API key is missing")
+            raise _provider_error("Web IQ API key is missing", ProviderFailure.AUTH)
         if browse_endpoint != BROWSE_ENDPOINT or search_endpoint != SEARCH_ENDPOINT:
-            raise ProviderError("Web IQ endpoints must match the documented HTTPS endpoints")
+            raise _provider_error(
+                "Web IQ endpoints must match the documented HTTPS endpoints",
+                ProviderFailure.REQUEST,
+            )
         self._api_key = api_key
         self._transport = transport
         self._validate_url = url_validator
@@ -127,24 +140,49 @@ class WebIQ:
             with httpx.Client(transport=self._transport, timeout=30, follow_redirects=False, trust_env=False) as client:
                 with client.stream("POST", endpoint, json=body, headers={"x-apikey": self._api_key}) as response:
                     if response.status_code != 200:
-                        raise ProviderError(f"Web IQ returned HTTP {response.status_code}; no automatic retry")
+                        message = f"Web IQ returned HTTP {response.status_code}; no automatic retry"
+                        code = (
+                            ProviderFailure.AUTH
+                            if response.status_code in {401, 403}
+                            else ProviderFailure.RATE_LIMIT
+                            if response.status_code == 429
+                            else ProviderFailure.REQUEST
+                        )
+                        raise _provider_error(message, code)
                     if response.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
-                        raise ProviderError("Web IQ returned an unsupported content type")
+                        raise _provider_error(
+                            "Web IQ returned an unsupported content type",
+                            ProviderFailure.REQUEST,
+                        )
                     chunks = bytearray()
                     for chunk in response.iter_bytes():
                         chunks.extend(chunk)
                         if len(chunks) > 250_000:
-                            raise ProviderError("Web IQ response exceeds the size limit")
+                            raise _provider_error(
+                                "Web IQ response exceeds the size limit",
+                                ProviderFailure.REQUEST,
+                            )
             payload = json.loads(chunks)
             if not isinstance(payload, dict):
                 raise ValueError
             return payload
-        except (httpx.HTTPError, json.JSONDecodeError, UnicodeDecodeError):
-            raise ProviderError("Web IQ transport or JSON response failure") from None
+        except httpx.HTTPError:
+            raise _provider_error(
+                "Web IQ transport failure",
+                ProviderFailure.CONNECTION,
+            ) from None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise _provider_error(
+                "Web IQ JSON response failure",
+                ProviderFailure.REQUEST,
+            ) from None
         except ValueError as error:
             if isinstance(error, ProviderError):
                 raise
-            raise ProviderError("Web IQ response is not an object") from None
+            raise _provider_error(
+                "Web IQ response is not an object",
+                ProviderFailure.REQUEST,
+            ) from None
 
     def browse(self, brief: Brief) -> PageSnapshot:
         target = self._validate_url(str(brief.url))
@@ -158,11 +196,17 @@ class WebIQ:
         try:
             returned_url = public_url(payload["url"], resolve=False)
             if not _same_browse_page(target, returned_url):
-                raise ProviderError("Browse returned a different page; redirect equivalence is unverified")
+                raise _provider_error(
+                    "Browse returned a different page; redirect equivalence is unverified",
+                    ProviderFailure.REQUEST,
+                )
             if not isinstance(payload.get("content"), str) or not payload["content"].strip():
                 raise ValueError
             if payload.get("isAdult") is True:
-                raise ProviderError("Browse content was blocked by policy")
+                raise _provider_error(
+                    "Browse content was blocked by policy",
+                    ProviderFailure.BLOCKED,
+                )
             return PageSnapshot(
                 url=target, title=payload.get("title", ""), content=payload["content"][:10000],
                 provenance=Provenance.LIVE, provider_trace_id=payload.get("traceId"),
@@ -172,7 +216,10 @@ class WebIQ:
         except (KeyError, TypeError, ValidationError, ValueError) as error:
             if isinstance(error, ProviderError):
                 raise
-            raise ProviderError("Browse response lacks usable page evidence") from None
+            raise _provider_error(
+                "Browse response lacks usable page evidence",
+                ProviderFailure.REQUEST,
+            ) from None
 
     def search(self, query: Query, locale: str) -> tuple[Source, ...]:
         language, region = locale.split("-")
@@ -187,7 +234,10 @@ class WebIQ:
             sources = []
             for position, item in enumerate(results, start=1):
                 if item.get("isAdult") is True:
-                    raise ProviderError("Search content was blocked by policy")
+                    raise _provider_error(
+                        "Search content was blocked by policy",
+                        ProviderFailure.BLOCKED,
+                    )
                 url = public_url(item["url"], resolve=False)
                 sources.append(Source(
                     evidence_id=f"{query.query_id}-source-{position}", url=url,
@@ -200,4 +250,7 @@ class WebIQ:
         except (KeyError, TypeError, AttributeError, ValidationError, ValueError) as error:
             if isinstance(error, ProviderError):
                 raise
-            raise ProviderError("Search response lacks usable source evidence") from None
+            raise _provider_error(
+                "Search response lacks usable source evidence",
+                ProviderFailure.REQUEST,
+            ) from None

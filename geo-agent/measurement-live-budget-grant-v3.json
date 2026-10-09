@@ -1,0 +1,23 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "project-live-measurement-2026-10-08-v3-grant",
+  "policy_id": "project-live-measurement-2026-10-08-v3",
+  "policy_hash": "241a24cd869cd5ddbbf3e64e827b70ad1a5fc3828ea134b7f0c9ceebb1caef27",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 10,
+    "page_analysis_model": 10,
+    "paired_query_plan": 20,
+    "webiq_search": 50,
+    "profile_evaluator": 50,
+    "recommendation_model": 10
+  },
+  "maximum_authorized_cost_usd": "250.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "On October 8, 2026 the user explicitly authorized project-bound query planning for the domains associated with each project and directed that the required query-planning allowance be set to two calls per run. This grant retains the existing ten-run, one-profile live measurement authorization, includes separately accounted query-planner fallback capacity, and permits no automatic retries.",
+  "approved_at": "2026-10-08T14:04:31+01:00"
+}

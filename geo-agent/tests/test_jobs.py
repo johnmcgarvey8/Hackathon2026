@@ -22,6 +22,7 @@ from geo_agent.measurement_workflow import (
 from geo_agent.persistence import SQLiteMeasurementRepository
 from geo_agent.worker import Worker
 from geo_agent.workflow import Conflict, NotFound
+from geo_agent.webiq import ProviderError, ProviderFailure
 from test_evaluation import measurement_fixture
 from test_measurement_workflow import inputs
 from test_evaluation_workflow import three_profiles
@@ -617,3 +618,34 @@ def test_worker_failure_is_sanitized_and_never_requeued(repository, owner):
         ).scalar_one()
     assert "RuntimeError" in payload
     assert "secret provider detail" not in payload
+
+
+def test_provider_failure_retains_only_safe_detail(repository, owner):
+    draft = repository.create(owner)
+    job, _ = JobService(repository).enqueue(
+        draft.run_id, owner, draft.revision, JobType.PREPARE, "prepare-safe-detail", {}
+    )
+
+    def handler(_job, operations: ClaimedOperationRunner):
+        operations.call(
+            "prepare-safe-detail:browse",
+            "webiq-browse",
+            lambda: (_ for _ in ()).throw(
+                ProviderError(
+                    "secret provider body",
+                    code=ProviderFailure.AUTH,
+                    safe_detail="Web IQ returned HTTP 403; no automatic retry",
+                )
+            ),
+        )
+
+    Worker(repository, "worker-a", {JobType.PREPARE: handler}).run_once()
+
+    with repository.engine.connect() as connection:
+        payload = connection.exec_driver_sql(
+            "SELECT payload FROM operation_claims "
+            "WHERE operation_key = 'prepare-safe-detail:browse'"
+        ).scalar_one()
+    assert "provider-authentication-failed" in payload
+    assert "Web IQ returned HTTP 403; no automatic retry" in payload
+    assert "secret provider body" not in payload

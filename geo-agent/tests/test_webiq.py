@@ -5,7 +5,14 @@ import httpx
 import pytest
 
 from geo_agent.contracts import Brief, Query
-from geo_agent.webiq import BROWSE_ENDPOINT, SEARCH_ENDPOINT, ProviderError, WebIQ, public_url
+from geo_agent.webiq import (
+    BROWSE_ENDPOINT,
+    SEARCH_ENDPOINT,
+    ProviderError,
+    ProviderFailure,
+    WebIQ,
+    public_url,
+)
 
 
 def brief():
@@ -95,8 +102,20 @@ def test_search_uses_bounded_passages_and_trace():
     assert sources[0].provider_trace_id == "trace-search"
 
 
-@pytest.mark.parametrize("status", [202, 301, 401, 403, 404, 429, 430, 500])
-def test_errors_are_not_retried_or_exposed(status):
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        (202, ProviderFailure.REQUEST),
+        (301, ProviderFailure.REQUEST),
+        (401, ProviderFailure.AUTH),
+        (403, ProviderFailure.AUTH),
+        (404, ProviderFailure.REQUEST),
+        (429, ProviderFailure.RATE_LIMIT),
+        (430, ProviderFailure.REQUEST),
+        (500, ProviderFailure.REQUEST),
+    ],
+)
+def test_errors_are_not_retried_or_exposed(status, code):
     calls = []
     def handler(request):
         calls.append(request)
@@ -105,6 +124,8 @@ def test_errors_are_not_retried_or_exposed(status):
     with pytest.raises(ProviderError, match=f"HTTP {status}") as caught:
         provider.browse(brief())
     assert len(calls) == 1
+    assert caught.value.code == code
+    assert caught.value.safe_detail == f"Web IQ returned HTTP {status}; no automatic retry"
     assert "dummy-secret" not in str(caught.value)
 
 
