@@ -65,20 +65,143 @@ Each explicit submission sends at most one request with at most 512,000 input by
 
 Opening the UI makes no model call. The first sent message checks Azure access. The application does not impose a hosted-chat lifetime allowance; Azure service quota, rate limits, access, and consumption still apply. The Azure identity must have permission to invoke the existing agent. The UI surfaces authentication, quota, missing-agent and interrupted-request errors without automatic replay.
 
-## Hosted query planner for v2 measurement
+## MomentsAndMissions query-planning agent
 
-Configure the separate query-planning agent for the live measurement worker:
+**BLUF:** The measurement worker requires a pinned Foundry prompt agent that can call
+WebIQ Browse without interactive approval and return one raw, schema-valid JSON query
+plan. A pending MCP approval message, Markdown wrapper or extra assistant text causes
+query planning to fail.
 
-```dotenv
-GEO_QUERY_AGENT_ENDPOINT=https://hackathon-2026-geo-optimiser.services.ai.azure.com/api/projects/proj-default/agents/MissionsAndMoments/endpoint/protocols/openai/responses
-GEO_QUERY_AGENT_VERSION=7
+### Create the agent
+
+1. In the same Microsoft Foundry project used by the local developer identity, create
+   a prompt agent named `MomentsAndMissions`.
+2. Select an approved chat model that supports MCP tool calls and structured JSON
+   generation. Keep the response within the application's 2,000-output-token limit.
+3. Copy the complete contents of
+   [`moments-and-missions-agent-instructions.txt`](moments-and-missions-agent-instructions.txt)
+   into the agent instructions.
+4. Add the read-only WebIQ MCP server and expose the Browse tool. Search is not
+   required by this agent.
+5. Configure Browse so it does not require interactive user approval. Depending on
+   the portal version, this setting may be labelled **Always approve**,
+   **Auto-approve**, or **Do not require approval**.
+6. Do not attach output citations or annotations. The overall response and assistant
+   message must be completed, with exactly one `output_text` block.
+7. Publish an immutable agent version and record its numeric version.
+
+The local runtime cannot participate in Foundry's interactive MCP approval flow. If
+Foundry returns `MCP tool call mcp_WebIQ.browse is pending user approval`, the
+application receives that text instead of a query plan and records
+`model-output-invalid`.
+
+### WebIQ Browse configuration
+
+The agent should make one Browse call for the supplied canonical URL with settings
+that match the application's independently saved page snapshot:
+
+| Setting | Required value |
+| --- | --- |
+| `contentFormat` | `markdown` |
+| `maxLength` | `10000` |
+| `liveCrawl` | `none` |
+| `includeWebLinks` | `false` |
+| `includeImageLinks` | `false`, when available |
+| `renderDynamicPages` | `false` |
+| `language` | Language parsed from the supplied locale |
+| `region` | Region parsed from the supplied locale |
+
+Using different crawl or rendering settings can produce quotes that do not match the
+snapshot saved by the application. The backend independently anchors every returned
+quote and rejects a query that has no matching evidence.
+
+### Input and output contract
+
+The worker sends one JSON input object:
+
+```json
+{
+  "url": "https://www.example.com/page/",
+  "locale": "en-GB",
+  "audience": "People researching the category",
+  "goal": "Check citation and content gaps across common user scenarios."
+}
 ```
 
-The worker derives the project `/openai/v1/responses` route and pins `MissionsAndMoments` version 7 through `agent_reference`. It sends the canonical URL, locale, audience and goal from the approved measurement brief, sets `store: false`, does not reuse cloud response or conversation state, and does not inject caller-defined tools. The pinned agent may use only the tools attached to that version.
+The agent must return one raw JSON object with a `queries` array of exactly five
+items. Do not include Markdown fences, introductory text, trailing commentary,
+annotations or multiple text blocks.
 
-The final assistant output must be one raw JSON object matching the existing five-pair `QueryPlan`, including the five required mission-and-moment combinations. The backend rejects duplicate or out-of-order pairs and anchors every returned exact quote to the correct passage in the page snapshot independently saved through Web IQ Browse. A provider, schema or evidence-validation failure is recorded before the direct Foundry planner is claimed as a separate fallback. There are no retries.
+Each query requires:
 
-The live policy and immutable grant must authorise two query-plan calls. With one evaluator profile, the maximum outer-operation ceiling is 14 for score-only and 15 with recommendations. With three profiles, the corresponding ceilings are 24 and 25. Internal prompt-agent tool activity is controlled by the pinned agent and is not represented as separate local operation claims, so retain a conservative monetary ceiling and review one canary before broader use. Historical one-call grants must not be mutated or reused.
+| Field | Constraint |
+| --- | --- |
+| `query_id` | `q-1` through `q-5` |
+| `priority` | Unique integer `1` through `5` |
+| `mission`, `moment` | Exact pair shown below |
+| `intent`, `rationale` | Non-empty, maximum 500 characters |
+| `branded` | Boolean |
+| `chat_query` | Unique natural-language user question, maximum 500 characters |
+| `grounding_query` | Unique search query for the same intent, maximum 500 characters |
+| `evidence` | One or two exact page quotes |
+
+| Query | Mission | Moment |
+| --- | --- | --- |
+| `q-1` | `functional-planning` | `before-journey` |
+| `q-2` | `functional-constraint` | `early-journey` |
+| `q-3` | `transition-to-discovery` | `mid-journey` |
+| `q-4` | `emotive-discovery` | `inspiration` |
+| `q-5` | `decision-validation` | `point-of-decision` |
+
+Each evidence item contains only `evidence_id` and `quote`. Use `page-1` through
+`page-10` and copy exact text from the Browse result. The backend can relocate a
+valid quote to the correct passage, but it cannot accept paraphrased or invented
+evidence.
+
+### Connect the published version
+
+Add the stable Responses endpoint and published numeric version to
+`geo-agent\.env`:
+
+```dotenv
+GEO_QUERY_AGENT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>/agents/MomentsAndMissions/endpoint/protocols/openai/responses
+GEO_QUERY_AGENT_VERSION=<published-version>
+```
+
+The endpoint contains the agent name, so no separate query-agent name variable is
+required. The worker derives the project `/openai/v1/responses` route and sends an
+explicit `agent_reference` containing the parsed name and configured version. It
+sets `store: false`, does not reuse cloud conversation state and does not add
+caller-defined tools.
+
+Restart the measurement worker after changing either variable. In local development,
+ensure an inherited `WEBIQ_API_KEY` is not shadowing the value in `.env`.
+
+### Validate before a measurement run
+
+Test the published agent in Foundry with one representative input and confirm:
+
+1. WebIQ Browse executes immediately, without a pending approval prompt.
+2. The run completes rather than pausing after the MCP call.
+3. The final output contains only one JSON object.
+4. The object has five queries and the exact mission-and-moment combinations.
+5. Every query has one or two exact quotes from the browsed page.
+6. The published version in Foundry matches `GEO_QUERY_AGENT_VERSION`.
+
+| Failure | Likely cause |
+| --- | --- |
+| `provider-request-failed` | Endpoint, agent name or pinned version does not exist or is inaccessible |
+| `model-output-invalid` | Pending tool approval, prose or fences around JSON, annotations, multiple text blocks, missing fields or invalid mission/moment values |
+| `query-plan-order-invalid` | Query IDs or priorities are missing, duplicated or out of order |
+| `query-plan-evidence-invalid` | Returned quotes do not exactly match the application's saved WebIQ snapshot |
+
+The live policy and immutable grant must authorise two query-plan calls. The first
+claim invokes the hosted agent; the second is the separately recorded direct-model
+fallback. There are no automatic retries. With one evaluator profile, maximum outer
+operation ceilings are 14 for score-only and 15 with recommendations. With three
+profiles, the corresponding ceilings are 24 and 25. Internal prompt-agent MCP
+activity is controlled by the published agent and is not represented as separate
+local operation claims.
 
 ## Required manual outcome
 

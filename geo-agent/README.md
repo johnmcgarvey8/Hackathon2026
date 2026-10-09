@@ -9,7 +9,7 @@ The recommended release is the Next.js project workspace at `http://127.0.0.1:30
 | Component | Implemented and offline-tested |
 | --- | --- |
 | [Versioned contracts](src/geo_agent/contracts.py) | Five priority-ranked chat/search query pairs, exact page references, three separately configurable simulation profiles, immutable input fingerprints and independently retained retrieval packets. V1 serialisation and approval hashes remain unchanged. |
-| [Paired planner](src/geo_agent/query_agent.py) | Pinned MissionsAndMoments version 7 receives URL, locale, audience and goal and returns the five-pair mission-and-moment `QueryPlan`; the saved snapshot remains authoritative for quote validation and passage IDs. `Foundry.propose_pairs` is a visible, separately budgeted fallback. |
+| [Paired planner](src/geo_agent/query_agent.py) | A pinned MomentsAndMissions agent receives URL, locale, audience and goal and returns the five-pair mission-and-moment `QueryPlan`; the saved snapshot remains authoritative for quote validation and passage IDs. `Foundry.propose_pairs` is a visible, separately budgeted fallback. |
 | [Evaluator providers](src/geo_agent/providers.py) | OpenAI Responses for ChatGPT-style and Copilot-style profiles; Anthropic Messages via `anthropic==0.125.0` for Claude-backed answers. Canonical endpoint validation, approved prompt guards, bounded evidence, 2,000 output tokens and no automatic retries. |
 | [Measurement scoring](src/geo_agent/evaluation.py) | Exact-page citation rate, errors and coverage; separate Web IQ presence/position metrics; same-domain, unsupported-citation and raw-mention details. Model comparisons use only the common completed query set. |
 | [Recommendations](src/geo_agent/recommendations.py) | Up to two saved alternatives per query and three draft hypotheses. Exact quotes resolve within the correct query. Reports bind to both inputs and complete measurement data. No candidates means no recommendation model call. |
@@ -88,7 +88,7 @@ Navigating to the FastAPI root redirects to `/projects`. `/measurements` is not 
 
 ## Run the Live Measurement Worker
 
-The v2 API remains enqueue-only in live mode. A separate worker processes those jobs only when all live settings are present and an immutable grant matches the policy ID, complete policy hash and run owner. One run uses one Browse, one page-analysis call, one MissionsAndMoments request, an optional separately claimed direct-model fallback, five Searches, five evaluator calls per configured profile, and an optional recommendation call. Maximum score-only ceilings are **14 outer operations** for one profile or **24** for three profiles; recommendations add one. Claims consume aggregate grant allowance before dispatch; failed and interrupted calls are not refunded or retried.
+The v2 API remains enqueue-only in live mode. A separate worker processes those jobs only when all live settings are present and an immutable grant matches the policy ID, complete policy hash and run owner. One run uses one Browse, one page-analysis call, one MomentsAndMissions request, an optional separately claimed direct-model fallback, five Searches, five evaluator calls per configured profile, and an optional recommendation call. Maximum score-only ceilings are **14 outer operations** for one profile or **24** for three profiles; recommendations add one. Claims consume aggregate grant allowance before dispatch; failed and interrupted calls are not refunded or retried.
 
 The checked-in `measurement-live-demo-policy-v2.json` and matching grant are local demonstration controls for Clarity: one evaluator profile, up to ten runs, two planner calls per run and a USD 250 authorization ceiling. Start the API and worker with the same `GEO_DATA_DIR` and policy. Set the worker-only grant separately:
 
@@ -98,12 +98,17 @@ $env:GEO_MEASUREMENT_BUDGET_GRANT = 'C:\approved\clarity-live-budget-grant.json'
 $env:GEO_DATA_DIR = (Resolve-Path './geo-agent/.data').Path
 $env:AZURE_OPENAI_ENDPOINT = 'https://<resource>.services.ai.azure.com/openai/v1/'
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME = '<approved-preparation-deployment>'
-$env:GEO_QUERY_AGENT_ENDPOINT = 'https://hackathon-2026-geo-optimiser.services.ai.azure.com/api/projects/proj-default/agents/MissionsAndMoments/endpoint/protocols/openai/responses'
-$env:GEO_QUERY_AGENT_VERSION = '7'
+$env:GEO_QUERY_AGENT_ENDPOINT = 'https://<resource>.services.ai.azure.com/api/projects/<project>/agents/MomentsAndMissions/endpoint/protocols/openai/responses'
+$env:GEO_QUERY_AGENT_VERSION = '<published-version>'
 & './geo-agent/.venv/Scripts/python.exe' -m geo_agent.measurement_worker
 ```
 
 `WEBIQ_API_KEY` must already be available in `geo-agent/.env` or the process environment. The live policy and matching immutable grant must allow two query-plan calls; older one-call grants cannot fund the fallback. The worker does not print credentials, probe providers or acquire a Foundry token at startup. Once running, it immediately leases queued jobs, so do not launch it before approving the policy, grant and pending workload.
+
+Create and validate the hosted query planner before starting live measurement. See
+[Manual Microsoft Foundry Setup](FOUNDRY-MANUAL-SETUP.md#momentsandmissions-query-planning-agent)
+and the copy-paste
+[MomentsAndMissions agent instructions](moments-and-missions-agent-instructions.txt).
 
 ## Analyse a Public Page
 
@@ -296,7 +301,7 @@ Loading a key alone does not enable live execution: the launcher requires an exp
 
 Set `AZURE_OPENAI_ENDPOINT` to the resource's HTTPS `/openai/v1/` base URL and `AZURE_AI_MODEL_DEPLOYMENT_NAME` to your deployment. A direct `/openai/v1/responses` endpoint is also accepted and normalised. The existing `AZURE_AI_PROJECT_ENDPOINT` setting is accepted as a compatibility fallback **only when it contains one of those direct OpenAI URLs**; an actual `/api/projects/...` endpoint is not accepted by this adapter.
 
-Sign in locally with `az login` if needed, selecting the tenant/account with inference access. The adapter obtains an in-memory token for `https://ai.azure.com/.default`. Current project/v2 query generation calls the project Responses route with an explicit `MissionsAndMoments` version 7 `agent_reference`, sends URL, locale, audience and goal, uses `store=False`, and supplies no caller-defined tools. The returned JSON must match the full `QueryPlan`; every exact quote is anchored to the correct passage in the separately saved Web IQ snapshot. A provider, schema or evidence-validation failure records a failed primary claim before the direct Foundry planner is called as a separate fallback; neither call is retried. Legacy `/briefs` and optional page-analysis evaluation retain their existing direct planner. No model receives the local approval credential. See the [Azure OpenAI Responses documentation](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses).
+Sign in locally with `az login` if needed, selecting the tenant/account with inference access. The adapter obtains an in-memory token for `https://ai.azure.com/.default`. Current project/v2 query generation calls the project Responses route with an explicit pinned `agent_reference`, sends URL, locale, audience and goal, uses `store=False`, and supplies no caller-defined tools. The published MomentsAndMissions agent must have a read-only WebIQ Browse MCP tool configured without interactive approval. The returned JSON must match the full `QueryPlan`; every exact quote is anchored to the correct passage in the separately saved Web IQ snapshot. A provider, schema or evidence-validation failure records a failed primary claim before the direct Foundry planner is called as a separate fallback; neither call is retried. Legacy `/briefs` and optional page-analysis evaluation retain their existing direct planner. No model receives the local approval credential. See [Manual Microsoft Foundry Setup](FOUNDRY-MANUAL-SETUP.md#momentsandmissions-query-planning-agent) and the [Azure OpenAI Responses documentation](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/responses).
 
 From the workspace root, opt in explicitly on a free port:
 
@@ -364,8 +369,8 @@ Place service secrets in the local [.env](.env), environment variables or an app
 
 ## Next Build Increment
 
-The owner has authorised up to **$250** for local live demonstration under `measurement-live-demo-budget-grant-v2.json`. The aggregate allowance covers up to ten one-profile Clarity runs: Browse, page analysis, MissionsAndMoments version 7, separately accounted fallback, five Searches, five evaluator calls and one optional recommendation call per run. There are no automatic retries. The ledger enforces outer operation counts, not real-time dollar spend or the prompt agent's internal MCP calls; the USD amount remains an authorization boundary rather than a metered runtime cutoff.
+The historical v2 demo grant authorised up to **$250** for local live demonstration under `measurement-live-demo-budget-grant-v2.json`. Its aggregate allowance covered up to ten one-profile Clarity runs using the retired MissionsAndMoments version 7 agent, separately accounted fallback, five Searches, five evaluator calls and one optional recommendation call per run. There were no automatic retries. The ledger enforced outer operation counts, not real-time dollar spend or the prompt agent's internal MCP calls; the USD amount was an authorization boundary rather than a metered runtime cutoff.
 
-The 7 October canary confirmed one Browse, Foundry page analysis, MissionsAndMoments generation, five Web IQ searches and five `gpt-5.6-sol` evaluator calls with durable operation metadata. The optional recommendation call failed in the saved run; a separate diagnostic recommendation call completed with three tasks, so recommendation-output variability remains a demo limitation. Add Claude and Copilot profiles only after their deployments and additional aggregate allowance are approved.
+The 7 October canary confirmed one Browse, Foundry page analysis, retired MissionsAndMoments generation, five Web IQ searches and five `gpt-5.6-sol` evaluator calls with durable operation metadata. The optional recommendation call failed in the saved run; a separate diagnostic recommendation call completed with three tasks, so recommendation-output variability remains a demo limitation. Add Claude and Copilot profiles only after their deployments and additional aggregate allowance are approved.
 
 After the local canary, prepare the connected v2 workflow for shared hosting: add Entra authentication and CSRF protection, move persistence to PostgreSQL, deploy the worker separately and complete colleague-isolation tests. Keep the current saved-page analysis and single-profile citation workflow under their existing allowances. Chat remains bound to the original run. All live calls require sufficient approved capacity and exact query approval. Canonical equivalence, CMS publishing and Work IQ remain separate later work, with their own review and approvals.
