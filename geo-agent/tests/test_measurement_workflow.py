@@ -1,9 +1,11 @@
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from pydantic import ValidationError
 
 from geo_agent.contracts import (
     Brief,
@@ -84,6 +86,70 @@ def test_repository_roundtrips_without_touching_legacy_runs(tmp_path, owner):
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )}
     assert {"runs", "measurement_runs", "run_events", "approvals"} <= tables
+
+
+def test_legacy_queries_preserve_saved_approval_hash_on_reload(tmp_path, owner):
+    database = tmp_path / "runs.sqlite3"
+    repository = SQLiteMeasurementRepository(database)
+    created = repository.create(owner, inputs())
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, created.inputs.approval_hash,
+    )
+    payload = json.loads(approved.model_dump_json())
+    for query in payload["inputs"]["query_plan"]["queries"]:
+        query.pop("mission", None)
+        query.pop("moment", None)
+    legacy_hash = digest(payload["inputs"])
+    payload["approval"]["input_hash"] = legacy_hash
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE measurement_runs SET payload = ? WHERE run_id = ?",
+            (json.dumps(payload), approved.run_id),
+        )
+
+    restored = repository.get(approved.run_id, owner)
+
+    assert restored.inputs.approval_hash == legacy_hash
+    assert restored.approval.input_hash == legacy_hash
+    assert restored.inputs.model_dump(mode="json") == payload["inputs"]
+    assert json.loads(restored.model_dump_json())["inputs"] == payload["inputs"]
+    assert all(query.mission is None and query.moment is None
+               for query in restored.inputs.query_plan.queries)
+
+    changed = restored.inputs.model_copy(update={
+        "brief": restored.inputs.brief.model_copy(update={"goal": "A different goal"}),
+    })
+    with pytest.raises(ValidationError, match="approval does not match"):
+        type(restored).model_validate({
+            **restored.model_dump(mode="json"),
+            "brief": changed.brief.model_dump(mode="json"),
+            "inputs": changed.model_dump(mode="json"),
+        })
+
+
+def test_explicit_null_query_metadata_preserves_its_approval_hash():
+    payload = inputs().model_dump(mode="json")
+    for query in payload["query_plan"]["queries"]:
+        query["mission"] = None
+        query["moment"] = None
+
+    restored = MeasurementInputs.model_validate(payload)
+
+    assert restored.model_dump(mode="json") == payload
+    assert restored.approval_hash == digest(payload)
+
+
+def test_populated_query_metadata_remains_serialised_and_hash_bound():
+    prepared = inputs()
+    query = prepared.query_plan.queries[0]
+    updated = query.model_copy(update={
+        "mission": "functional-planning",
+        "moment": "before-journey",
+    })
+
+    assert updated.model_dump(mode="json")["mission"] == "functional-planning"
+    assert json.loads(updated.model_dump_json())["moment"] == "before-journey"
+    assert digest(updated.model_dump(mode="json")) != digest(query.model_dump(mode="json"))
 
 
 def test_owner_scope_and_stale_revision_are_enforced(tmp_path, owner):

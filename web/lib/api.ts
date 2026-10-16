@@ -178,7 +178,14 @@ export const api = {
     projectId: string,
     runId: string,
     expectedRevision: number,
-    decisions: { task_id: string; decision: "accepted" | "rejected" }[],
+    decisions: (
+      | { task_id: string; decision: "accepted" | "rejected" }
+      | {
+          item_id: string;
+          decision: "accepted" | "rejected" | "deferred";
+          note?: string;
+        }
+    )[],
   ) =>
     request<MeasurementRun>(`${runPath(projectId, runId)}/recommendation-review`, {
       method: "POST",

@@ -162,7 +162,13 @@ class RunProgress(Contract):
         if job.job_type == JobType.PREPARE:
             planned = {"webiq-browse": 1, "page-analysis-model": 1, "paired-query-plan": 1}
         elif job.job_type == JobType.AGENT_STAGE:
-            planned = {"recommendation-model": 1}
+            planned = {
+                **(
+                    {"recommendation-technical-browse": 1}
+                    if job.operation_ceiling == 2 else {}
+                ),
+                "recommendation-model": 1,
+            }
         elif job.job_type == JobType.RECOVER_EVALUATORS:
             planned = {
                 "profile-evaluator": sum(
@@ -376,6 +382,12 @@ class ClaimedOperationRunner:
                     operation_type,
                     error.code.value,
                     provider_metadata["failure_detail"],
+                )
+            elif not isinstance(error, ProviderError):
+                logger.exception(
+                    "Unexpected operation failure: operation_type=%s error_type=%s",
+                    operation_type,
+                    type(error).__name__,
                 )
             self.repository.record_operation(
                 claim.claim_id,

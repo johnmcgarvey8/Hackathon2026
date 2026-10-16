@@ -23,6 +23,7 @@ from geo_agent.measurement_views import (
 from geo_agent.measurement_workflow import (
     MeasurementCoordinator,
     RecommendationDecision,
+    RecommendationDecisionV2,
     MeasurementRepository,
     OwnerIdentity,
 )
@@ -86,7 +87,10 @@ class RecoverEvaluatorsRequest(QueueRequest):
 
 
 class ReviewRecommendationsRequest(RevisionRequest):
-    decisions: tuple[RecommendationDecision, ...] = Field(min_length=1, max_length=3)
+    decisions: tuple[RecommendationDecision | RecommendationDecisionV2, ...] = Field(
+        min_length=1,
+        max_length=11,
+    )
 
 
 class AgentExecutionAuthorizationRequest(RevisionRequest):

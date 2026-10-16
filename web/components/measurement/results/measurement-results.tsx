@@ -8,6 +8,7 @@ import type {
   EvidenceSource,
   EvaluatedAnswer,
   MeasurementRun,
+  RecommendationPlanReport,
 } from "@/lib/types";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { MeasurementLoadingState } from "@/components/measurement/measurement-loading-state";
@@ -66,6 +67,16 @@ function providerAnswerCitations(answer: EvaluatedAnswer): ChatCitation[] {
     url: source.url,
     query_id: source.query_id || answer.query_id,
   }));
+}
+
+function isRecommendationPlan(
+  value: MeasurementRun["recommendations"],
+): value is RecommendationPlanReport {
+  return value?.schema_version === "geo-recommendation-report/v3";
+}
+
+function canOpenEvidence(evidenceId: string): boolean {
+  return !/^(?:page-|ans-|sig-|tech\.)/.test(evidenceId);
 }
 
 export function MeasurementResultsView({
@@ -141,6 +152,12 @@ export function MeasurementResultsView({
   const scoresPending = !scores && isMeasurementResultPending(run, "scores");
   const recommendationsPending = !run.recommendations
     && isMeasurementResultPending(run, "recommendations");
+  const recommendationPlan = isRecommendationPlan(run.recommendations)
+    ? run.recommendations
+    : null;
+  const legacyRecommendations = run.recommendations && !isRecommendationPlan(run.recommendations)
+    ? run.recommendations
+    : null;
 
   if (hasNonLiveData) {
     return (
@@ -337,7 +354,14 @@ export function MeasurementResultsView({
       </section>
 
       <section className="card result-section" id="recommendations">
-        <div className="card-heading"><h2>Recommendations</h2><span className="pill">{recommendationStage?.status || run.recommendations?.status || "Not requested"}</span></div>
+        <div className="card-heading">
+          <h2>Recommendations</h2>
+          <div className="chip-row">
+            {recommendationPlan && <span className="pill blue">Recommendation Agent v3</span>}
+            {legacyRecommendations && <span className="pill amber">Legacy report v2</span>}
+            <span className="pill">{recommendationStage?.status || run.recommendations?.status || "Not requested"}</span>
+          </div>
+        </div>
         <p className="small muted">{recommendationProvider}{recommendationStage?.binding ? ` · ${recommendationStage.binding.agent_name} v${recommendationStage.binding.agent_version}` : ""}</p>
         {recommendationsPending ? (
           <MeasurementLoadingState stage="recommendations" />
@@ -350,15 +374,182 @@ export function MeasurementResultsView({
         ) : (
           <>
             {run.recommendations.reason && <p>{run.recommendations.reason}</p>}
-            {run.recommendations.tasks.map((task) => (
-              <article className="recommendation-card" key={task.task_id}>
-                <div><span className="pill blue">Priority {task.priority}</span><strong>{task.title}</strong><span className="pill">{task.confidence} confidence</span></div>
-                <p><strong>Proposed change:</strong> {task.proposed_change}</p>
-                <p><strong>Evidence-bound rationale:</strong> {task.rationale}</p>
-                <p><strong>Verification:</strong> {task.verification}</p>
-                <small>Human approval required. Publishing is not authorised.</small>
-              </article>
-            ))}
+            {recommendationPlan ? (
+              <>
+                {recommendationPlan.diagnosis && (
+                  <div className="recommendation-diagnosis">
+                    <h3>Diagnosis</h3>
+                    <p>{recommendationPlan.diagnosis}</p>
+                  </div>
+                )}
+                {recommendationPlan.key_findings.length > 0 && (
+                  <div>
+                    <h3>Key findings</h3>
+                    <ul>{recommendationPlan.key_findings.map((finding, index) => (
+                      <li key={`${finding.summary}-${index}`}>{finding.summary}</li>
+                    ))}</ul>
+                  </div>
+                )}
+                {(["page-optimisation", "new-content"] as const).map((lane) => {
+                  const items = recommendationPlan.items.filter((item) => item.kind === lane);
+                  return (
+                    <section className="recommendation-lane" key={lane}>
+                      <div className="section-heading-inline">
+                        <h3>{lane === "page-optimisation" ? "Optimise this page" : "New content opportunities"}</h3>
+                        <span className="pill">{items.length} items</span>
+                      </div>
+                      {lane === "new-content" && items.length > 0 && (
+                        <p className="small muted">These are measured content gaps. Detailed content briefs have not been generated.</p>
+                      )}
+                      {items.length === 0 ? <p className="muted">Nothing recommended in this lane.</p> : items.map((item) => (
+                        <details className="recommendation-card" key={item.rec_id}>
+                          <summary>
+                            <span>
+                              <span className={`pill ${item.tier === "P1" ? "blue" : ""}`}>{item.tier}</span>
+                              <strong>{item.kind === "page-optimisation" ? item.title : item.working_title}</strong>
+                            </span>
+                            <span className="recommendation-rank">
+                              Score {item.score_breakdown.priority_score} · {item.confidence} confidence
+                            </span>
+                          </summary>
+                          <div>
+                            <p><strong>Why this rank:</strong> reach {item.score_breakdown.reach}, impact {item.score_breakdown.impact_weight}, effort {item.score_breakdown.effort_weight}, confidence {item.score_breakdown.confidence_weight}, basis {item.score_breakdown.basis_weight}.</p>
+                            {item.kind === "page-optimisation" ? (
+                              <>
+                                <p><strong>Category:</strong> {item.category} · {item.subtype}</p>
+                                <p><strong>Observation:</strong> {item.observation}</p>
+                                <p><strong>Proposed change:</strong> {item.proposed_change}</p>
+                                <p><strong>Evidence-bound rationale:</strong> {item.rationale}</p>
+                                {item.implementation.outline.length > 0 && (
+                                  <><h4>Implementation outline</h4><ol>{item.implementation.outline.map((step) => <li key={step}>{step}</li>)}</ol></>
+                                )}
+                                {item.rendered_jsonld.map((snippet, index) => (
+                                  <pre key={`${item.rec_id}-jsonld-${index}`}><code>{snippet}</code></pre>
+                                ))}
+                                {item.facts_to_verify.length > 0 && (
+                                  <><h4>Facts to verify</h4><ul>{item.facts_to_verify.map((fact) => <li key={fact}>{fact}</li>)}</ul></>
+                                )}
+                                <p><strong>Verification:</strong> {item.verification}</p>
+                              </>
+                            ) : (
+                              <>
+                                <p><strong>Page type:</strong> {item.page_type}</p>
+                                <p><strong>Primary intent:</strong> {item.primary_intent}</p>
+                                <p><strong>Gap:</strong> {item.gap_justification}</p>
+                                <p className="small muted">Detailed brief status: not generated.</p>
+                              </>
+                            )}
+                            <div className="recommendation-evidence">
+                              {[...item.evidence, ...item.comparison_evidence].map((reference) => (
+                                canOpenEvidence(reference.evidence_id) ? (
+                                  <button type="button" className="link-button" key={`${item.rec_id}-${reference.evidence_id}`} onClick={() => onOpenEvidence(reference.evidence_id)}>
+                                    {reference.evidence_id}: {reference.quote}
+                                  </button>
+                                ) : (
+                                  <p className="small" key={`${item.rec_id}-${reference.evidence_id}`}>
+                                    <code>{reference.evidence_id}</code>: {reference.quote}
+                                  </p>
+                                )
+                              ))}
+                            </div>
+                            <small>Human approval required. Publishing is not authorised.</small>
+                          </div>
+                        </details>
+                      ))}
+                    </section>
+                  );
+                })}
+                <details className="measurement-query-group">
+                  <summary>
+                    <strong>Technical checks</strong>
+                    <span className="pill">{recommendationPlan.technical_signals.status}</span>
+                  </summary>
+                  <div className="measurement-query-content">
+                    {recommendationPlan.technical_signals.status === "captured" && (
+                      <p className="muted">
+                        Checks use indexed HTML, not a live JavaScript-rendered page.
+                        {recommendationPlan.technical_signals.reason === "partial-html"
+                          ? " Only partial HTML was returned. Unavailable fields remain unknown; missing metadata is not inferred."
+                          : " Findings describe only the returned HTML."}
+                      </p>
+                    )}
+                    {recommendationPlan.technical_findings.findings.length === 0 ? (
+                      <p className="muted">
+                        {recommendationPlan.technical_signals.status === "captured"
+                          ? "No deterministic technical findings were recorded."
+                          : `Technical HTML was not captured${recommendationPlan.technical_signals.reason ? `: ${recommendationPlan.technical_signals.reason}` : "."}`}
+                      </p>
+                    ) : recommendationPlan.technical_findings.findings.map((finding) => (
+                      <p key={finding.check_id}><strong>{finding.check_id}</strong> · {finding.field} · {finding.severity} · {finding.state}</p>
+                    ))}
+                  </div>
+                </details>
+                {recommendationPlan.validation_log.length > 0 && (
+                  <details className="measurement-query-group">
+                    <summary><strong>Validation and quarantined items</strong><span className="pill amber">{recommendationPlan.validation_log.length}</span></summary>
+                    <div className="measurement-query-content">
+                      {recommendationPlan.validation_log.map((entry, index) => (
+                        <p key={`${entry.item_id}-${entry.rule}-${index}`}><strong>{entry.item_id}</strong> · {entry.rule}: {entry.detail}</p>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                <p className="small muted">{recommendationPlan.priority_disclaimer}</p>
+              </>
+            ) : legacyRecommendations ? (
+              <>
+                <div className="recommendation-diagnosis">
+                  <h3>This saved run predates Recommendation Agent v3</h3>
+                  <p>
+                    Its original recommendations are preserved below. Run a new measurement to generate
+                    the v3 diagnosis, page-optimisation and new-content lanes, deterministic ranking,
+                    technical checks, validation notes, and defer decisions.
+                  </p>
+                </div>
+                <section className="recommendation-lane">
+                  <div className="section-heading-inline">
+                    <h3>Legacy page recommendations</h3>
+                    <span className="pill">{legacyRecommendations.tasks.length} items</span>
+                  </div>
+                  {legacyRecommendations.tasks.map((task) => (
+                    <details className="recommendation-card" key={task.task_id}>
+                      <summary>
+                        <span>
+                          <span className="pill blue">Priority {task.priority}</span>
+                          <strong>{task.title}</strong>
+                        </span>
+                        <span className="recommendation-rank">{task.confidence} confidence</span>
+                      </summary>
+                      <div>
+                        <p><strong>Target section:</strong> {task.target_section}</p>
+                        <p><strong>Proposed change:</strong> {task.proposed_change}</p>
+                        <p><strong>Evidence-bound rationale:</strong> {task.rationale}</p>
+                        <p><strong>Verification:</strong> {task.verification}</p>
+                        <div className="recommendation-evidence">
+                          {[...task.page_evidence, ...task.comparison_evidence].map((reference) => (
+                            canOpenEvidence(reference.evidence_id) ? (
+                              <button
+                                type="button"
+                                className="link-button"
+                                key={`${task.task_id}-${reference.evidence_id}`}
+                                onClick={() => onOpenEvidence(reference.evidence_id)}
+                              >
+                                {reference.evidence_id}: {reference.quote}
+                              </button>
+                            ) : (
+                              <p className="small" key={`${task.task_id}-${reference.evidence_id}`}>
+                                <code>{reference.evidence_id}</code>: {reference.quote}
+                              </p>
+                            )
+                          ))}
+                        </div>
+                        <small>Human approval required. Publishing is not authorised.</small>
+                      </div>
+                    </details>
+                  ))}
+                </section>
+              </>
+            ) : null}
           </>
         )}
       </section>

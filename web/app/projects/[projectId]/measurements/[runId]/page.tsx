@@ -18,10 +18,17 @@ import type {
   EvidenceSource,
   MeasurementRun,
   MeasurementCapacity,
+  RecommendationPlanReport,
   RunEvents,
   RunProgress,
   WorkflowJob,
 } from "@/lib/types";
+
+function isRecommendationPlan(
+  value: MeasurementRun["recommendations"],
+): value is RecommendationPlanReport {
+  return value?.schema_version === "geo-recommendation-report/v3";
+}
 
 function displayDate(value?: string | null) {
   if (!value) return "Unknown";
@@ -54,7 +61,8 @@ export default function MeasurementRunPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [recommendationDecisions, setRecommendationDecisions] = useState<Record<string, "accepted" | "rejected">>({});
+  const [recommendationDecisions, setRecommendationDecisions] = useState<Record<string, "accepted" | "rejected" | "deferred">>({});
+  const [recommendationNotes, setRecommendationNotes] = useState<Record<string, string>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
@@ -113,6 +121,21 @@ export default function MeasurementRunPage() {
         ? jobs.find((job) => job.job_id === cancelAction.job_id) : undefined),
     [cancelAction, jobs],
   );
+  const recommendationPlan = isRecommendationPlan(run?.recommendations)
+    ? run.recommendations
+    : null;
+  const legacyRecommendations = run?.recommendations && !isRecommendationPlan(run.recommendations)
+    ? run.recommendations
+    : null;
+  const recommendationReviewItems = recommendationPlan
+    ? recommendationPlan.items.map((item) => ({
+        id: item.rec_id,
+        title: item.kind === "page-optimisation" ? item.title : item.working_title,
+      }))
+    : legacyRecommendations?.tasks.map((task) => ({
+        id: task.task_id,
+        title: task.title,
+      })) || [];
 
   if (!project) return null;
 
@@ -146,10 +169,18 @@ export default function MeasurementRunPage() {
       project.project_id,
       params.runId,
       run!.revision,
-      (run!.recommendations?.tasks || []).map((task) => ({
-        task_id: task.task_id,
-        decision: recommendationDecisions[task.task_id] || "rejected",
-      })),
+      recommendationPlan
+        ? recommendationPlan.items.map((item) => ({
+            item_id: item.rec_id,
+            decision: recommendationDecisions[item.rec_id] || "deferred",
+            note: recommendationNotes[item.rec_id]?.trim() || undefined,
+          }))
+        : (legacyRecommendations?.tasks || []).map((task) => ({
+            task_id: task.task_id,
+            decision: recommendationDecisions[task.task_id] === "accepted"
+              ? "accepted" as const
+              : "rejected" as const,
+          })),
     ));
 
   const retryRecommendations = () => mutation("Recommendation retry", async () =>
@@ -307,11 +338,37 @@ export default function MeasurementRunPage() {
             </section>
           )}
 
-          {run.recommendations?.tasks.length && !run.recommendation_review ? (
+          {recommendationReviewItems.length > 0 && !run.recommendation_review ? (
             <section className="card">
               <div className="card-heading"><h2>Human recommendation review</h2><span className="pill amber">No publishing permission</span></div>
-              {run.recommendations.tasks.map((task) => (
-                <label className="review-row" key={task.task_id}><strong>{task.title}</strong><select value={recommendationDecisions[task.task_id] || "rejected"} onChange={(event) => setRecommendationDecisions((items) => ({ ...items, [task.task_id]: event.target.value as "accepted" | "rejected" }))}><option value="accepted">Accept for follow-up</option><option value="rejected">Reject</option></select></label>
+              {recommendationReviewItems.map((item) => (
+                <div className="review-row" key={item.id}>
+                  <strong>{item.title}</strong>
+                  <select
+                    aria-label={`Decision for ${item.title}`}
+                    value={recommendationDecisions[item.id] || (recommendationPlan ? "deferred" : "rejected")}
+                    onChange={(event) => setRecommendationDecisions((items) => ({
+                      ...items,
+                      [item.id]: event.target.value as "accepted" | "rejected" | "deferred",
+                    }))}
+                  >
+                    <option value="accepted">Accept for follow-up</option>
+                    <option value="rejected">Reject</option>
+                    {recommendationPlan && <option value="deferred">Defer</option>}
+                  </select>
+                  {recommendationPlan && (
+                    <input
+                      aria-label={`Review note for ${item.title}`}
+                      maxLength={500}
+                      placeholder="Optional note"
+                      value={recommendationNotes[item.id] || ""}
+                      onChange={(event) => setRecommendationNotes((notes) => ({
+                        ...notes,
+                        [item.id]: event.target.value,
+                      }))}
+                    />
+                  )}
+                </div>
               ))}
               <button className="button" type="button" disabled={!actionAllowed(reviewAction) || busy !== null} title={actionReason(reviewAction) || undefined} onClick={() => void reviewRecommendations()}>Save human review</button>
             </section>

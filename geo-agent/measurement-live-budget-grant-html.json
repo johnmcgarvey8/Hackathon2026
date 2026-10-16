@@ -1,0 +1,24 @@
+{
+  "schema_version": "geo-measurement-budget-grant/v1",
+  "grant_id": "project-live-measurement-2026-10-16-html-grant",
+  "policy_id": "project-live-measurement-2026-10-16-html",
+  "policy_hash": "835cfafc33b0c330a986a97fc64cdd7880147e58ae9d4bd24e69a7ece5407a63",
+  "owner": {
+    "tenant_id": "local-development",
+    "object_id": "local-developer"
+  },
+  "allowances": {
+    "webiq_browse": 1,
+    "page_analysis_model": 1,
+    "paired_query_plan": 2,
+    "webiq_search": 5,
+    "profile_evaluator": 5,
+    "recommendation_technical_browse": 1,
+    "recommendation_model": 1
+  },
+  "maximum_authorized_cost_usd": "250.00",
+  "cost_enforcement": "authorization-ceiling-only",
+  "automatic_retries": false,
+  "approval": "The user approved implementing indexed HTML extraction on October 16, 2026 after discussion of one additional Web IQ request per measurement and a fresh Halfords verification run. This grant records one verification run with one technical Browse and one Recommendations call, the existing one-profile limits and 8,000-token planner ceiling, and no automatic retries or publishing. The USD 250 authorization-ceiling-only field is retained from the existing local authorization; this records no additional monetary approval. Original policies, grants and usage remain unchanged.",
+  "approved_at": "2026-10-16T10:49:04.586374+00:00"
+}

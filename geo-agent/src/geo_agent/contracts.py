@@ -5,7 +5,10 @@ from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, HttpUrl, SerializerFunctionWrapHandler,
+    model_serializer, model_validator,
+)
 
 
 def identifier() -> str:
@@ -201,6 +204,15 @@ class QueryPair(Contract):
     chat_query: str = Field(min_length=1, max_length=500)
     grounding_query: str = Field(min_length=1, max_length=500)
     evidence: tuple[EvidenceQuote, ...] = Field(min_length=1, max_length=2)
+
+    @model_serializer(mode="wrap")
+    def serialize_pair(self, handler: SerializerFunctionWrapHandler) -> dict:
+        data = handler(self)
+        # Preserve approval hashes for saved queries predating mission/moment metadata.
+        for field in ("mission", "moment"):
+            if field not in self.model_fields_set:
+                data.pop(field, None)
+        return data
 
     def as_query(self, *, grounding: bool = False) -> Query:
         return Query(query_id=self.query_id, text=self.grounding_query if grounding else self.chat_query,

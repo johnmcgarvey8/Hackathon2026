@@ -15,6 +15,7 @@ MeasurementOperationType = Literal[
     "paired-query-plan",
     "webiq-search",
     "profile-evaluator",
+    "recommendation-technical-browse",
     "recommendation-model",
 ]
 
@@ -37,6 +38,7 @@ class MeasurementOperationAllowances(Contract):
     paired_query_plan: int = Field(default=1, ge=0, le=100)
     webiq_search: int = Field(default=5, ge=0, le=500)
     profile_evaluator: int = Field(default=15, ge=0, le=1500)
+    recommendation_technical_browse: int = Field(default=0, ge=0, le=100)
     recommendation_model: int = Field(default=0, ge=0, le=100)
 
     @property
@@ -54,6 +56,7 @@ class MeasurementOperationAllowances(Contract):
             ("paired-query-plan", self.paired_query_plan),
             ("webiq-search", self.webiq_search),
             ("profile-evaluator", self.profile_evaluator),
+            ("recommendation-technical-browse", self.recommendation_technical_browse),
             ("recommendation-model", self.recommendation_model),
         )
 
@@ -92,6 +95,7 @@ class MeasurementBudgetGrant(Contract):
                 or self.allowances.page_analysis_model
                 or self.allowances.paired_query_plan
                 or self.allowances.webiq_search
+                or self.allowances.recommendation_technical_browse
                 or self.allowances.recommendation_model
                 or self.allowances.profile_evaluator < 1
                 or self.allowances.profile_evaluator
@@ -122,6 +126,11 @@ class MeasurementBudgetGrant(Contract):
         maximum_recommendation_calls = policy.max_recommendation_calls * authorized_runs
         if self.allowances.recommendation_model > maximum_recommendation_calls:
             raise Conflict("Measurement budget recommendation allowance exceeds the authorized runs")
+        expected_technical_browse = int(policy.technical_browse) * authorized_runs
+        if self.allowances.recommendation_technical_browse != expected_technical_browse:
+            raise Conflict(
+                "Measurement budget technical Browse allowance does not match the execution policy"
+            )
 
 
 class MeasurementOperationCapacity(Contract):

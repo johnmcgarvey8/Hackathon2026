@@ -271,7 +271,14 @@ class Foundry:
     def profile(self) -> Profile:
         return Profile(profile_id="foundry-baseline", deployment=self.deployment, prompt_version="geo-evaluator-v1", endpoint=self.base_url)
 
-    def _parse(self, prompt: str, payload: dict, output_type: type[BaseModel]):
+    def _parse(
+        self,
+        prompt: str,
+        payload: dict,
+        output_type: type[BaseModel],
+        *,
+        max_output_tokens: int = 2000,
+    ):
         try:
             token = self._token_provider()
             with OpenAI(
@@ -281,7 +288,7 @@ class Foundry:
                 raw_response = client.responses.with_raw_response.parse(
                     model=self.deployment, instructions=prompt,
                     input=json.dumps(payload, ensure_ascii=True), text_format=output_type,
-                    max_output_tokens=2000, parallel_tool_calls=False, store=False,
+                    max_output_tokens=max_output_tokens, parallel_tool_calls=False, store=False,
                 )
                 body = raw_response.http_response.json()
                 incomplete = body.get("incomplete_details") or {}

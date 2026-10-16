@@ -3,12 +3,12 @@ import secrets
 from pathlib import Path
 
 import uvicorn
-from dotenv import load_dotenv
 
 from geo_agent.api import create_app
 from geo_agent.budget import BudgetGrant, apply_grant
 from geo_agent.conversation import ChatPolicy, ConversationAgent
 from geo_agent.foundry import Foundry
+from geo_agent.environment import load_environment
 from geo_agent.live import LivePolicy, configured_live_workflow
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.agent_access import AgentPrincipal
@@ -19,11 +19,6 @@ from geo_agent.project_foundry import ProjectFoundrySettings
 from geo_agent.specialist_foundry import SpecialistFoundrySettings
 from geo_agent.webiq import WebIQ
 from geo_agent.workflow import RunStore
-
-
-def load_environment(env_file: Path | None = None) -> None:
-    path = env_file if env_file is not None else Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(path, override=False, interpolate=False)
 
 
 def main() -> None:

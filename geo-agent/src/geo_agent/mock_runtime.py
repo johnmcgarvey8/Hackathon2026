@@ -189,6 +189,7 @@ class MockMeasurementRuntime:
                 repository,
                 recommendations,
                 HostedSpecialistAgent(token_provider=lambda: "unused-in-mock"),
+                policy,
             ),
         },
             policy_id=policy.policy_id,

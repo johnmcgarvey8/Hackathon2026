@@ -12,11 +12,17 @@ The recommended release is the Next.js project workspace at `http://127.0.0.1:30
 | [Paired planner](src/geo_agent/query_agent.py) | A pinned MomentsAndMissions agent receives URL, locale, audience and goal and returns the five-pair mission-and-moment `QueryPlan`; the saved snapshot remains authoritative for quote validation and passage IDs. `Foundry.propose_pairs` is a visible, separately budgeted fallback. |
 | [Evaluator providers](src/geo_agent/providers.py) | OpenAI Responses for ChatGPT-style and Copilot-style profiles; Anthropic Messages via `anthropic==0.125.0` for Claude-backed answers. Canonical endpoint validation, approved prompt guards, bounded evidence, 2,000 output tokens and no automatic retries. |
 | [Measurement scoring](src/geo_agent/evaluation.py) | Exact-page citation rate, errors and coverage; separate Web IQ presence/position metrics; same-domain, unsupported-citation and raw-mention details. Model comparisons use only the common completed query set. |
-| [Recommendations](src/geo_agent/recommendations.py) | Up to two saved alternatives per query and three draft hypotheses. Exact quotes resolve within the correct query. Reports bind to both inputs and complete measurement data. No candidates means no recommendation model call. |
-| [Draft exports](src/geo_agent/artifacts.py) | `render_measurement_bundle` validates reports and produces deterministic ZIPs containing measurement data, scores, recommendations and a sanitized human review record. Only accepted tasks become Markdown planning files. No provider call or publishing permission. Existing run exports are unchanged. |
+| [Recommendations](src/geo_agent/recommendation_plan.py) | A JSON-only Foundry Planner proposes page optimisations and new-content gaps. Deterministic code validates evidence, quarantines invalid items, adds high-severity technical actions, renders allow-listed JSON-LD, and calculates rank and P1/P2/P3 tier. Legacy v2 reports remain readable. |
+| [Draft exports](src/geo_agent/artifacts.py) | `render_measurement_bundle` preserves legacy v2 bytes and adds deterministic v3 bundles with technical signals, sanitised review decisions, and accepted `opt-*` or `new-*` planning files. Deferred and rejected items remain in the evidence report. No provider call or publishing permission. |
 | [Durable runtime](src/geo_agent/persistence.py) | SQLAlchemy-backed runs, events, approvals, jobs, operation claims, v2 budget consumption and artifact metadata. The mock and live workers share the same claim-before-call path. |
 | [Live worker](src/geo_agent/measurement_worker.py) | Separate queue worker with immutable owner/policy-bound grants, aggregate multi-run allowances, failed-call charging and graceful shutdown. Startup validation makes no provider call. |
 | [Measurement console](src/geo_agent/measurement.html) | Owner-scoped run recovery, explicit preparation and evaluation confirmations, exact-query approval, visible provenance and limitations, configurable one-to-three-profile results, retained evidence, human recommendation decisions, cancellation and authenticated ZIP download. The bearer token remains in browser memory. |
+
+For hosted Recommendations agent setup, paste the complete
+[`recommendations-agent-instructions.txt`](recommendations-agent-instructions.txt)
+into Azure Foundry's **Instructions** field and follow the
+[manual setup and version-pinning steps](FOUNDRY-MANUAL-SETUP.md#recommendations-specialist-agent).
+The instruction file is not loaded automatically by the application.
 
 All profiles are controlled evidence-packet simulations, not measurements of the consumer Copilot, Claude or ChatGPT services. The same ordered search packet must be used for each profile's answer to a query. Target-page text is not added to evaluator input; only returned search evidence can earn citation credit. A Claude label requires the Anthropic adapter, not a GPT persona. Actual deployments, access and underlying model identities still require live preflight.
 
@@ -24,7 +30,7 @@ The Copilot-style system prompt is intentionally diagnostic: it identifies buyer
 
 The citation score is `round(100 * completed answers citing the exact page / completed answers)`. Failed calls reduce coverage; no completed answers means N/A. Priority does not weight the score. Search absence means the exact page was not in that saved top-five packet, not global invisibility or rank six. Recommendations are hypotheses: quote checks prove traceability, not semantic correctness, causal ranking factors or guaranteed gains.
 
-The v2 ZIP contains `manifest.json`, `manifest.md`, `measurement.json`, `scores.json`, `recommendations.json` and `recommendation-review.json`. The review file excludes reviewer identity. Each accepted task also produces `recommendations/rec-N.md` as a human planning input; rejected and unreviewed drafts remain only in the evidence report. Acceptance grants no editing or publishing permission. Its manifest is `geo-measurement-manifest/v1`, distinct from the legacy run manifest `geo-manifest/v2`. With the installed package, scores can be recomputed from the retained JSON:
+The legacy v2 ZIP remains unchanged. A v3 ZIP adds `technical-signals.json`; accepted page optimisations produce `recommendations/opt-*.md`, and accepted new-content gaps produce `recommendations/new-*.md`. New-content files are planning inputs rather than detailed briefs. The sanitised review supports accepted, rejected, and deferred decisions with optional notes. Acceptance grants planning permission only and never grants editing or publishing permission. With the installed package, scores can be recomputed from the retained JSON:
 
 ```python
 from pathlib import Path
@@ -70,7 +76,7 @@ Verification: **446 tests passed**, with two existing Starlette/AnyIO dependency
 
 The local implementation now has durable owner-bound v2 runs, jobs, per-operation claims and an independently launched worker; an asynchronous API; and query, model, score, recommendation and export views. Shared release still requires Entra sign-in, CSRF protection, deployment of the worker and PostgreSQL-backed storage. Local bearer authentication and SQLite are development controls, not shared-hosting controls.
 
-Before enabling live multi-model execution, obtain explicit approval for the model roster, new team/per-user allowance, retained data and hosting costs. A complete run is bounded at **6 Web IQ requests and up to 19 outer model or agent requests** when both query fallback and recommendations are used, with at most 2,000 output tokens per outer model or agent call. The hosted agent may make configured internal tool calls that are not individual entries in the local outer-operation ledger. This is not a monetary cap. No new allowance is enabled: existing local policies, grants and usage ledgers are unchanged and do not fund this new workflow. Provisioning, deployment, a real three-model canary and colleague-isolation verification remain outstanding.
+Before enabling live multi-model execution, obtain explicit approval for the model roster, new team/per-user allowance, retained data and hosting costs. The recommendation stage uses one Planner operation, or two operations when policy-gated technical Browse is enabled. The Planner defaults to 4,000 output tokens and is capped at 8,000; other provider calls retain their configured limits. The hosted agent may make configured internal tool calls that are not individual entries in the local outer-operation ledger. This is not a monetary cap. Policy fields are hashed, so existing grants cannot silently fund a changed Planner limit or technical Browse. Provisioning, deployment, a real three-model canary and colleague-isolation verification remain outstanding.
 
 ## Run the Project Workspace
 
@@ -88,7 +94,15 @@ Navigating to the FastAPI root redirects to `/projects`. `/measurements` is not 
 
 ## Run the Live Measurement Worker
 
-The v2 API remains enqueue-only in live mode. A separate worker processes those jobs only when all live settings are present and an immutable grant matches the policy ID, complete policy hash and run owner. One run uses one Browse, one page-analysis call, one MomentsAndMissions request, an optional separately claimed direct-model fallback, five Searches, five evaluator calls per configured profile, and an optional recommendation call. Maximum score-only ceilings are **14 outer operations** for one profile or **24** for three profiles; recommendations add one. Claims consume aggregate grant allowance before dispatch; failed and interrupted calls are not refunded or retried.
+The v2 API remains enqueue-only in live mode. A separate worker processes those jobs only when all live settings are present and an immutable grant matches the policy ID, complete policy hash and run owner. One run uses one Browse, one page-analysis call, one MomentsAndMissions request, an optional separately claimed direct-model fallback, five Searches, five evaluator calls per configured profile, and a recommendation stage with one Planner operation. Enabling `technical_browse` adds one separately claimed indexed-HTML operation. Maximum score-only ceilings are **14 outer operations** for one profile or **24** for three profiles; recommendations add one or two. Claims consume aggregate grant allowance before dispatch; failed and interrupted calls are not refunded or retried.
+
+Technical extraction passes indexed HTML metadata and deterministic findings to
+the Recommendations agent and saves the signals with its report. Partial HTML
+is disclosed in the results; unavailable sections stay unknown and do not
+justify missing-metadata findings. It does not fetch the website directly,
+render JavaScript, alter citation scoring or update old reports. See
+[technical Browse setup](FOUNDRY-MANUAL-SETUP.md#recommendations-specialist-agent)
+for the separate approved policy/grant and local budget-enforcement limitation.
 
 The checked-in `measurement-live-demo-policy-v2.json` and matching grant are local demonstration controls for Clarity: one evaluator profile, up to ten runs, two planner calls per run and a USD 250 authorization ceiling. Start the API and worker with the same `GEO_DATA_DIR` and policy. Set the worker-only grant separately:
 
@@ -103,7 +117,7 @@ $env:GEO_QUERY_AGENT_VERSION = '<published-version>'
 & './geo-agent/.venv/Scripts/python.exe' -m geo_agent.measurement_worker
 ```
 
-`WEBIQ_API_KEY` must already be available in `geo-agent/.env` or the process environment. The live policy and matching immutable grant must allow two query-plan calls; older one-call grants cannot fund the fallback. The worker does not print credentials, probe providers or acquire a Foundry token at startup. Once running, it immediately leases queued jobs, so do not launch it before approving the policy, grant and pending workload.
+`WEBIQ_API_KEY` must already be available in `geo-agent/.env` or the process environment. Credentials defined in `.env` (names ending in `_KEY` or `_TOKEN`) override inherited process values in every local launcher; credentials absent from the file can come from the environment. Empty credentials in the file remain empty rather than falling back to an inherited key. Restart the API and worker after changing the file. The live policy and matching immutable grant must allow two query-plan calls; older one-call grants cannot fund the fallback. The worker does not print credentials, probe providers or acquire a Foundry token at startup. Once running, it immediately leases queued jobs, so do not launch it before approving the policy, grant and pending workload.
 
 Create and validate the hosted query planner before starting live measurement. See
 [Manual Microsoft Foundry Setup](FOUNDRY-MANUAL-SETUP.md#momentsandmissions-query-planning-agent)
@@ -246,7 +260,7 @@ The API writes its local human token to `.data\local-api-token`. Keep it local a
 | `geoAgent` is not listed | Reopen the workspace, approve trust, then inspect **MCP: List Servers** and the MCP output log. |
 | Preparation or measurement remains queued | Start **GEO: Run Mock Measurement Worker** and confirm it reports `Mock measurement worker ready`. |
 | The human link does not open | Start **GEO: Run Synthetic Human API** and confirm port 8088 is free. |
-| Synthetic tasks use unexpected settings | Stop the processes and inspect task environment values. Existing environment variables take precedence over `.env`. |
+| Synthetic tasks use unexpected settings | Stop the processes and inspect task environment values. Explicit port, policy and mode settings take precedence over `.env`; credentials defined in `.env` override inherited keys and tokens. |
 | Live mode is requested | Stop. The workspace proof must use `measurement-policy.json`; do not set `GEO_MCP_ALLOW_LIVE`. |
 
 ### Loopback Streamable HTTP
@@ -280,7 +294,7 @@ Use the configured Python interpreter if `python` resolves to a different instal
 
 Open http://127.0.0.1:8088/docs. The server binds only to loopback. On first launch it generates a local API token in `.data/local-api-token`, excluded from Git. Open that file locally and enter its value in the documentation's **Authorize** control. It is a local development credential, not a Foundry or Web IQ key. Do not share the token or expose this server publicly. The local data directory relies on your user account's filesystem permissions; Entra authentication and deployment hardening are not implemented.
 
-Press F5 with **GEO: Synthetic MCP Prerequisites** selected to debug the synthetic API and mock worker together. This is not an Agent Inspector endpoint. Stop running instances first, or set `GEO_PORT` to another free port. The launcher automatically loads the agent's [.env](.env) file, independent of the working directory; existing task and process environment variables take precedence. Restart the processes after changing settings. See [.env.example](.env.example) for the configuration template.
+Press F5 with **GEO: Synthetic MCP Prerequisites** selected to debug the synthetic API and mock worker together. This is not an Agent Inspector endpoint. Stop running instances first, or set `GEO_PORT` to another free port. All local launchers share the agent's [.env](.env) loader, independent of the working directory. File-defined credentials take precedence over inherited keys and tokens; other explicit task and process settings still take precedence so synthetic policies and port overrides remain effective. Restart the processes after changing settings. See [.env.example](.env.example) for the configuration template.
 
 ## Web IQ Configuration
 

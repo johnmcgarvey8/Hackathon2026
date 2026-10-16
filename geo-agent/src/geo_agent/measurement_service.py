@@ -1197,6 +1197,8 @@ class MeasurementApplicationService:
         *,
         run_id: str,
         task_id: str = "",
+        item_id: str = "",
+        detail: bool = False,
     ) -> dict[str, Any]:
         principal.require(AgentScope.READ)
         run = self.repository.get(run_id, principal.owner)
@@ -1209,6 +1211,55 @@ class MeasurementApplicationService:
                 next_actions=("geo_get_content_strategy",),
             )
         report = run.recommendations.model_dump(mode="json")
+        if report.get("schema_version") == "geo-recommendation-report/v3":
+            selected_id = item_id or task_id
+            if selected_id:
+                items = [
+                    item for item in report.get("items", [])
+                    if item["rec_id"] == selected_id
+                ]
+                if not items:
+                    raise NotFound("Recommendation item not found")
+                report["items"] = items
+            elif not detail:
+                report = {
+                    "schema_version": report["schema_version"],
+                    "status": report["status"],
+                    "diagnosis": report["diagnosis"],
+                    "key_findings": report["key_findings"],
+                    "items": [{
+                        "item_id": item["rec_id"],
+                        "kind": item["kind"],
+                        "title": item.get("title") or item.get("working_title"),
+                        "tier": item["tier"],
+                        "score": item["score_breakdown"]["priority_score"],
+                        "query_ids": (
+                            item.get("addresses_query_ids")
+                            or item.get("target_query_ids")
+                        ),
+                    } for item in report.get("items", [])],
+                    "technical_status": report["technical_signals"]["status"],
+                    "quarantine_count": len(report["validation_log"]),
+                    "reason": report["reason"],
+                    "limitations": report["limitations"],
+                    "priority_disclaimer": report["priority_disclaimer"],
+                }
+            review = (
+                run.recommendation_review.model_dump(mode="json", exclude={"actor"})
+                if run.recommendation_review is not None
+                else None
+            )
+            return self._envelope(
+                "ready",
+                {"recommendations": report, "review": review},
+                run_id=run_id,
+                run_revision=run.revision,
+                next_actions=(
+                    ("review_recommendation_drafts_in_human_ui",)
+                    if review is None and report.get("items")
+                    else ("geo_create_export",)
+                ),
+            )
         if task_id:
             tasks = [task for task in report.get("tasks", []) if task["task_id"] == task_id]
             if not tasks:

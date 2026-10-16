@@ -18,7 +18,7 @@ from geo_agent.specialist_agents import (
     SpecialistAgentRole,
     SpecialistProviderMode,
 )
-from geo_agent.specialist_foundry import HostedSpecialistAgent
+from geo_agent.specialist_foundry import HostedSpecialistAgent, SpecialistFoundrySettings
 from geo_agent.specialist_workflow import SpecialistStageHandler, SpecialistStageRequest
 from geo_agent.worker import Worker
 from geo_agent.workflow import Conflict
@@ -525,26 +525,96 @@ def test_recommendation_retry_replay_returns_existing_job(tmp_path):
         "worker-a",
         "ProviderError",
     )
+    retry_policy = execution_policy.model_copy(update={
+        "policy_id": "recommendation-retry-policy-v2",
+        "recommendation_planner_max_output_tokens": 8000,
+    })
+    retry_orchestrator = ProjectMeasurementOrchestrator(repository, retry_policy)
     with pytest.raises(Conflict):
-        orchestrator.retry_recommendations(
+        retry_orchestrator.retry_recommendations(
             failed_run,
             expected_revision=failed_run.revision,
             idempotency_key=stage_job.idempotency_key,
         )
 
-    retry_job, _ = orchestrator.retry_recommendations(
+    retry_job, _ = retry_orchestrator.retry_recommendations(
         failed_run,
         expected_revision=failed_run.revision,
         idempotency_key="retry-recommendations",
     )
-    replay_job, replay_run = orchestrator.retry_recommendations(
+    replay_job, replay_run = retry_orchestrator.retry_recommendations(
         failed_run,
         expected_revision=failed_run.revision,
         idempotency_key="retry-recommendations",
     )
 
+    assert retry_job.policy_id == retry_policy.policy_id
+    assert retry_job.policy_hash == retry_policy.policy_hash
     assert replay_job.job_id == retry_job.job_id
     assert replay_run.agent_stages[0].status == AgentStageStatus.QUEUED
+
+
+def test_recommendation_retry_persists_environment_agent_binding(tmp_path):
+    execution_policy = policy()
+    prepared = inputs().model_copy(update={"policy_hash": execution_policy.policy_hash})
+    repository = SQLiteMeasurementRepository(tmp_path / "hosted-recommendation-retry.sqlite3")
+    owner = OwnerIdentity(tenant_id="tenant-a", object_id="user-a")
+    created = repository.create(owner, prepared)
+    approved = MeasurementCoordinator(repository).approve(
+        created.run_id, owner, created.revision, prepared.approval_hash,
+    )
+    JobService(repository).enqueue(
+        approved.run_id,
+        owner,
+        approved.revision,
+        JobType.EVALUATE,
+        "evaluate-hosted-retry",
+        EvaluationRequest(confirm_evaluation_calls=True, include_recommendations=True),
+    )
+    completed_job, completed_run = Worker(
+        repository,
+        "worker-a",
+        {
+            JobType.EVALUATE: EvaluationHandler(
+                repository,
+                execution_policy,
+                FakeSearch(),
+                (FakeEvaluator(prepared.profiles[0]),),
+            ),
+        },
+    ).run_once()
+    stage_job, _ = ProjectMeasurementOrchestrator(
+        repository,
+        execution_policy,
+    ).reconcile_job(completed_job, completed_run)
+    repository.lease_one_job("worker-a")
+    _, failed_run = repository.fail_job(stage_job.job_id, "worker-a", "ProviderError")
+    specialist_settings = SpecialistFoundrySettings.from_environment({
+        "GEO_FOUNDRY_RECOMMENDATIONS_AGENT_ENDPOINT": (
+            "https://example.services.ai.azure.com/api/projects/geo/"
+            "agents/recommendations/endpoint/protocols/openai/responses"
+        ),
+        "GEO_FOUNDRY_RECOMMENDATIONS_AGENT_NAME": "recommendations",
+        "GEO_FOUNDRY_RECOMMENDATIONS_AGENT_VERSION": "7",
+    })
+
+    retry_job, retry_run = ProjectMeasurementOrchestrator(
+        repository,
+        execution_policy,
+        specialist_settings,
+    ).retry_recommendations(
+        failed_run,
+        expected_revision=failed_run.revision,
+        idempotency_key="hosted-recommendations-retry",
+    )
+
+    request = SpecialistStageRequest.model_validate(retry_job.request)
+    assert request.provider_mode == SpecialistProviderMode.ENVIRONMENT_AGENT
+    assert request.binding.agent_name == "recommendations"
+    stage = retry_run.agent_stages[0]
+    assert stage.provider_mode == SpecialistProviderMode.ENVIRONMENT_AGENT
+    assert stage.binding.agent_name == "recommendations"
+    assert stage.binding.agent_version == "7"
 
 
 def test_evaluator_recovery_requeues_recommendations_for_new_measurement(tmp_path):

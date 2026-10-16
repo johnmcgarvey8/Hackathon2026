@@ -215,7 +215,7 @@ class ProjectMeasurementOrchestrator:
             ),
             policy_id=job.policy_id,
             policy_hash=job.policy_hash,
-            operation_ceiling=1,
+            operation_ceiling=1 + int(self.policy.technical_browse),
         )
 
     def retry_recommendations(
@@ -252,7 +252,6 @@ class ProjectMeasurementOrchestrator:
         if stage is None or stage.status != AgentStageStatus.FAILED or stage.job_id is None:
             raise Conflict("Recommendation retry requires a failed saved specialist stage")
         binding, provider_mode = self._resolve_recommendations(run)
-        previous = self.repository.get_job(stage.job_id, run.owner)
         return self.jobs.enqueue(
             run.run_id,
             run.owner,
@@ -266,9 +265,9 @@ class ProjectMeasurementOrchestrator:
                 confirm_provider_call=True,
                 retry_of_job_id=stage.job_id,
             ),
-            policy_id=previous.policy_id,
-            policy_hash=previous.policy_hash,
-            operation_ceiling=1,
+            policy_id=self.policy.policy_id,
+            policy_hash=self.policy.policy_hash,
+            operation_ceiling=1 + int(self.policy.technical_browse),
         )
 
     def _resolve_recommendations(

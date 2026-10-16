@@ -81,6 +81,37 @@ test("measurement pages start one automatic live workflow", () => {
   assert.match(detail, /Latest server state was reloaded/);
 });
 
+test("ready measurements keep polling and showing a spinner for active recommendations", () => {
+  for (const state of ["ready", "partial"]) {
+    for (const status of ["queued", "running"]) {
+      const run = {
+        state,
+        recommendations: null,
+        agent_stages: [{ role: "recommendations", status }],
+        result_availability: { recommendations: false, evidence: false },
+      };
+      assert.equal(runtime.isRunActive(run), true);
+      assert.equal(runtime.shouldPollRun(run), true);
+      assert.equal(runtime.isMeasurementResultPending(run, "recommendations"), true);
+      assert.equal(runtime.isMeasurementResultPending(run, "evidence"), false);
+    }
+    for (const status of ["completed", "failed", "skipped"]) {
+      const run = {
+        state,
+        agent_stages: [{ role: "recommendations", status }],
+        latest_job: { state: status === "failed" ? "failed" : "completed" },
+      };
+      assert.equal(runtime.shouldPollRun(run), false);
+      assert.equal(runtime.isMeasurementResultPending(run, "recommendations"), false);
+    }
+    for (const jobState of ["queued", "leased"]) {
+      assert.equal(runtime.shouldPollRun({ state, latest_job: { state: jobState } }), true);
+    }
+  }
+  assert.equal(runtime.shouldPollRun(null), false);
+  assert.equal(runtime.shouldPollRun({ state: "ready" }), false);
+});
+
 test("polling is bounded, visibility aware, and GET only", () => {
   const polling = read("components/measurement/use-run-polling.ts");
   assert.match(polling, /MAX_POLLS = 120/);
@@ -139,6 +170,15 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /MeasurementLoadingState stage="answers"/);
   assert.match(results, /MeasurementLoadingState stage="scores"/);
   assert.match(results, /MeasurementLoadingState stage="recommendations"/);
+  assert.match(results, /Recommendation Agent v3/);
+  assert.match(results, /Legacy report v2/);
+  assert.match(results, /This saved run predates Recommendation Agent v3/);
+  assert.match(results, /Run a new measurement to generate/);
+  assert.match(results, /Optimise this page/);
+  assert.match(results, /New content opportunities/);
+  assert.match(results, /Checks use indexed HTML, not a live JavaScript-rendered page/);
+  assert.match(results, /technical_signals\.reason === "partial-html"/);
+  assert.match(results, /Unavailable fields remain unknown/);
   assert.match(loading, /role="status"/);
   assert.match(loading, /aria-live="polite"/);
   assert.match(progress, /measurementOperationState/);

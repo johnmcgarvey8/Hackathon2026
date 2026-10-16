@@ -24,6 +24,8 @@ class MeasurementExecutionPolicy(Contract):
     max_search_calls: Literal[5] = 5
     max_evaluator_calls_per_profile: Literal[5] = 5
     max_recommendation_calls: Literal[1] = 1
+    recommendation_planner_max_output_tokens: int = Field(default=4000, ge=1, le=8000)
+    technical_browse: bool = False
     automatic_retries: Literal[False] = False
     budget_grant_id: str | None = Field(default=None, min_length=1, max_length=200)
 

@@ -6,16 +6,6 @@ import type {
 } from "./types";
 
 const activeStates = new Set(["preparing", "queued", "evaluating", "recommending"]);
-const terminalOrReviewStates = new Set([
-  "draft",
-  "awaiting-query-approval",
-  "ready",
-  "partial",
-  "failed",
-  "needs-review",
-  "cancelled",
-  "exported",
-]);
 
 export function actionAllowed(action: AvailableAction | undefined): boolean {
   return typeof action === "boolean" ? action : action?.allowed === true;
@@ -26,7 +16,11 @@ export function actionReason(action: AvailableAction | undefined): string | null
 }
 
 export function isRunActive(run: MeasurementRun): boolean {
-  return activeStates.has(run.state.toLowerCase());
+  return activeStates.has(run.state.toLowerCase())
+    || ["queued", "leased"].includes(run.latest_job?.state || "")
+    || (run.agent_stages || []).some((stage) =>
+      stage.role === "recommendations"
+      && ["queued", "running"].includes(stage.status));
 }
 
 export type MeasurementResultStage =
@@ -64,7 +58,8 @@ export function isMeasurementResultPending(
     scores: "citations",
   }[stage] as "query_plan" | "evidence" | "answers" | "citations";
 
-  return run.result_availability?.[availabilityKey] !== true;
+  return activeStates.has(run.state.toLowerCase())
+    && run.result_availability?.[availabilityKey] !== true;
 }
 
 export function measurementOperationState(
@@ -81,9 +76,7 @@ export function measurementOperationState(
 }
 
 export function shouldPollRun(run: MeasurementRun | null): boolean {
-  if (!run) return false;
-  const state = run.state.toLowerCase();
-  return activeStates.has(state) && !terminalOrReviewStates.has(state);
+  return run !== null && isRunActive(run);
 }
 
 export function operationTotals(progress: RunProgress | null) {

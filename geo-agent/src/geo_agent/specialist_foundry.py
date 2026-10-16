@@ -13,11 +13,19 @@ from geo_agent.specialist_agents import (
     SpecialistAgentRole,
     SpecialistProviderMode,
 )
-from geo_agent.webiq import ProviderError
+from geo_agent.webiq import ProviderError, ProviderFailure
 
 
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_OUTPUT_TOKENS = 2000
+
+
+def _validation_detail(prefix: str, error: ValidationError) -> str:
+    details = []
+    for item in error.errors()[:3]:
+        location = ".".join(str(part) for part in item.get("loc", ())) or "<root>"
+        details.append(f"{location}:{item.get('type', 'validation_error')}")
+    return f"{prefix} ({', '.join(details)}); no automatic retry"
 
 
 class SpecialistFoundrySettings(Contract):
@@ -112,6 +120,10 @@ class HostedSpecialistAgent:
         provider_mode: SpecialistProviderMode,
         context: dict,
         output_type: type[BaseModel],
+        *,
+        max_output_tokens: int = MAX_OUTPUT_TOKENS,
+        strict_json_schema: bool = False,
+        instructions: str | None = None,
     ) -> tuple[BaseModel, SpecialistAgentCall]:
         body = {
             "agent_reference": {
@@ -125,13 +137,25 @@ class HostedSpecialistAgent:
                     "SPECIALIST_ROLE": role.value,
                     "CONTEXT": context,
                     "OUTPUT_CONTRACT": output_type.__name__,
+                    "OUTPUT_SCHEMA": output_type.model_json_schema(),
                 }, ensure_ascii=True),
             }],
             "store": False,
             "stream": False,
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "max_output_tokens": max_output_tokens,
             "tool_choice": "none",
         }
+        if instructions:
+            body["instructions"] = instructions
+        if strict_json_schema:
+            body["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": output_type.__name__,
+                    "strict": True,
+                    "schema": output_type.model_json_schema(),
+                },
+            }
         url = f"{binding.project_endpoint}/openai/v1/responses"
         try:
             token = self.token_provider()
@@ -151,59 +175,107 @@ class HostedSpecialistAgent:
                     json=body,
                 ) as response:
                     if response.status_code != 200:
+                        code = (
+                            ProviderFailure.AUTH
+                            if response.status_code in {401, 403}
+                            else ProviderFailure.RATE_LIMIT
+                            if response.status_code == 429
+                            else ProviderFailure.REQUEST
+                        )
+                        detail = (
+                            "Foundry specialist agent request failed "
+                            f"(HTTP {response.status_code}); no automatic retry"
+                        )
                         raise ProviderError(
-                            f"Foundry specialist agent request failed (HTTP {response.status_code}); "
-                            "no automatic retry"
+                            detail,
+                            code=code,
+                            safe_detail=detail,
                         )
                     content = bytearray()
                     for chunk in response.iter_bytes():
                         content.extend(chunk)
                         if len(content) > MAX_RESPONSE_BYTES:
-                            raise ProviderError(
+                            detail = (
                                 "Foundry specialist agent response exceeded the size limit; "
                                 "no automatic retry"
+                            )
+                            raise ProviderError(
+                                detail,
+                                code=ProviderFailure.OUTPUT_LIMIT,
+                                safe_detail=detail,
                             )
         except ProviderError:
             raise
         except (httpx.HTTPError, OSError, ValueError):
             raise ProviderError(
-                "Foundry specialist agent connection failed or timed out; no automatic retry"
+                "Foundry specialist agent connection failed or timed out; no automatic retry",
+                code=ProviderFailure.CONNECTION,
+                safe_detail=(
+                    "Foundry specialist agent connection failed or timed out; "
+                    "no automatic retry"
+                ),
             ) from None
         try:
             payload = AgentResponse.model_validate_json(content)
-        except ValidationError:
+        except ValidationError as error:
+            detail = _validation_detail(
+                "Foundry specialist agent returned an invalid response",
+                error,
+            )
             raise ProviderError(
-                "Foundry specialist agent returned an invalid response; no automatic retry"
+                detail,
+                code=ProviderFailure.SCHEMA,
+                safe_detail=detail,
             ) from None
         if payload.status != "completed" or any(
             item.get("blocked") for item in payload.content_filters
         ):
-            raise ProviderError(
+            detail = (
                 "Foundry specialist agent returned an incomplete or blocked response; "
                 "no automatic retry"
+            )
+            raise ProviderError(
+                detail,
+                code=ProviderFailure.INCOMPLETE,
+                safe_detail=detail,
             )
         texts = []
         for item in payload.output:
             if item.type == "reasoning":
                 continue
             if item.type != "message" or item.role != "assistant" or item.status != "completed":
-                raise ProviderError(
+                detail = (
                     "Foundry specialist agent returned unexpected output; no automatic retry"
+                )
+                raise ProviderError(
+                    detail,
+                    code=ProviderFailure.SCHEMA,
+                    safe_detail=detail,
                 )
             for part in item.content:
                 if part.type != "output_text" or not part.text or part.annotations:
-                    raise ProviderError(
+                    detail = (
                         "Foundry specialist agent returned unsupported content; "
                         "no automatic retry"
+                    )
+                    raise ProviderError(
+                        detail,
+                        code=ProviderFailure.SCHEMA,
+                        safe_detail=detail,
                     )
                 texts.append(part.text)
         text = "\n".join(texts).strip()
         try:
             parsed = output_type.model_validate_json(text)
-        except (ValidationError, ValueError, TypeError):
+        except ValidationError as error:
+            detail = _validation_detail(
+                "Foundry specialist agent output failed schema validation",
+                error,
+            )
             raise ProviderError(
-                "Foundry specialist agent output did not match the required contract; "
-                "no automatic retry"
+                detail,
+                code=ProviderFailure.SCHEMA,
+                safe_detail=detail,
             ) from None
         usage = payload.usage or {}
         return parsed, SpecialistAgentCall(

@@ -7,6 +7,7 @@ from geo_agent.evaluation import answer_mentions_target, match_citations, measur
 from geo_agent.evidence_assessment import BrandDefinitionRecord, build_evidence_assessment
 from geo_agent.measurement_workflow import MeasurementRun
 from geo_agent.projects import Project
+from geo_agent.recommendation_plan import RecommendationPlanReport
 
 
 RESULT_DISTINCTIONS = (
@@ -495,33 +496,71 @@ def build_geo_context_packet(
                 None,
             )
             recommendation_items = []
-            decisions = {
-                item.task_id: item.decision
-                for item in (
-                    run.recommendation_review.decisions
-                    if run.recommendation_review else ()
-                )
-            }
-            for task in sorted(
-                run.recommendations.tasks if run.recommendations else (),
-                key=lambda item: (item.priority, item.task_id),
-            ):
-                recommendation_items.append({
-                    "task_id": task.task_id,
-                    "priority": task.priority,
-                    "query_id": task.query_id,
-                    "target_section": _text(task.target_section),
-                    "title": _text(task.title),
-                    "proposed_change": _text(task.proposed_change),
-                    "rationale": _text(task.rationale),
-                    "confidence": task.confidence,
-                    "verification": _text(task.verification),
-                    "human_review": decisions.get(task.task_id, "pending"),
-                    "page_evidence_ids": [item.evidence_id for item in task.page_evidence],
-                    "comparison_evidence_ids": [
-                        item.evidence_id for item in task.comparison_evidence
-                    ],
-                })
+            if isinstance(run.recommendations, RecommendationPlanReport):
+                decisions = {
+                    item.item_id: item.decision
+                    for item in (
+                        run.recommendation_review.decisions
+                        if run.recommendation_review else ()
+                    )
+                }
+                for item in run.recommendations.items:
+                    is_optimisation = item.kind == "page-optimisation"
+                    recommendation_items.append({
+                        "item_id": item.rec_id,
+                        "kind": item.kind,
+                        "priority": item.tier,
+                        "query_ids": list(
+                            item.addresses_query_ids
+                            if is_optimisation else item.target_query_ids
+                        ),
+                        "title": _text(
+                            item.title if is_optimisation else item.working_title
+                        ),
+                        "proposed_change": _text(
+                            item.proposed_change
+                            if is_optimisation else item.gap_justification
+                        ),
+                        "confidence": item.confidence,
+                        "human_review": decisions.get(item.rec_id, "pending"),
+                        "evidence_ids": [
+                            evidence.evidence_id for evidence in item.evidence
+                        ],
+                        "comparison_evidence_ids": [
+                            evidence.evidence_id
+                            for evidence in item.comparison_evidence
+                        ],
+                    })
+            else:
+                decisions = {
+                    item.task_id: item.decision
+                    for item in (
+                        run.recommendation_review.decisions
+                        if run.recommendation_review else ()
+                    )
+                }
+                for task in sorted(
+                    run.recommendations.tasks if run.recommendations else (),
+                    key=lambda item: (item.priority, item.task_id),
+                ):
+                    recommendation_items.append({
+                        "task_id": task.task_id,
+                        "priority": task.priority,
+                        "query_id": task.query_id,
+                        "target_section": _text(task.target_section),
+                        "title": _text(task.title),
+                        "proposed_change": _text(task.proposed_change),
+                        "rationale": _text(task.rationale),
+                        "confidence": task.confidence,
+                        "verification": _text(task.verification),
+                        "human_review": decisions.get(task.task_id, "pending"),
+                        "page_evidence_ids": [
+                            item.evidence_id for item in task.page_evidence
+                        ],
+                        "comparison_evidence_ids": [
+                            item.evidence_id for item in task.comparison_evidence
+                        ],
+                    })
             recommendations = _complete_group(
                 "tasks",
                 recommendation_items,

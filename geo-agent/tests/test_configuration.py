@@ -1,4 +1,7 @@
 import os
+from importlib import import_module
+
+import pytest
 
 from geo_agent.__main__ import load_environment
 
@@ -19,12 +22,46 @@ def test_env_file_loads_endpoints_and_preserves_literal_key(tmp_path, monkeypatc
     assert os.environ["WEBIQ_API_KEY"] == "dummy-${NOT_AN_ENV_REFERENCE}-value"
 
 
-def test_existing_environment_takes_precedence_for_local_runtime(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", ["WEBIQ_API_KEY", "ANTHROPIC_API_KEY", "GEO_API_TOKEN", "GEO_MCP_AGENT_TOKEN"])
+def test_env_file_credentials_override_inherited_values(tmp_path, monkeypatch, name):
+    monkeypatch.setenv(name, "dummy-existing-value")
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{name}=dummy-file-value\n", encoding="utf-8")
+    load_environment(env_file)
+    assert os.environ[name] == "dummy-file-value"
+
+
+def test_empty_file_key_does_not_fall_back_to_inherited_credential(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBIQ_API_KEY", "dummy-existing-value")
     env_file = tmp_path / ".env"
-    env_file.write_text("WEBIQ_API_KEY=dummy-file-value\n", encoding="utf-8")
+    env_file.write_text("WEBIQ_API_KEY=\n", encoding="utf-8")
+    load_environment(env_file)
+    assert os.environ["WEBIQ_API_KEY"] == ""
+
+
+def test_unspecified_credentials_and_explicit_runtime_overrides_are_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("WEBIQ_API_KEY", "dummy-existing-value")
+    monkeypatch.setenv("GEO_PORT", "8091")
+    monkeypatch.setenv("GEO_MEASUREMENT_POLICY", "measurement-policy.json")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "GEO_PORT=8088\nGEO_MEASUREMENT_POLICY=measurement-live-policy.json\n",
+        encoding="utf-8",
+    )
     load_environment(env_file)
     assert os.environ["WEBIQ_API_KEY"] == "dummy-existing-value"
+    assert os.environ["GEO_PORT"] == "8091"
+    assert os.environ["GEO_MEASUREMENT_POLICY"] == "measurement-policy.json"
+
+
+@pytest.mark.parametrize("module_name", [
+    "geo_agent.__main__",
+    "geo_agent.measurement_worker",
+    "geo_agent.mock_measurement_worker",
+    "geo_agent.mcp_server",
+])
+def test_local_entrypoints_share_the_environment_loader(module_name):
+    assert import_module(module_name).load_environment is load_environment
 
 
 def test_missing_env_file_is_optional(tmp_path, monkeypatch):
@@ -34,9 +71,9 @@ def test_missing_env_file_is_optional(tmp_path, monkeypatch):
 
 
 def test_default_env_file_is_relative_to_agent_not_working_directory(tmp_path, monkeypatch):
-    import geo_agent.__main__ as launcher
+    import geo_agent.environment as environment
 
-    monkeypatch.setattr(launcher, "__file__", str(tmp_path / "src" / "geo_agent" / "__main__.py"))
+    monkeypatch.setattr(environment, "__file__", str(tmp_path / "src" / "geo_agent" / "environment.py"))
     monkeypatch.delenv("WEBIQ_API_KEY", raising=False)
     (tmp_path / ".env").write_text("WEBIQ_API_KEY=dummy-agent-value\n", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"

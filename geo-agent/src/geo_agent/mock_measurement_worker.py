@@ -4,8 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
 
-from dotenv import load_dotenv
-
+from geo_agent.environment import load_environment
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.mock_runtime import MockMeasurementRuntime
 from geo_agent.persistence import SQLiteMeasurementRepository
@@ -44,11 +43,7 @@ def run_worker(
 
 
 def main() -> None:
-    load_dotenv(
-        Path(__file__).resolve().parents[2] / ".env",
-        override=False,
-        interpolate=False,
-    )
+    load_environment()
     runtime, repository = create_runtime_from_environment(os.environ)
     try:
         poll_seconds = float(
