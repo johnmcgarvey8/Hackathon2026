@@ -18,6 +18,22 @@ Current and future app projects inherit this default unless they have an explici
 
 ## Recommendations specialist agent
 
+The complete paste-ready system instruction lives in
+[`recommendations-agent-instructions.txt`](recommendations-agent-instructions.txt).
+The instruction adapts selected principles from
+[geo-skills](https://github.com/TheSmokeDev/geo-skills/tree/35810d3ee8aa6cf1de151c9ea79265237c71df7b/skills).
+
+### Configure the hosted planner
+
+1. Create or open the Recommendations prompt agent in Azure Foundry.
+2. Copy the entire contents of `recommendations-agent-instructions.txt` into its
+   **Instructions** field. Do not attach tools or install the referenced GEO skills.
+3. Publish an immutable version and record the agent name, Responses endpoint and
+   numeric version.
+4. Configure all three settings below, then restart the API and measurement worker
+   so they use the intended binding. If the project has a Recommendations-specific
+   binding, update that binding instead because it overrides the environment default.
+
 The recommendation stage can use a separate pinned agent. Configure all three
 values or leave all three blank:
 
@@ -32,10 +48,65 @@ recommendation provider. If the configured agent invocation fails, the stage is
 saved as failed and requires an explicit retry. It does not make a second
 provider call through the direct model.
 
-The agent must return only JSON matching the application
-`RecommendationProposal` contract. The application remains responsible for
-evidence-ID validation, exact-quote validation, measurement and approval hash
-binding, persistence, human review, and publishing restrictions.
+Configure this agent as `GeoRecommendationPlanner`. It must return only JSON
+matching the Pydantic-generated `PlanProposal` schema, with the top-level fields
+`diagnosis`, `key_findings`, `page_optimisations`,
+`new_content_recommendations`, `not_recommended`, and `reason`. It must not
+return Markdown, scores, ranks, tiers, uplift estimates, permission flags,
+rendered JSON-LD, or full page copy.
+
+The hosted agent call uses the immutable instructions published with the pinned
+agent version and authoritative Pydantic validation. Foundry rejects
+caller-supplied `instructions` and strict `text.format: json_schema` with this
+persisted prompt agent's `agent_reference`, so direct baseline model calls alone
+use caller-supplied instructions and strict structured output. Hosted calls
+include the generated Pydantic JSON Schema in the user payload as
+`OUTPUT_SCHEMA`, then validate the returned JSON against the same model. Both
+paths disable tools with `tool_choice: none`, use `store: false`, and perform no
+automatic retry.
+
+The previously documented `GEORecommendations` binding was pinned to immutable
+version `3`, containing the shorter Planner prompt. The expanded instruction file
+does not update an existing hosted version automatically: publish it as a new
+immutable version and deliberately update the configured version pin. The file is
+a manual hosted-agent setup artifact; the baseline direct-model prompt remains in
+[`recommendation_plan.py`](src/geo_agent/recommendation_plan.py).
+
+The planner output limit is policy controlled, defaults to 4,000 tokens, and is
+capped at 8,000. Pydantic parsing remains authoritative if a hosted agent does
+not support strict schema formatting with `agent_reference`.
+
+The application remains responsible for evidence-ID and exact-quote validation,
+item quarantine, deterministic technical checks, JSON-LD rendering, scoring,
+ranking, persistence, human review, and publishing restrictions. Detailed
+content briefs and CMS handoff are outside this release.
+
+Technical indexed-HTML Browse is disabled by default. An approved policy with
+`technical_browse: true` adds one separately claimed Web IQ request before the
+Recommendations call. It raises the stage ceiling from one operation to two,
+changes the policy hash, and requires a distinct matching grant with
+`recommendation_technical_browse` equal to the number of authorised runs.
+Never edit a persisted policy or grant in place.
+
+Browse requests up to 200,000 characters of indexed HTML with `liveCrawl: none`,
+no dynamic rendering, and no direct target-page fetch. Extracted metadata,
+canonical, robots, JSON-LD types, headings, image-alt coverage and internal-link
+counts enter the Recommendations context and saved report. Raw HTML is not saved
+in the report. Provider fragments are labelled `partial-html`; fields outside
+complete returned sections remain `not-provided` (unknown), rather than evidence
+of missing website metadata. Text-only responses are `html-not-provided`.
+Even complete returned HTML is an indexed snapshot, not a live full-site audit.
+
+The October 16 local setup uses `measurement-live-policy-html.json` with
+`measurement-live-budget-grant-html.json` for the approved one-run Halfords
+verification. Set `GEO_MEASUREMENT_POLICY` and `GEO_MEASUREMENT_BUDGET_GRANT` to
+those files for both local launchers, then restart the API and live worker.
+The original v3 policy, grant and historical reports remain unchanged.
+These local files do not authorise additional runs or reset previous usage.
+The grant retains the existing USD 250 authorization-only field; it is not a
+new monetary approval or real-time spend limit. The current local worker starts
+with aggregate budget enforcement disabled, so the recorded one-run allowance
+must not be interpreted as an enforced runtime cap.
 
 Projects can override the environment default with a role-specific binding:
 

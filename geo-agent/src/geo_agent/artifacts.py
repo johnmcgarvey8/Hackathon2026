@@ -9,8 +9,13 @@ import yaml
 
 from geo_agent.contracts import Contract, MeasurementResults, Provenance, Run, State, digest
 from geo_agent.evaluation import measurement_scores, score_results
+from geo_agent.recommendation_plan import (
+    RecommendationPlanReport,
+    SavedNewContentRecommendation,
+    SavedPageOptimisation,
+)
 from geo_agent.recommendations import RecommendationReport, build_content_strategy
-from geo_agent.measurement_workflow import RecommendationReview
+from geo_agent.measurement_workflow import RecommendationReview, RecommendationReviewV2
 
 
 class RunManifest(Contract):
@@ -181,11 +186,28 @@ def _accepted_task_markdown(task) -> str:
 
 def render_measurement_bundle(
     measurement: MeasurementResults,
-    recommendations: RecommendationReport | None = None,
-    recommendation_review: RecommendationReview | None = None,
+    recommendations: RecommendationReport | RecommendationPlanReport | None = None,
+    recommendation_review: RecommendationReview | RecommendationReviewV2 | None = None,
     assessment: EvidenceAssessment | None = None,
 ) -> bytes:
     """Render a saved-data draft; the owning service must enforce access and approval."""
+    if isinstance(recommendations, RecommendationPlanReport):
+        if recommendation_review is not None and not isinstance(
+            recommendation_review,
+            RecommendationReviewV2,
+        ):
+            raise ValueError("v3 recommendations require a v2 recommendation review")
+        return _render_v3_measurement_bundle(
+            measurement,
+            recommendations,
+            recommendation_review,
+            assessment,
+        )
+    if recommendation_review is not None and not isinstance(
+        recommendation_review,
+        RecommendationReview,
+    ):
+        raise ValueError("v2 recommendations require a v1 recommendation review")
     measurement = MeasurementResults.model_validate(measurement.model_dump(mode="json"))
     if recommendations is not None:
         recommendations.validate_for(measurement)
@@ -302,6 +324,212 @@ def render_measurement_bundle(
     with zipfile.ZipFile(buffer, "w") as archive:
         for filename, content in sorted(contents.items()):
             archive.writestr(zipfile.ZipInfo(filename, date_time=(1980, 1, 1, 0, 0, 0)), content)
+    return buffer.getvalue()
+
+
+def _accepted_v3_markdown(
+    item: SavedPageOptimisation | SavedNewContentRecommendation,
+) -> str:
+    score = item.score_breakdown
+    evidence = "\n".join(
+        f"- `{reference.evidence_id}`: {_markdown_text(reference.quote)}"
+        for reference in (*item.evidence, *item.comparison_evidence)
+    )
+    header = (
+        f"# {_markdown_text(item.title)}"
+        if isinstance(item, SavedPageOptimisation)
+        else f"# {_markdown_text(item.working_title)}"
+    )
+    lines = [
+        header,
+        "",
+        "Decision: **accepted for human implementation planning**. Publishing permission: **none**.",
+        "",
+        f"Tier: **{item.tier}**. Heuristic score: **{score.priority_score}**.",
+        "",
+        "## Why this rank",
+        "",
+        (
+            f"Reach {score.reach}; impact {score.impact_weight}; effort {score.effort_weight}; "
+            f"confidence {score.confidence_weight}; basis {score.basis_weight}."
+        ),
+        "",
+    ]
+    if isinstance(item, SavedPageOptimisation):
+        lines.extend([
+            "## Observation",
+            "",
+            _markdown_text(item.observation),
+            "",
+            "## Proposed change",
+            "",
+            _markdown_text(item.proposed_change),
+            "",
+            "## Implementation outline",
+            "",
+            *(f"- {_markdown_text(step)}" for step in item.implementation.outline),
+            "",
+        ])
+        if item.rendered_jsonld:
+            lines.extend([
+                "## Deterministic JSON-LD",
+                "",
+                "```json",
+                *item.rendered_jsonld,
+                "```",
+                "",
+            ])
+        if item.facts_to_verify:
+            lines.extend([
+                "## Facts to verify",
+                "",
+                *(f"- {_markdown_text(fact)}" for fact in item.facts_to_verify),
+                "",
+            ])
+        lines.extend([
+            "## Verification",
+            "",
+            _markdown_text(item.verification),
+            "",
+        ])
+    else:
+        lines.extend([
+            "## New-content gap",
+            "",
+            _markdown_text(item.gap_justification),
+            "",
+            f"Page type: `{item.page_type}`.",
+            "",
+            "A detailed content brief has not been generated. This artifact authorises planning only.",
+            "",
+        ])
+    lines.extend([
+        "## Evidence",
+        "",
+        evidence,
+        "",
+        "This recommendation remains a hypothesis requiring human verification and approval.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _render_v3_measurement_bundle(
+    measurement: MeasurementResults,
+    recommendations: RecommendationPlanReport,
+    recommendation_review: RecommendationReviewV2 | None,
+    assessment: EvidenceAssessment | None,
+) -> bytes:
+    measurement = MeasurementResults.model_validate(measurement.model_dump(mode="json"))
+    recommendations.validate_for(measurement)
+    recommendations = RecommendationPlanReport.model_validate(
+        recommendations.model_dump(mode="json")
+    )
+    if recommendation_review is not None:
+        recommendation_review.validate_for(measurement, recommendations)
+        recommendation_review = RecommendationReviewV2.model_validate(
+            recommendation_review.model_dump(mode="json")
+        )
+    scores = measurement_scores(measurement)
+    inputs = measurement.inputs
+    payload = measurement.model_dump(mode="json")
+    accepted_ids = {
+        decision.item_id
+        for decision in recommendation_review.decisions
+        if decision.decision == "accepted"
+    } if recommendation_review is not None else set()
+    accepted_files = tuple(
+        f"recommendations/{item.rec_id}.md"
+        for item in recommendations.items
+        if item.rec_id in accepted_ids
+    )
+    base_files = (
+        *MeasurementManifest.model_fields["files"].default,
+        "technical-signals.json",
+    )
+    manifest = MeasurementManifest(
+        measurement_hash=digest(payload),
+        input_hash=inputs.approval_hash,
+        snapshot_hash=inputs.snapshot.content_hash,
+        source_url=str(inputs.brief.url),
+        provenance=inputs.snapshot.provenance,
+        method_version=inputs.method_version,
+        retrieval_mode=inputs.retrieval_mode,
+        query_ids=tuple(query.query_id for query in inputs.query_plan.queries),
+        profile_ids=tuple(profile.profile_id for profile in inputs.profiles),
+        recommendation_status=recommendations.status,
+        recommendation_review_status="reviewed" if recommendation_review else "not-reviewed",
+        provisional=scores["provisional"],
+        files=tuple(sorted((*base_files, *accepted_files))),
+    )
+    contents = {
+        "manifest.json": json.dumps(
+            manifest.model_dump(mode="json"),
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ) + "\n",
+        "manifest.md": (
+            "# GEO Measurement Draft\n\n"
+            "This bundle contains evidence-bound, heuristically ranked recommendation hypotheses. "
+            "Scores are not predicted uplift. Human acceptance grants planning permission only; "
+            "publishing permission remains false.\n\n"
+            "New-content artifacts identify measured gaps. Detailed content briefs have not been generated.\n"
+        ),
+        "measurement.json": json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        "scores.json": json.dumps(scores, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        "recommendations.json": json.dumps(
+            recommendations.model_dump(mode="json"),
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ) + "\n",
+        "technical-signals.json": json.dumps(
+            recommendations.technical_signals.model_dump(mode="json"),
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ) + "\n",
+        "recommendation-review.json": json.dumps(
+            recommendation_review.model_dump(mode="json", exclude={"actor"})
+            if recommendation_review else None,
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ) + "\n",
+    }
+    if assessment is not None:
+        _validate_assessment(measurement, assessment)
+        contents.update(_assessment_contents(assessment))
+        manifest_payload = manifest.model_dump(mode="json")
+        manifest_payload.update({
+            "schema_version": "geo-measurement-manifest/v2",
+            "assessment_hash": assessment.assessment_hash,
+            "assessment_method": assessment.method_version,
+            "definition_version": assessment.definition_version,
+            "definition_hash": assessment.definition_hash,
+            "files": sorted((
+                *manifest.files,
+                "evidence-assessment.json",
+                "evidence-assessment.md",
+            )),
+        })
+        contents["manifest.json"] = json.dumps(
+            manifest_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ) + "\n"
+    for item in recommendations.items:
+        if item.rec_id in accepted_ids:
+            contents[f"recommendations/{item.rec_id}.md"] = _accepted_v3_markdown(item)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for filename, content in sorted(contents.items()):
+            archive.writestr(
+                zipfile.ZipInfo(filename, date_time=(1980, 1, 1, 0, 0, 0)),
+                content,
+            )
     return buffer.getvalue()
 
 

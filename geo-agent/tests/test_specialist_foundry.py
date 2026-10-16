@@ -84,6 +84,7 @@ def test_hosted_specialist_uses_pinned_agent_and_disables_tools_and_storage():
         SpecialistProviderMode.ENVIRONMENT_AGENT,
         {"measurement_hash": "a" * 64},
         SpecialistOutput,
+        instructions="Return the required JSON object.",
     )
 
     assert output == SpecialistOutput(value="validated")
@@ -101,6 +102,13 @@ def test_hosted_specialist_uses_pinned_agent_and_disables_tools_and_storage():
     assert body["store"] is False
     assert body["stream"] is False
     assert body["tool_choice"] == "none"
+    assert body["instructions"] == "Return the required JSON object."
+    assert "text" not in body
+    request_content = json.loads(body["input"][0]["content"])
+    assert request_content["SPECIALIST_ROLE"] == "recommendations"
+    assert request_content["CONTEXT"] == {"measurement_hash": "a" * 64}
+    assert request_content["OUTPUT_CONTRACT"] == "SpecialistOutput"
+    assert request_content["OUTPUT_SCHEMA"] == SpecialistOutput.model_json_schema()
 
 
 @pytest.mark.parametrize(
@@ -148,3 +156,38 @@ def test_hosted_specialist_fails_closed_without_retry(payload):
         )
 
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [
+        (400, "provider-request-failed"),
+        (401, "provider-authentication-failed"),
+        (403, "provider-authentication-failed"),
+        (429, "provider-rate-limited"),
+    ],
+)
+def test_hosted_specialist_preserves_safe_http_failure(status_code, error_code):
+    def handler(_request: httpx.Request):
+        return httpx.Response(status_code)
+
+    with pytest.raises(ProviderError) as captured:
+        HostedSpecialistAgent(
+            token_provider=lambda: "token",
+            transport=httpx.MockTransport(handler),
+        ).invoke(
+            FoundryProjectBinding(
+                project_endpoint="https://example.services.ai.azure.com/api/projects/geo",
+                agent_name="recommendations",
+                agent_version="7",
+            ),
+            SpecialistAgentRole.RECOMMENDATIONS,
+            SpecialistProviderMode.ENVIRONMENT_AGENT,
+            {},
+            SpecialistOutput,
+        )
+
+    assert captured.value.code.value == error_code
+    assert captured.value.safe_detail == (
+        f"Foundry specialist agent request failed (HTTP {status_code}); no automatic retry"
+    )

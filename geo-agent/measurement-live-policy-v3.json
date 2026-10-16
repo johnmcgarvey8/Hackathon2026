@@ -1,6 +1,6 @@
 {
   "schema_version": "geo-execution-policy/v1",
-  "policy_id": "project-live-measurement-2026-10-08-v3",
+  "policy_id": "project-live-measurement-2026-10-09-recommendations-v3-8k",
   "execution_mode": "live",
   "scope": "project-bound",
   "owner_role": "Geo.Operator",
@@ -26,6 +26,8 @@
   "max_search_calls": 5,
   "max_evaluator_calls_per_profile": 5,
   "max_recommendation_calls": 1,
+  "recommendation_planner_max_output_tokens": 8000,
+  "technical_browse": false,
   "automatic_retries": false,
-  "budget_grant_id": "project-live-measurement-2026-10-08-v3-grant"
+  "budget_grant_id": "project-live-measurement-2026-10-09-recommendations-v3-8k-grant"
 }

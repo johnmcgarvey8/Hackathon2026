@@ -16,6 +16,7 @@ from geo_agent.contracts import (
 )
 from geo_agent.foundry import PageAnalysis, PreparationAnalysis
 from geo_agent.evidence_assessment import BrandDefinition, BrandDefinitionRecord
+from geo_agent.recommendation_plan import RecommendationPlanReport
 from geo_agent.recommendations import RecommendationReport
 from geo_agent.specialist_agents import AgentStageRecord
 from geo_agent.workflow import Conflict, NotFound
@@ -94,6 +95,43 @@ class RecommendationReview(Contract):
             raise ValueError("Recommendation review does not match the saved report")
 
 
+class RecommendationDecisionV2(Contract):
+    item_id: str = Field(pattern=r"^(?:opt-(?:[1-8]|T(?:0[1-9]|1[01]))|new-[1-3])$")
+    decision: Literal["accepted", "rejected", "deferred"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RecommendationReviewV2(Contract):
+    schema_version: Literal["geo-recommendation-review/v2"] = "geo-recommendation-review/v2"
+    approval_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    measurement_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    recommendation_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    actor: OwnerIdentity
+    decisions: tuple[RecommendationDecisionV2, ...] = Field(min_length=1, max_length=11)
+    reviewed_at: datetime = Field(default_factory=utc_now)
+    publish_permission: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_decisions(self) -> "RecommendationReviewV2":
+        if len({decision.item_id for decision in self.decisions}) != len(self.decisions):
+            raise ValueError("Recommendation review decisions must have unique item IDs")
+        return self
+
+    def validate_for(
+        self,
+        measurement: MeasurementResults,
+        recommendations: RecommendationPlanReport,
+    ) -> None:
+        if (
+            self.approval_hash != measurement.inputs.approval_hash
+            or self.measurement_hash != digest(measurement.model_dump(mode="json"))
+            or self.recommendation_hash != digest(recommendations.model_dump(mode="json"))
+            or {decision.item_id for decision in self.decisions}
+            != {item.rec_id for item in recommendations.items}
+        ):
+            raise ValueError("Recommendation review does not match the saved report")
+
+
 class MeasurementRun(Contract):
     schema_version: str = Field(default="geo-measurement-run/v1", pattern=r"^geo-measurement-run/v1$")
     run_id: str = Field(default_factory=identifier)
@@ -106,8 +144,8 @@ class MeasurementRun(Contract):
     page_analysis: PreparationAnalysis | PageAnalysis | None = None
     approval: MeasurementApproval | None = None
     measurement: MeasurementResults | None = None
-    recommendations: RecommendationReport | None = None
-    recommendation_review: RecommendationReview | None = None
+    recommendations: RecommendationReport | RecommendationPlanReport | None = None
+    recommendation_review: RecommendationReview | RecommendationReviewV2 | None = None
     agent_stages: tuple[AgentStageRecord, ...] = ()
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -135,7 +173,14 @@ class MeasurementRun(Contract):
                 raise ValueError("Recommendation review requires a saved report")
             if self.recommendation_review.actor != self.owner:
                 raise ValueError("Recommendation review actor must own the run")
-            self.recommendation_review.validate_for(self.measurement, self.recommendations)
+            if isinstance(self.recommendations, RecommendationPlanReport):
+                if not isinstance(self.recommendation_review, RecommendationReviewV2):
+                    raise ValueError("v3 recommendations require a v2 review")
+                self.recommendation_review.validate_for(self.measurement, self.recommendations)
+            else:
+                if not isinstance(self.recommendation_review, RecommendationReview):
+                    raise ValueError("v2 recommendations require a v1 review")
+                self.recommendation_review.validate_for(self.measurement, self.recommendations)
         if len({stage.role for stage in self.agent_stages}) != len(self.agent_stages):
             raise ValueError("Measurement agent stages must have unique roles")
         if self.events and [event.sequence for event in self.events] != list(range(1, len(self.events) + 1)):
@@ -271,18 +316,30 @@ class MeasurementCoordinator:
         run_id: str,
         owner: OwnerIdentity,
         revision: int,
-        decisions: tuple[RecommendationDecision, ...],
+        decisions: tuple[RecommendationDecision | RecommendationDecisionV2, ...],
     ) -> MeasurementRun:
         def operation(run: MeasurementRun) -> MeasurementRun:
             if (
                 run.state not in {MeasurementState.READY, MeasurementState.PARTIAL}
                 or run.measurement is None
                 or run.recommendations is None
-                or not run.recommendations.tasks
+                or (
+                    isinstance(run.recommendations, RecommendationReport)
+                    and not run.recommendations.tasks
+                )
+                or (
+                    isinstance(run.recommendations, RecommendationPlanReport)
+                    and not run.recommendations.items
+                )
             ):
-                raise Conflict("Recommendation review requires completed recommendation tasks")
+                raise Conflict("Recommendation review requires completed recommendation items")
             try:
-                review = RecommendationReview(
+                review_type = (
+                    RecommendationReviewV2
+                    if isinstance(run.recommendations, RecommendationPlanReport)
+                    else RecommendationReview
+                )
+                review = review_type(
                     approval_hash=run.measurement.inputs.approval_hash,
                     measurement_hash=digest(run.measurement.model_dump(mode="json")),
                     recommendation_hash=digest(run.recommendations.model_dump(mode="json")),
@@ -291,7 +348,7 @@ class MeasurementCoordinator:
                 )
                 review.validate_for(run.measurement, run.recommendations)
             except ValueError:
-                raise Conflict("Recommendation decisions must match every saved task") from None
+                raise Conflict("Recommendation decisions must match every saved item") from None
             return run.model_copy(update={
                 "recommendation_review": review,
                 "events": self._append(run, "recommendations-reviewed"),

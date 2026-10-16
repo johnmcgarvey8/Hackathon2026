@@ -1920,7 +1920,11 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 }
                 if job_type == JobType.AGENT_STAGE:
                     binding = (
-                        AgentBindingSnapshot.model_validate(stage_request.binding)
+                        AgentBindingSnapshot(
+                            project_endpoint=stage_request.binding.project_endpoint,
+                            agent_name=stage_request.binding.agent_name,
+                            agent_version=stage_request.binding.agent_version,
+                        )
                         if stage_request.binding is not None
                         else None
                     )

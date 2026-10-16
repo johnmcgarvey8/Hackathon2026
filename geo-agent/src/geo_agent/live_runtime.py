@@ -107,6 +107,8 @@ class LiveMeasurementRuntime:
                     token_provider=token_provider,
                     transport=foundry_transport,
                 ),
+                policy,
+                webiq,
             ),
         },
             policy_id=policy.policy_id,

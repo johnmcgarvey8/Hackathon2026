@@ -6,8 +6,8 @@ from pathlib import Path
 from threading import Event
 
 import httpx
-from dotenv import load_dotenv
 
+from geo_agent.environment import load_environment
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.foundry import azure_cli_token
 from geo_agent.live_runtime import LiveMeasurementRuntime
@@ -133,11 +133,7 @@ def run_worker(
 
 
 def main() -> None:
-    load_dotenv(
-        Path(__file__).resolve().parents[2] / ".env",
-        override=False,
-        interpolate=False,
-    )
+    load_environment()
     runtime = create_runtime_from_environment(os.environ)
     try:
         poll_seconds = float(os.environ.get("GEO_MEASUREMENT_WORKER_POLL_SECONDS", "1"))

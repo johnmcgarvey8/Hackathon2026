@@ -246,7 +246,8 @@ export interface RecommendationTask {
   publish_permission: false;
 }
 
-export interface RecommendationReport {
+export interface LegacyRecommendationReport {
+  schema_version?: "geo-recommendation-report/v2";
   status: "completed" | "insufficient-evidence";
   reason: string;
   limitations: string;
@@ -264,6 +265,113 @@ export interface RecommendationReport {
     model?: string | null;
   } | null;
 }
+
+export interface RecommendationScoreBreakdown {
+  reach: number;
+  impact_weight: number;
+  effort_weight: number;
+  confidence_weight: number;
+  basis_weight: number;
+  priority_score: number;
+  minimum_query_priority: number;
+}
+
+export interface PageOptimisation {
+  kind: "page-optimisation";
+  rec_id: string;
+  category: "technical" | "content" | "structure" | "entity-trust" | "freshness";
+  subtype: string;
+  title: string;
+  target_location: string;
+  observation: string;
+  observation_basis: string;
+  proposed_change: string;
+  implementation: {
+    outline: string[];
+    schema_org: {
+      type: string;
+      required_properties: string[];
+      recommended_properties: string[];
+    }[];
+    html_hint?: string | null;
+  };
+  rendered_jsonld: string[];
+  addresses_query_ids: string[];
+  rationale: string;
+  evidence: EvidenceQuote[];
+  comparison_evidence: EvidenceQuote[];
+  impact: "high" | "medium" | "low";
+  effort: "S" | "M" | "L";
+  confidence: "low" | "medium";
+  facts_to_verify: string[];
+  verification: string;
+  source_check_ids: string[];
+  origin: "model" | "rule";
+  score_breakdown: RecommendationScoreBreakdown;
+  tier: "P1" | "P2" | "P3";
+  requires_human_approval: true;
+  publish_permission: false;
+}
+
+export interface NewContentRecommendation {
+  kind: "new-content";
+  rec_id: string;
+  working_title: string;
+  page_type: string;
+  primary_intent: string;
+  target_query_ids: string[];
+  gap_type: string;
+  gap_justification: string;
+  existing_page_check: string[];
+  evidence: EvidenceQuote[];
+  comparison_evidence: EvidenceQuote[];
+  impact: "high" | "medium" | "low";
+  effort: "S" | "M" | "L";
+  confidence: "low" | "medium";
+  score_breakdown: RecommendationScoreBreakdown;
+  tier: "P1" | "P2" | "P3";
+  brief_status: "not-generated";
+  requires_human_approval: true;
+  publish_permission: false;
+}
+
+export interface RecommendationPlanReport {
+  schema_version: "geo-recommendation-report/v3";
+  status: "completed" | "insufficient-evidence";
+  diagnosis: string;
+  key_findings: { summary: string; evidence: EvidenceQuote[] }[];
+  items: (PageOptimisation | NewContentRecommendation)[];
+  technical_signals: {
+    status: "captured" | "not-captured";
+    reason?: string | null;
+    crawled_at?: string | null;
+    [key: string]: unknown;
+  };
+  technical_findings: {
+    findings: {
+      check_id: string;
+      field: string;
+      state: "present" | "not-found";
+      observed_value: string;
+      severity: "high" | "medium" | "low" | "info";
+      evidence_id: string;
+    }[];
+  };
+  validation_log: { item_id: string; rule: string; detail: string }[];
+  reason: string;
+  limitations: string;
+  priority_disclaimer: string;
+  plan_call?: {
+    role: SpecialistAgentRole;
+    provider_mode: SpecialistProviderMode;
+    provider_response_id?: string | null;
+    agent_name?: string | null;
+    agent_version?: string | null;
+    model?: string | null;
+  } | null;
+}
+
+export type RecommendationReport = LegacyRecommendationReport | RecommendationPlanReport;
 
 export type SpecialistAgentRole = "grounding-query" | "llm-survey" | "recommendations";
 export type SpecialistProviderMode = "project-agent" | "environment-agent" | "baseline-provider";
@@ -286,7 +394,8 @@ export interface AgentStageRecord {
   } | null;
 }
 
-export interface RecommendationReview {
+export interface LegacyRecommendationReview {
+  schema_version?: "geo-recommendation-review/v1";
   approval_hash: string;
   measurement_hash: string;
   recommendation_hash: string;
@@ -294,6 +403,22 @@ export interface RecommendationReview {
   reviewed_at: string;
   publish_permission: false;
 }
+
+export interface RecommendationReviewV2 {
+  schema_version: "geo-recommendation-review/v2";
+  approval_hash: string;
+  measurement_hash: string;
+  recommendation_hash: string;
+  decisions: {
+    item_id: string;
+    decision: "accepted" | "rejected" | "deferred";
+    note?: string | null;
+  }[];
+  reviewed_at: string;
+  publish_permission: false;
+}
+
+export type RecommendationReview = LegacyRecommendationReview | RecommendationReviewV2;
 
 export interface MeasurementResults {
   schema_version?: string;

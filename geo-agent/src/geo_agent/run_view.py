@@ -5,6 +5,7 @@ from geo_agent.evidence_assessment import build_competitor_summary
 from geo_agent.execution_policy import MeasurementExecutionPolicy
 from geo_agent.jobs import JobState, WorkflowJob
 from geo_agent.measurement_workflow import MeasurementRun, MeasurementState, OwnerIdentity
+from geo_agent.recommendation_plan import RecommendationPlanReport
 from geo_agent.specialist_agents import AgentStageStatus, SpecialistAgentRole
 
 
@@ -54,6 +55,7 @@ def operation_estimates(
                 query_count * profile_count,
                 policy.max_evaluator_calls_per_profile * profile_count,
             ),
+            "recommendation-technical-browse": int(policy.technical_browse),
             "recommendation-model": policy.max_recommendation_calls,
         },
         "automatic_retries": policy.automatic_retries,
@@ -88,7 +90,14 @@ def build_run_view(
         and run.approval is not None
         and run.approval.input_hash == run.inputs.approval_hash
     )
-    recommendation_tasks = bool(run.recommendations and run.recommendations.tasks)
+    recommendation_tasks = bool(
+        run.recommendations
+        and (
+            run.recommendations.items
+            if isinstance(run.recommendations, RecommendationPlanReport)
+            else run.recommendations.tasks
+        )
+    )
     recommendation_stage = next(
         (
             stage for stage in run.agent_stages

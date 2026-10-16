@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 import anyio
-from dotenv import load_dotenv
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceNotFoundError, ToolError
 from mcp.types import ToolAnnotations
@@ -17,6 +16,7 @@ from mcp.types import ToolAnnotations
 from geo_agent.agent_access import AgentPrincipal
 from geo_agent.artifact_storage import ArtifactKind, ArtifactService, LocalArtifactStorage
 from geo_agent.execution_policy import MeasurementExecutionPolicy
+from geo_agent.environment import load_environment
 from geo_agent.mcp_contracts import (
     BrandAliases,
     BrandDomains,
@@ -369,14 +369,18 @@ def create_mcp_server(
     async def geo_get_recommendations(
         run_id: Identifier,
         task_id: str = "",
+        item_id: str = "",
+        detail: bool = False,
     ) -> dict[str, Any]:
-        """Read legacy saved drafts and their human decision state."""
+        """Read saved recommendation summaries or one detailed recommendation item."""
         return await _invoke(
             service.get_recommendations,
             principal(),
             run_id=run_id,
             task_id=task_id,
-            payload_limit=65536 if task_id else 16384,
+            item_id=item_id,
+            detail=detail,
+            payload_limit=65536 if detail or task_id or item_id else 16384,
         )
 
     @server.tool(annotations=DESTRUCTIVE)
@@ -567,7 +571,7 @@ def _persistent_secret(path: Path) -> bytes:
 
 def build_local_mcp() -> tuple[MCPServer, SQLiteMeasurementRepository]:
     root = Path(__file__).resolve().parents[2]
-    load_dotenv(root / ".env", override=False, interpolate=False)
+    load_environment()
     data_dir = Path(os.environ.get("GEO_DATA_DIR", root / ".data"))
     policy_path = Path(os.environ.get("GEO_MEASUREMENT_POLICY", root / "measurement-policy.json"))
     policy = MeasurementExecutionPolicy.model_validate_json(

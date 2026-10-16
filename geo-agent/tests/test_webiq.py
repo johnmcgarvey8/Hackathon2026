@@ -4,7 +4,8 @@ import socket
 import httpx
 import pytest
 
-from geo_agent.contracts import Brief, Query
+from geo_agent.contracts import Brief, PageSnapshot, Query
+from geo_agent.technical_checks import run_technical_checks
 from geo_agent.webiq import (
     BROWSE_ENDPOINT,
     SEARCH_ENDPOINT,
@@ -33,6 +34,128 @@ def test_browse_contract_and_provenance():
     snapshot = provider.browse(brief())
     assert snapshot.provenance == "live"
     assert snapshot.provider_trace_id == "trace-browse"
+
+
+def markup_provider(markup):
+    def handler(request):
+        assert str(request.url) == BROWSE_ENDPOINT
+        body = json.loads(request.content)
+        assert body["contentFormat"] == "html"
+        assert body["maxLength"] == 200000
+        assert body["liveCrawl"] == "none"
+        assert body["renderDynamicPages"] is False
+        assert request.headers["x-apikey"] == "dummy-key"
+        return httpx.Response(200, json={
+            "url": str(brief().url), "content": markup,
+            "crawledAt": "2026-10-16T10:00:00Z", "traceId": "html-trace",
+        })
+
+    return WebIQ(
+        "dummy-key", transport=httpx.MockTransport(handler),
+        url_validator=lambda value: value,
+    )
+
+
+def test_indexed_html_extracts_metadata_schema_and_body_signals():
+    signals = markup_provider("""
+        <!doctype html><html><head>
+        <title>A useful public page title</title>
+        <meta name="description" content="Page description">
+        <meta name="robots" content="index,follow">
+        <meta property="og:title" content="Public page">
+        <link rel="canonical" href="/page">
+        <link rel="alternate" hreflang="en-GB" href="/page">
+        <script type="application/ld+json">
+        {"@graph":[{"@type":"Organization"},{"@type":["WebPage","FAQPage"]}]}
+        </script></head><body><h1>Public page</h1><h2>Details</h2>
+        <img src="one.jpg" alt="An example"><img src="two.jpg">
+        <a href="/help">Help</a><a href="https://example.org/help#details">Same help</a>
+        <a href="mailto:hello@example.org">Email</a><a href="#details">Section</a>
+        <a href="javascript:void(0)">Action</a>
+        <a href="https://other.example/help">Elsewhere</a>
+        </body></html>
+    """).browse_markup(brief())
+
+    assert signals.status == "captured"
+    assert signals.reason is None
+    assert signals.browse_trace_id == "html-trace"
+    assert signals.crawled_at == "2026-10-16T10:00:00Z"
+    assert signals.canonical.value == str(brief().url)
+    assert signals.meta_title.value == "A useful public page title"
+    assert signals.meta_description.value == "Page description"
+    assert signals.robots.value == "index,follow"
+    assert signals.hreflang.value == ("en-GB",)
+    assert signals.open_graph.value is True
+    assert signals.jsonld_types.value == ("FAQPage", "Organization", "WebPage")
+    assert signals.h1.value == signals.h2.value == 1
+    assert signals.image_alt_coverage.value == 0.5
+    assert signals.internal_link_count.value == 1
+
+
+@pytest.mark.parametrize("markup", [
+    "<h1>Page</h1><p>Only a body fragment.</p>",
+    "<html><head><title>Short</title>",
+    "<html><body><h1>Page</h1></body></html>",
+])
+def test_partial_html_does_not_invent_missing_metadata_or_schema(markup):
+    signals = markup_provider(markup).browse_markup(brief())
+
+    assert signals.status == "captured"
+    assert signals.reason == "partial-html"
+    for name in ("canonical", "robots", "meta_description", "jsonld_types", "open_graph"):
+        assert getattr(signals, name).state == "not-provided"
+    findings = run_technical_checks(
+        signals, brief(),
+        PageSnapshot(
+            url=brief().url, title="Page", content="Public content.", provenance="recorded",
+        ),
+    )
+    assert not any(
+        finding.field in {"canonical", "robots", "meta_description", "jsonld_types", "open_graph"}
+        for finding in findings.findings
+    )
+
+
+def test_text_response_is_not_treated_as_html_with_missing_tags():
+    signals = markup_provider("# Public page\nUseful content but no HTML.").browse_markup(brief())
+
+    assert signals.status == "not-captured"
+    assert signals.reason == "html-not-provided"
+    assert signals.canonical.state == "not-provided"
+    assert signals.h1.state == "not-provided"
+
+
+def test_complete_html_supports_bounded_absence_findings():
+    signals = markup_provider(
+        "<html><head></head><body><p>Public content.</p></body></html>",
+    ).browse_markup(brief())
+
+    assert signals.reason is None
+    assert signals.canonical.state == "not-found"
+    assert signals.meta_title.state == "not-found"
+    assert signals.jsonld_types.state == "not-found"
+    assert signals.h1.state == "present" and signals.h1.value == 0
+    assert signals.image_alt_coverage.state == "not-provided"
+
+
+@pytest.mark.parametrize("jsonld", ['{"@type":', "{}", '{"@context":"https://schema.org"}'])
+def test_unusable_jsonld_is_unknown_instead_of_absent(jsonld):
+    signals = markup_provider(
+        '<html><head><script type="application/ld+json">'
+        + jsonld + "</script></head><body></body></html>",
+    ).browse_markup(brief())
+
+    assert signals.jsonld_types.state == "not-provided"
+
+
+def test_size_limited_html_does_not_claim_complete_body_coverage():
+    markup = "<html><head></head><body><p>" + "x" * 200000 + "</p></body></html>"
+    signals = markup_provider(markup).browse_markup(brief())
+
+    assert signals.reason == "partial-html"
+    assert signals.h1.state == "not-provided"
+    assert signals.internal_link_count.state == "not-provided"
+    assert signals.jsonld_types.state == "not-provided"
 
 
 def test_browse_accepts_apex_to_www_canonicalisation():
