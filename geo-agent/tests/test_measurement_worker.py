@@ -1,10 +1,22 @@
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from geo_agent.measurement_worker import create_runtime_from_environment, run_worker
+from geo_agent.jobs import JobService, JobType
+from geo_agent.measurement_workflow import MeasurementState
+from geo_agent.projects import FoundryProjectBinding
+from geo_agent.specialist_agents import (
+    SpecialistAgentCall, SpecialistAgentRole, SpecialistProviderMode,
+)
+from geo_agent.specialist_workflow import SpecialistStageRequest
+from geo_agent.technical_checks import TechnicalSignals
+from geo_agent.webiq import ProviderError
 from test_live_runtime import budget_grant, live_policy
+from test_recommendation_plan import proposal
+from test_recommendations import measurement
 
 
 def worker_environment(tmp_path, *, policy=None, grant=None):
@@ -82,8 +94,9 @@ def test_worker_startup_requires_every_live_setting(tmp_path, missing):
         )
 
 
-def test_worker_startup_rejects_mismatched_grant_without_authentication(tmp_path):
-    policy = live_policy()
+@pytest.mark.parametrize("html_enabled", [False, True])
+def test_worker_startup_rejects_mismatched_grant_without_authentication(tmp_path, html_enabled):
+    policy = live_policy().model_copy(update={"technical_browse": html_enabled})
     mismatched = budget_grant(policy).model_copy(update={"approval": "Unrecognised approval"})
     environment = worker_environment(tmp_path, policy=policy, grant=mismatched)
     payload = json.loads(Path(environment["GEO_MEASUREMENT_BUDGET_GRANT"]).read_text(encoding="utf-8"))
@@ -95,6 +108,77 @@ def test_worker_startup_rejects_mismatched_grant_without_authentication(tmp_path
             environment,
             token_provider=lambda: pytest.fail("Startup must not authenticate"),
         )
+
+
+@pytest.mark.parametrize("browse_fails", [False, True])
+def test_html_worker_consumes_separate_allowances_and_blocks_exhausted_dispatch(
+    tmp_path, browse_fails,
+):
+    policy = live_policy().model_copy(update={"technical_browse": True})
+    grant = budget_grant(policy, recommendations=True)
+    runtime = create_runtime_from_environment(
+        worker_environment(tmp_path, policy=policy, grant=grant),
+        token_provider=lambda: pytest.fail("Test must not authenticate"),
+    )
+    try:
+        repository = runtime.repository
+        saved = measurement()
+        created = repository.create(grant.owner, saved.inputs)
+        ready = repository.mutate(
+            created.run_id, grant.owner, created.revision,
+            lambda run: run.model_copy(update={
+                "state": MeasurementState.READY, "measurement": saved,
+            }),
+        )
+        handler = runtime.worker.handlers[JobType.AGENT_STAGE]
+        browser = Mock()
+        browser.browse_markup.return_value = TechnicalSignals(
+            status="captured", reason="partial-html",
+        )
+        if browse_fails:
+            browser.browse_markup.side_effect = ProviderError("Captured test failure")
+        handler.technical_browser = browser
+        hosted = Mock()
+        hosted.invoke.return_value = (
+            proposal(page_optimisations=[], key_findings=[]),
+            SpecialistAgentCall(
+                role=SpecialistAgentRole.RECOMMENDATIONS,
+                provider_mode=SpecialistProviderMode.ENVIRONMENT_AGENT,
+            ),
+        )
+        handler.hosted_agent = hosted
+        request = SpecialistStageRequest(
+            role=SpecialistAgentRole.RECOMMENDATIONS,
+            provider_mode=SpecialistProviderMode.ENVIRONMENT_AGENT,
+            binding=FoundryProjectBinding(
+                project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+                agent_name="Recommendations", agent_version="4",
+            ),
+            confirm_provider_call=True,
+        )
+        for index in range(2):
+            JobService(repository).enqueue(
+                ready.run_id, grant.owner, ready.revision,
+                JobType.AGENT_STAGE, f"html-stage-{index}", request,
+                policy_id=policy.policy_id, policy_hash=policy.policy_hash,
+                operation_ceiling=2,
+            )
+            job, ready = runtime.run_once()
+            assert job.state == ("completed" if index == 0 else "failed")
+            if index == 1:
+                assert job.error_code == "Conflict"
+        assert ready.recommendations.technical_signals.reason == (
+            "browse-failed" if browse_fails else "partial-html"
+        )
+        browser.browse_markup.assert_called_once()
+        hosted.invoke.assert_called_once()
+        capacity = repository.measurement_capacity(grant.owner, policy)
+        for operation in ("recommendation-technical-browse", "recommendation-model"):
+            assert capacity.operations[operation].consumed == 1
+            assert capacity.operations[operation].remaining == 0
+        assert ready.measurement == saved
+    finally:
+        runtime.close()
 
 
 def test_worker_loop_waits_when_queue_is_empty():

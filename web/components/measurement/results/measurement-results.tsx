@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { MeasurementLoadingState } from "@/components/measurement/measurement-loading-state";
+import { TechnicalChecksView } from "@/components/measurement/results/technical-checks";
 import { evidencePresentation } from "@/lib/evidence-presentation";
 import { isMeasurementResultPending } from "@/lib/measurement-runtime";
 import { surveyModelRoster } from "@/lib/survey-models";
@@ -459,31 +460,10 @@ export function MeasurementResultsView({
                     </section>
                   );
                 })}
-                <details className="measurement-query-group">
-                  <summary>
-                    <strong>Technical checks</strong>
-                    <span className="pill">{recommendationPlan.technical_signals.status}</span>
-                  </summary>
-                  <div className="measurement-query-content">
-                    {recommendationPlan.technical_signals.status === "captured" && (
-                      <p className="muted">
-                        Checks use indexed HTML, not a live JavaScript-rendered page.
-                        {recommendationPlan.technical_signals.reason === "partial-html"
-                          ? " Only partial HTML was returned. Unavailable fields remain unknown; missing metadata is not inferred."
-                          : " Findings describe only the returned HTML."}
-                      </p>
-                    )}
-                    {recommendationPlan.technical_findings.findings.length === 0 ? (
-                      <p className="muted">
-                        {recommendationPlan.technical_signals.status === "captured"
-                          ? "No deterministic technical findings were recorded."
-                          : `Technical HTML was not captured${recommendationPlan.technical_signals.reason ? `: ${recommendationPlan.technical_signals.reason}` : "."}`}
-                      </p>
-                    ) : recommendationPlan.technical_findings.findings.map((finding) => (
-                      <p key={finding.check_id}><strong>{finding.check_id}</strong> · {finding.field} · {finding.severity} · {finding.state}</p>
-                    ))}
-                  </div>
-                </details>
+                <TechnicalChecksView
+                  signals={recommendationPlan.technical_signals}
+                  findings={recommendationPlan.technical_findings.findings}
+                />
                 {recommendationPlan.validation_log.length > 0 && (
                   <details className="measurement-query-group">
                     <summary><strong>Validation and quarantined items</strong><span className="pill amber">{recommendationPlan.validation_log.length}</span></summary>

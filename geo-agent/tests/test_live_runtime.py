@@ -55,7 +55,8 @@ def budget_grant(policy, owner=None, *, recommendations=False):
         owner=owner or OwnerIdentity(tenant_id="tenant-a", object_id="user-a"),
         allowances=MeasurementOperationAllowances(
             paired_query_plan=policy.max_query_plan_calls,
-            recommendation_model=1 if recommendations else 0
+            recommendation_model=1 if recommendations else 0,
+            recommendation_technical_browse=int(policy.technical_browse),
         ),
         maximum_authorized_cost_usd=Decimal("50.00"),
         approval="Approved intercepted live-runtime test budget",

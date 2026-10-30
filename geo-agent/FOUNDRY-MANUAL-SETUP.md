@@ -97,6 +97,14 @@ complete returned sections remain `not-provided` (unknown), rather than evidence
 of missing website metadata. Text-only responses are `html-not-provided`.
 Even complete returned HTML is an indexed snapshot, not a live full-site audit.
 
+Every assessable captured technical field is available as a `tech.*` evidence
+reference, including observations that did not trigger a deterministic finding.
+Existing finding IDs and quote text remain unchanged. Unknown (`not-provided`)
+fields cannot be cited as evidence of absence. The published Recommendations
+agent instructions decide whether the evidence supports an FAQPage or another
+structured-data recommendation; capture does not force any particular action.
+Rendered JSON-LD remains a human-verification template, not publish-ready markup.
+
 The October 16 local setup uses `measurement-live-policy-html.json` with
 `measurement-live-budget-grant-html.json` for the approved one-run Halfords
 verification. Set `GEO_MEASUREMENT_POLICY` and `GEO_MEASUREMENT_BUDGET_GRANT` to
@@ -104,9 +112,44 @@ those files for both local launchers, then restart the API and live worker.
 The original v3 policy, grant and historical reports remain unchanged.
 These local files do not authorise additional runs or reset previous usage.
 The grant retains the existing USD 250 authorization-only field; it is not a
-new monetary approval or real-time spend limit. The current local worker starts
-with aggregate budget enforcement disabled, so the recorded one-run allowance
-must not be interpreted as an enforced runtime cap.
+new monetary approval or real-time spend limit. HTML-enabled local workers now
+enforce the existing aggregate operation allowances before dispatch. The
+legacy HTML-disabled worker configuration retains its previous budget behavior.
+An operation allowance is not a real-time monetary spend limit.
+
+### Activate HTML capture for another run
+
+1. Obtain explicit budget-owner approval for a new immutable policy/grant pair.
+   Set `technical_browse: true` in the new policy and fund both
+   `recommendation_technical_browse` and `recommendation_model` under the matching
+   policy hash and run owner. Existing grant validation still requires complete-run
+   allowances; do not invent a recommendation-only grant format or reset usage.
+2. Set `GEO_MEASUREMENT_POLICY` and `GEO_MEASUREMENT_BUDGET_GRANT` to the approved
+   files for both the API and worker. The two live entries in
+   `.vscode\launch.json` explicitly select the existing HTML-enabled pair;
+   those launch overrides take precedence over environment-file settings and
+   do not extend the selected grant's original scope or remaining allowances.
+   Update both entries to the newly approved paths, then restart both processes.
+   Leave mock/synthetic configurations unchanged.
+3. Confirm the intended project-specific or environment Recommendations agent
+   binding and its published instruction version. Project-specific bindings take
+   precedence. A local instruction-file edit does not update the remote prompt.
+4. Explicitly regenerate recommendations through the authenticated measurement
+   action, confirming the provider call. This uses saved measurement evidence;
+   it does not rerun preparation, searches or evaluator answers. A successful
+   regeneration replaces the recommendations and invalidates their previous
+   review. A failed stage retains the previous report and review.
+5. Verify the new job has a two-operation ceiling, one separately accounted
+   technical-browse operation and one planner operation, and a persisted capture
+   result. Exhausted allowances block dispatch. Failed or unavailable captures
+   remain unknown and are not retried automatically.
+
+The Technical checks panel distinguishes disabled, unavailable, failed, text-only
+and partial capture, and shows observed fields and crawl provenance separately
+from findings. Historical `feature-disabled` reports remain unchanged until an
+explicitly authorised regeneration. New technical evidence can have a different
+crawl date from the saved text snapshot. Do not interpret that combination as a
+fresh comparable full measurement.
 
 Projects can override the environment default with a role-specific binding:
 

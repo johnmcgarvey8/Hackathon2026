@@ -104,7 +104,7 @@ def create_runtime_from_environment(
             repository,
             policy,
             budget_grant=grants,
-            enforce_budget=False,
+            enforce_budget=policy.technical_browse,
             webiq_api_key=_required(environment, "WEBIQ_API_KEY"),
             preparation_endpoint=_preparation_endpoint(environment),
             preparation_deployment=_required(environment, "AZURE_AI_MODEL_DEPLOYMENT_NAME"),

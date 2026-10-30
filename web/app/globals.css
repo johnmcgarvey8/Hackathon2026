@@ -315,6 +315,10 @@ code { color: var(--blue-dark); overflow-wrap: anywhere; }
 .measurement-query-section { padding: 18px; }
 .measurement-query-section + .measurement-query-section { border-top: 1px solid var(--line-soft); }
 .measurement-query-section > p { margin-bottom: 8px; overflow-wrap: anywhere; }
+.technical-checks-content { min-width: 0; }
+.technical-observations { min-width: 480px; table-layout: fixed; }
+.technical-observations th[scope="row"] { color: var(--text); font-size: 13px; font-weight: 600; text-transform: none; }
+.technical-observations td { overflow-wrap: anywhere; }
 .section-heading-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .section-heading-inline h3 { margin: 0 auto 0 0; font-size: 14px; }
 .query-result, .evidence-packet, .answer-result, .recommendation-card { padding: 16px 0; border-top: 1px solid var(--line-soft); }

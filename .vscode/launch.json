@@ -53,8 +53,8 @@
         "GEO_LIVE_POLICY": "${workspaceFolder}/geo-agent/live-policy.json",
         "GEO_BUDGET_GRANT": "${workspaceFolder}/geo-agent/budget-grant.json",
         "GEO_ANALYSIS_POLICY": "${workspaceFolder}/geo-agent/analysis-policy.json",
-        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v3.json",
-        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}/geo-agent/measurement-live-budget-grant-v3.json",
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}\\geo-agent\\measurement-live-policy-html.json",
+        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}\\geo-agent\\measurement-live-budget-grant-html.json",
         "GEO_PORT": "8090",
         "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data"
       },
@@ -71,8 +71,8 @@
       "envFile": "${workspaceFolder}/geo-agent/.env",
       "env": {
         "GEO_DATA_DIR": "${workspaceFolder}/geo-agent/.data",
-        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}/geo-agent/measurement-live-policy-v3.json",
-        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}/geo-agent/measurement-live-budget-grant-v3.json",
+        "GEO_MEASUREMENT_POLICY": "${workspaceFolder}\\geo-agent\\measurement-live-policy-html.json",
+        "GEO_MEASUREMENT_BUDGET_GRANT": "${workspaceFolder}\\geo-agent\\measurement-live-budget-grant-html.json",
         "GEO_MEASUREMENT_WORKER_POLL_SECONDS": "0.25"
       },
       "console": "integratedTerminal",

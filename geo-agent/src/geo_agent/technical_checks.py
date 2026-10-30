@@ -74,6 +74,16 @@ def _text(value: object) -> str:
     return rendered[:200]
 
 
+def technical_evidence(signals: TechnicalSignals) -> dict[str, str]:
+    if signals.status != "captured":
+        return {}
+    return {
+        f"tech.{name}": _text(field.value) or field.state
+        for name, field in signals
+        if isinstance(field, TechnicalField) and field.state != "not-provided"
+    }
+
+
 def _finding(
     check_id: str,
     field: str,

@@ -4,13 +4,19 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 const require = createRequire(import.meta.url);
 const read = (path) => readFileSync(path, "utf8");
 
 function load(path) {
   const { outputText } = ts.transpileModule(read(path), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+    },
   });
   const exports = {};
   vm.runInNewContext(outputText, { exports, require });
@@ -19,6 +25,92 @@ function load(path) {
 
 const runtime = load("lib/measurement-runtime.ts");
 const surveyModels = load("lib/survey-models.ts");
+const { TechnicalChecksView } = load("components/measurement/results/technical-checks.tsx");
+
+function renderTechnicalChecks(signals, findings = []) {
+  return renderToStaticMarkup(createElement(TechnicalChecksView, { signals, findings }));
+}
+
+test("disabled HTML explains approved activation without presenting a passed audit", () => {
+  const html = renderTechnicalChecks({
+    status: "not-captured",
+    reason: "feature-disabled",
+    jsonld_types: { state: "not-found" },
+  });
+  assert.match(html, /Not captured/);
+  assert.match(html, /HTML capture was disabled by the execution policy/);
+  assert.match(html, /approved HTML-enabled policy and matching budget grant/);
+  assert.match(html, /explicitly regenerate/);
+  assert.doesNotMatch(html, /Deterministic findings|No deterministic technical findings|Not found in captured/);
+});
+
+test("partial HTML renders observed schema types and preserves unknown fields", () => {
+  const html = renderTechnicalChecks({
+    status: "captured",
+    reason: "partial-html",
+    crawled_at: "2026-10-30T16:00:00Z",
+    browse_trace_id: "html-trace",
+    jsonld_types: { state: "present", value: ["Organization", "FAQPage"] },
+    meta_description: { state: "not-provided" },
+    canonical: { state: "not-found" },
+    h1: { state: "present", value: 0 },
+    open_graph: { state: "present", value: false },
+    image_alt_coverage: { state: "present", value: 0.75 },
+  });
+  assert.match(html, /Partially captured/);
+  assert.doesNotMatch(html, /Checks use indexed HTML|Only partial HTML was returned|Unavailable fields remain unknown/);
+  assert.match(html, /Organization, FAQPage/);
+  assert.match(html, /Meta description<\/th><td><span class="pill">Unknown<\/span><\/td><td>Not provided/);
+  assert.match(html, /Not found in captured indexed HTML/);
+  assert.match(html, /H1 count<\/th><td><span class="pill">Observed<\/span><\/td><td>0/);
+  assert.match(html, /Open Graph metadata<\/th><td><span class="pill">Observed<\/span><\/td><td>No/);
+  assert.match(html, /Image alt coverage<\/th><td><span class="pill">Observed<\/span><\/td><td>75%/);
+  assert.match(html, /Coverage: 5 of 11 attributes assessable; 6 unknown/);
+  assert.match(html, /Canonical URL<\/th><td><span class="pill">Not found<\/span><\/td><td>Not found in captured indexed HTML/);
+  assert.match(html, /2026-10-30T16:00:00Z/);
+  assert.match(html, /html-trace/);
+  assert.match(html, /does not establish that all technical checks passed/);
+  assert.match(html, /Azure Recommendations agent/);
+  assert.ok(html.indexOf("Crawl date:") > html.indexOf("Capturing HTML does not guarantee"));
+  assert.ok(html.indexOf("Provider trace:") > html.indexOf("Crawl date:"));
+});
+
+test("technical observations use an accessible table with explicit capture coverage", () => {
+  const html = renderTechnicalChecks({
+    status: "captured",
+    reason: "partial-html",
+    meta_title: { state: "present", value: "A title with <markup> & text" },
+  });
+  assert.match(html, /role="region" aria-label="Captured technical observations" tabindex="0"/);
+  assert.match(html, /<caption class="sr-only">Captured technical observations<\/caption>/);
+  assert.match(html, /<th scope="col">Attribute<\/th><th scope="col">Status<\/th><th scope="col">Captured value<\/th>/);
+  assert.equal((html.match(/<th scope="row">/g) || []).length, 11);
+  assert.match(html, /Page title<\/th><td><span class="pill">Observed<\/span><\/td><td>A title with &lt;markup&gt; &amp; text/);
+  assert.match(html, /JSON-LD types<\/th><td><span class="pill">Unknown<\/span><\/td><td>Not provided/);
+  assert.match(html, /Coverage: 1 of 11 attributes assessable; 10 unknown/);
+  assert.doesNotMatch(html, /<dl>|Not found in captured indexed HTML/);
+});
+
+test("unavailable captures distinguish failures, provider configuration and text-only responses", () => {
+  for (const [reason, expected] of [
+    ["provider-unavailable", /provider was unavailable/],
+    ["browse-failed", /request failed.*not automatically retried/],
+    ["html-not-provided", /Text-only evidence cannot establish/],
+    ["new-provider-reason", /Capture was unavailable: new-provider-reason/],
+  ]) {
+    const html = renderTechnicalChecks({ status: "not-captured", reason });
+    assert.match(html, expected);
+    assert.doesNotMatch(html, /Captured observations|No deterministic technical findings/);
+  }
+  const html = renderTechnicalChecks({ status: "captured" }, [{
+    check_id: "T-07", field: "jsonld_types", severity: "medium",
+    state: "not-found", observed_value: "",
+  }]);
+  assert.match(html, /Crawl date: Not provided/);
+  assert.doesNotMatch(html, /Checks use indexed HTML|Findings describe only the returned HTML/);
+  assert.match(html, /T-07/);
+  assert.match(html, /JSON-LD types<\/th><td><span class="pill">Unknown<\/span><\/td><td>Not provided/);
+});
 
 test("measurement runtime uses explicit actions and saved operation totals", () => {
   assert.equal(runtime.actionAllowed(true), true);
@@ -176,9 +268,9 @@ test("results are grouped by query and provider answers use safe markdown", () =
   assert.match(results, /Run a new measurement to generate/);
   assert.match(results, /Optimise this page/);
   assert.match(results, /New content opportunities/);
-  assert.match(results, /Checks use indexed HTML, not a live JavaScript-rendered page/);
-  assert.match(results, /technical_signals\.reason === "partial-html"/);
-  assert.match(results, /Unavailable fields remain unknown/);
+  const technical = read("components/measurement/results/technical-checks.tsx");
+  assert.match(results, /<TechnicalChecksView/);
+  assert.match(technical, /signals\.reason === "partial-html"/);
   assert.match(loading, /role="status"/);
   assert.match(loading, /aria-live="polite"/);
   assert.match(progress, /measurementOperationState/);

@@ -204,6 +204,89 @@ def test_technical_checks_preserve_not_provided_and_scope_absence():
     assert all(finding.field != "meta_description" for finding in captured.findings)
 
 
+def test_v3_context_exposes_assessable_fields_without_requiring_findings():
+    saved = measurement()
+    signals = TechnicalSignals(
+        status="captured",
+        reason="partial-html",
+        canonical=TechnicalField(state="present", value=str(saved.inputs.brief.url)),
+        robots=TechnicalField(state="present", value="index,follow"),
+        hreflang=TechnicalField(state="present", value=("en-GB", "en-US")),
+        open_graph=TechnicalField(state="present", value=True),
+        meta_description=TechnicalField(state="not-provided"),
+        meta_title=TechnicalField(state="not-found"),
+    )
+    context = build_recommendation_context_v3(saved, technical_signals=signals)
+    registry = context["evidence_registry"]
+
+    assert registry["tech.canonical"] == str(saved.inputs.brief.url)
+    assert registry["tech.robots"] == "index,follow"
+    assert registry["tech.hreflang"] == "en-GB, en-US"
+    assert registry["tech.open_graph"] == "True"
+    assert "tech.meta_description" not in registry
+    for finding in context["technical_findings"]["findings"]:
+        assert registry[finding["evidence_id"]] == (
+            finding["observed_value"] or finding["state"]
+        )
+    uncaptured = build_recommendation_context_v3(
+        saved, technical_signals=signals.model_copy(update={"status": "not-captured"}),
+    )
+    assert not any(key.startswith("tech.") for key in uncaptured["evidence_registry"])
+
+
+@pytest.mark.parametrize("schema_state", ["not-found", "not-provided"])
+def test_v3_schema_proposal_requires_citeable_technical_evidence(schema_state):
+    saved_packet = packet("q-1", (source(),))
+    saved = measurement(
+        (saved_packet,), (outcome(saved_packet),),
+        content="Local places FAQ. When can families visit? Families can visit on Saturdays.",
+    )
+    signals = TechnicalSignals(
+        status="captured",
+        jsonld_types=TechnicalField(state=schema_state),
+        canonical=TechnicalField(state="present", value=str(saved.inputs.brief.url)),
+    )
+    context = build_recommendation_context_v3(saved, technical_signals=signals)
+    payload = proposal()
+    payload["page_optimisations"][0].update({
+        "category": "technical",
+        "subtype": "faq-structured-data",
+        "title": "Represent the visible FAQ as structured data",
+        "observation": "JSON-LD was not found in the captured indexed HTML.",
+        "observation_basis": "observed-in-technical-browse",
+        "proposed_change": "Represent the verified visible question and answer as FAQPage.",
+        "implementation": {
+            "outline": ["Verify that markup matches the visible question and answer."],
+            "schema_org": [{
+                "type": "FAQPage",
+                "required_properties": ["mainEntity"],
+                "recommended_properties": ["url"],
+            }],
+        },
+        "evidence": [
+            {"evidence_id": "page-1", "quote": "When can families visit?"},
+            {"evidence_id": "tech.jsonld_types", "quote": "not-found"},
+            {"evidence_id": "tech.canonical", "quote": str(saved.inputs.brief.url)},
+        ],
+        "comparison_evidence": [],
+        "source_check_ids": ["T-07"],
+    })
+
+    report = validate_plan(saved, payload, context)
+
+    if schema_state == "not-found":
+        item = next(item for item in report.items if item.rec_id == "opt-1")
+        assert item.origin == "model"
+        assert item.implementation.schema_org[0].type == "FAQPage"
+        rendered = json.loads(item.rendered_jsonld[0])
+        assert rendered["@type"] == "FAQPage"
+        assert rendered["mainEntity"] == "[VERIFY: mainEntity]"
+        assert report.validation_log == ()
+    else:
+        assert report.items == ()
+        assert report.validation_log[0].detail == "Unsupported evidence reference"
+
+
 def test_v3_strict_mode_rejects_an_invalid_item(monkeypatch):
     saved_packet = packet("q-1", (source(),))
     saved = measurement((saved_packet,), (outcome(saved_packet),))
