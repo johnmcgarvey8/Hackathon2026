@@ -315,6 +315,10 @@ code { color: var(--blue-dark); overflow-wrap: anywhere; }
 .measurement-query-section { padding: 18px; }
 .measurement-query-section + .measurement-query-section { border-top: 1px solid var(--line-soft); }
 .measurement-query-section > p { margin-bottom: 8px; overflow-wrap: anywhere; }
+.technical-checks-content { min-width: 0; }
+.technical-observations { min-width: 480px; table-layout: fixed; }
+.technical-observations th[scope="row"] { color: var(--text); font-size: 13px; font-weight: 600; text-transform: none; }
+.technical-observations td { overflow-wrap: anywhere; }
 .section-heading-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .section-heading-inline h3 { margin: 0 auto 0 0; font-size: 14px; }
 .query-result, .evidence-packet, .answer-result, .recommendation-card { padding: 16px 0; border-top: 1px solid var(--line-soft); }
@@ -350,6 +354,12 @@ code { color: var(--blue-dark); overflow-wrap: anywhere; }
 .finding-list { display: grid; gap: 5px; margin-top: 18px; }
 .finding-list > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; background: var(--surface-soft); font-size: 12px; }
 .limitations ul { margin-bottom: 14px; padding-left: 20px; }
+.limitations > summary { cursor: pointer; list-style: none; margin-bottom: 0; }
+.limitations > summary::-webkit-details-marker { display: none; }
+.limitations > summary::after { content: ">"; margin-left: auto; color: var(--blue); }
+.limitations[open] > summary { margin-bottom: 16px; }
+.limitations[open] > summary::after { transform: rotate(90deg); }
+.limitations > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
 .review-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 .review-row select { min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .event-list { display: grid; gap: 5px; padding-left: 22px; }

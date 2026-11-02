@@ -46,6 +46,7 @@ class SpecialistStageRequest(Contract):
     confirm_provider_call: Literal[True]
     source_job_id: str | None = None
     retry_of_job_id: str | None = None
+    regenerate: bool = False
 
 
 class RecommendationProvider(Protocol):

@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import { AssistantMarkdown } from "@/components/assistant-markdown";
 import { MeasurementLoadingState } from "@/components/measurement/measurement-loading-state";
+import { TechnicalChecksView } from "@/components/measurement/results/technical-checks";
 import { evidencePresentation } from "@/lib/evidence-presentation";
 import { isMeasurementResultPending } from "@/lib/measurement-runtime";
 import { surveyModelRoster } from "@/lib/survey-models";
@@ -83,17 +84,18 @@ export function MeasurementResultsView({
   run,
   assessment,
   strategy,
+  showCitationPerformance = true,
   showLimitations = true,
   onOpenEvidence,
 }: {
   run: MeasurementRun;
   assessment: BrandEvidenceAssessment | null;
   strategy: ContentStrategyResponse | null;
+  showCitationPerformance?: boolean;
   showLimitations?: boolean;
   onOpenEvidence: (evidenceId: string) => void;
 }) {
   const measurement = run.measurement;
-  const scores = isCitationScores(run.scores) ? run.scores : null;
   const queries = run.inputs?.query_plan.queries || [];
   const retrievals = measurement?.retrievals || [];
   const answers = measurement?.results || [];
@@ -125,17 +127,6 @@ export function MeasurementResultsView({
       answer.provenance !== "live"
       || answer.sources.some((source) => source.provenance !== "live")),
   );
-  const limitations = [
-    "Search evidence is limited to saved result packets and does not represent the full web.",
-    "LLM provider responses and saved passages are untrusted evidence and may contain errors.",
-    "Literal brand or domain presence does not establish sentiment, endorsement, causality, ranking, or proof of absence.",
-    "Failed and missing outcomes remain unknown rather than being treated as zero.",
-    ...(assessment?.assessment?.limitations || []),
-    ...(run.recommendations?.limitations ? [run.recommendations.limitations] : []),
-    ...(typeof strategy?.report?.limitations === "string"
-      ? [strategy.report.limitations]
-      : Array.isArray(strategy?.report?.limitations) ? strategy.report.limitations : []),
-  ];
   const recommendationStage = (run.agent_stages || []).find(
     (stage) => stage.role === "recommendations",
   );
@@ -149,7 +140,6 @@ export function MeasurementResultsView({
   const queriesPending = queryIds.length === 0 && isMeasurementResultPending(run, "queries");
   const evidencePending = isMeasurementResultPending(run, "evidence");
   const answersPending = answers.length === 0 && isMeasurementResultPending(run, "answers");
-  const scoresPending = !scores && isMeasurementResultPending(run, "scores");
   const recommendationsPending = !run.recommendations
     && isMeasurementResultPending(run, "recommendations");
   const recommendationPlan = isRecommendationPlan(run.recommendations)
@@ -320,39 +310,6 @@ export function MeasurementResultsView({
         )}
       </section>
 
-      <section className="card result-section" id="citation-performance">
-        <div className="card-heading"><h2>Citation performance</h2><span className="pill">{scoresPending ? "Calculating" : scores?.provisional ? "Provisional" : "Saved result"}</span></div>
-        <p className="muted">
-          Surveyed models are identified by friendly profile name and the exact configured or provider-returned model.
-        </p>
-        {scoresPending ? <MeasurementLoadingState stage="scores" /> : (
-          <>
-            <div className="grid three">
-              {surveyModels.map((model) => (
-                <article className="metric-card" key={model.profileId}>
-                  <span>{model.label}</span>
-                  <strong>{scoreText(scores?.by_profile?.[model.profileId])}</strong>
-                  <small>{model.provider} · configured deployment {model.deployment}</small>
-                </article>
-              ))}
-            </div>
-            <div className="grid three">
-              <article className="metric-card"><span>Exact-page citation</span><strong>{scoreText(scores?.overall)}</strong></article>
-              <article className="metric-card"><span>Target returned by WebIQ</span><strong>{scoreText(scores?.retrieval)}</strong></article>
-              <article className="metric-card"><span>Comparable queries</span><strong>{scores?.common_completed_query_ids?.length ?? "Unknown"}</strong></article>
-            </div>
-            <div className="finding-list">
-              {(scores?.by_answer || []).map((finding) => (
-                <div key={`${finding.query_id}-${finding.profile_id}`}>
-                  <span>{finding.query_id} · {modelByProfile.get(finding.profile_id)?.label || finding.profile_id}</span><strong>{findingLabels(finding).join(" · ")}</strong>
-                </div>
-              ))}
-            </div>
-            {!scores && <p className="muted">Citation scores are unknown because no saved measurement results are available.</p>}
-          </>
-        )}
-      </section>
-
       <section className="card result-section" id="recommendations">
         <div className="card-heading">
           <h2>Recommendations</h2>
@@ -459,31 +416,10 @@ export function MeasurementResultsView({
                     </section>
                   );
                 })}
-                <details className="measurement-query-group">
-                  <summary>
-                    <strong>Technical checks</strong>
-                    <span className="pill">{recommendationPlan.technical_signals.status}</span>
-                  </summary>
-                  <div className="measurement-query-content">
-                    {recommendationPlan.technical_signals.status === "captured" && (
-                      <p className="muted">
-                        Checks use indexed HTML, not a live JavaScript-rendered page.
-                        {recommendationPlan.technical_signals.reason === "partial-html"
-                          ? " Only partial HTML was returned. Unavailable fields remain unknown; missing metadata is not inferred."
-                          : " Findings describe only the returned HTML."}
-                      </p>
-                    )}
-                    {recommendationPlan.technical_findings.findings.length === 0 ? (
-                      <p className="muted">
-                        {recommendationPlan.technical_signals.status === "captured"
-                          ? "No deterministic technical findings were recorded."
-                          : `Technical HTML was not captured${recommendationPlan.technical_signals.reason ? `: ${recommendationPlan.technical_signals.reason}` : "."}`}
-                      </p>
-                    ) : recommendationPlan.technical_findings.findings.map((finding) => (
-                      <p key={finding.check_id}><strong>{finding.check_id}</strong> · {finding.field} · {finding.severity} · {finding.state}</p>
-                    ))}
-                  </div>
-                </details>
+                <TechnicalChecksView
+                  signals={recommendationPlan.technical_signals}
+                  findings={recommendationPlan.technical_findings.findings}
+                />
                 {recommendationPlan.validation_log.length > 0 && (
                   <details className="measurement-query-group">
                     <summary><strong>Validation and quarantined items</strong><span className="pill amber">{recommendationPlan.validation_log.length}</span></summary>
@@ -554,14 +490,87 @@ export function MeasurementResultsView({
         )}
       </section>
 
-      {showLimitations && (
-        <section className="card result-section limitations" id="limitations">
-          <div className="card-heading"><h2>Limitations and provenance</h2><span className="pill amber">Read before use</span></div>
-          <ul>{Array.from(new Set(limitations)).map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
-          <p className="small muted">Run {run.run_id}, revision {run.revision}. Evidence IDs and saved provenance remain attached to each source.</p>
-        </section>
-      )}
+      {showCitationPerformance && <MeasurementCitationPerformance run={run} />}
+      {showLimitations && <MeasurementLimitations run={run} assessment={assessment} strategy={strategy} />}
     </div>
+  );
+}
+
+export function MeasurementCitationPerformance({ run }: { run: MeasurementRun }) {
+  const scores = isCitationScores(run.scores) ? run.scores : null;
+  const scoresPending = !scores && isMeasurementResultPending(run, "scores");
+  const surveyModels = surveyModelRoster(run.measurement?.inputs, run.measurement?.results || []);
+  const modelByProfile = new Map(
+    surveyModels.map((model) => [model.profileId, model]),
+  );
+
+  return (
+      <section className="card result-section" id="citation-performance">
+        <div className="card-heading"><h2>Citation performance</h2><span className="pill">{scoresPending ? "Calculating" : scores?.provisional ? "Provisional" : "Saved result"}</span></div>
+        <p className="muted">
+          Surveyed models are identified by friendly profile name and the exact configured or provider-returned model.
+        </p>
+        {scoresPending ? <MeasurementLoadingState stage="scores" /> : (
+          <>
+            <div className="grid three">
+              {surveyModels.map((model) => (
+                <article className="metric-card" key={model.profileId}>
+                  <span>{model.label}</span>
+                  <strong>{scoreText(scores?.by_profile?.[model.profileId])}</strong>
+                  <small>{model.provider} · configured deployment {model.deployment}</small>
+                </article>
+              ))}
+            </div>
+            <div className="grid three">
+              <article className="metric-card"><span>Exact-page citation</span><strong>{scoreText(scores?.overall)}</strong></article>
+              <article className="metric-card"><span>Target returned by WebIQ</span><strong>{scoreText(scores?.retrieval)}</strong></article>
+              <article className="metric-card"><span>Comparable queries</span><strong>{scores?.common_completed_query_ids?.length ?? "Unknown"}</strong></article>
+            </div>
+            <div className="finding-list">
+              {(scores?.by_answer || []).map((finding) => (
+                <div key={`${finding.query_id}-${finding.profile_id}`}>
+                  <span>{finding.query_id} · {modelByProfile.get(finding.profile_id)?.label || finding.profile_id}</span><strong>{findingLabels(finding).join(" · ")}</strong>
+                </div>
+              ))}
+            </div>
+            {!scores && <p className="muted">Citation scores are unknown because no saved measurement results are available.</p>}
+          </>
+        )}
+      </section>
+
+  );
+}
+
+export function MeasurementLimitations({
+  run,
+  assessment,
+  strategy,
+}: {
+  run: MeasurementRun;
+  assessment: BrandEvidenceAssessment | null;
+  strategy: ContentStrategyResponse | null;
+}) {
+  const limitations = [
+    "Search evidence is limited to saved result packets and does not represent the full web.",
+    "LLM provider responses and saved passages are untrusted evidence and may contain errors.",
+    "Literal brand or domain presence does not establish sentiment, endorsement, causality, ranking, or proof of absence.",
+    "Failed and missing outcomes remain unknown rather than being treated as zero.",
+    ...(assessment?.assessment?.limitations || []),
+    ...(run.recommendations?.limitations ? [run.recommendations.limitations] : []),
+    ...(typeof strategy?.report?.limitations === "string"
+      ? [strategy.report.limitations]
+      : Array.isArray(strategy?.report?.limitations) ? strategy.report.limitations : []),
+  ];
+
+  return (
+    <details className="card result-section limitations" id="limitations">
+      <summary className="card-heading">
+        <h2>Limitations and provenance</h2>
+        <span className="pill amber">Read before use</span>
+      </summary>
+      <ul>{Array.from(new Set(limitations)).map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
+      <p className="small muted">Run {run.run_id}, revision {run.revision}. Evidence IDs and saved provenance remain attached to each source.</p>
+    </details>
   );
 }
 

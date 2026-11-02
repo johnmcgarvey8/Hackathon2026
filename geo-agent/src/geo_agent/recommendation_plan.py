@@ -22,6 +22,7 @@ from geo_agent.technical_checks import (
     TechnicalFindings,
     TechnicalSignals,
     run_technical_checks,
+    technical_evidence,
 )
 from geo_agent.webiq import ProviderError
 
@@ -434,6 +435,7 @@ def build_recommendation_context_v3(
                 value, ensure_ascii=True, sort_keys=True,
             )
 
+    evidence_registry.update(technical_evidence(technical_signals))
     for finding in findings.findings:
         evidence_registry[finding.evidence_id] = finding.observed_value or finding.state
 

@@ -24,6 +24,47 @@ into Azure Foundry's **Instructions** field and follow the
 [manual setup and version-pinning steps](FOUNDRY-MANUAL-SETUP.md#recommendations-specialist-agent).
 The instruction file is not loaded automatically by the application.
 
+### Regenerate recommendations for a saved run
+
+An operator can regenerate recommendations without repeating searches or model
+evaluations. No UI button is required:
+
+```http
+POST /api/v2/projects/{project_id}/runs/{run_id}/regenerate-recommendations
+Authorization: Bearer <operator-token>
+Content-Type: application/json
+
+{
+  "expected_revision": 12,
+  "idempotency_key": "regenerate-recommendations-unique-request-id",
+  "confirm_provider_call": true
+}
+```
+
+Read the current revision with `GET /api/v2/projects/{project_id}/runs/{run_id}`.
+The POST returns HTTP 202 with `job` and `run`; poll the run or
+`GET /api/v2/projects/{project_id}/runs/{run_id}/jobs/{job_id}` for completion.
+The live measurement worker must be running.
+
+The backend function is
+`ProjectMeasurementOrchestrator.regenerate_recommendations`. It requires saved
+completed retrieval and evaluator evidence, a ready or partial run, a live policy,
+and a pinned Foundry recommendations agent. The project-specific agent overrides
+the environment binding configured by `GEO_FOUNDRY_RECOMMENDATIONS_AGENT_ENDPOINT`,
+`GEO_FOUNDRY_RECOMMENDATIONS_AGENT_NAME`, and
+`GEO_FOUNDRY_RECOMMENDATIONS_AGENT_VERSION`. Missing configuration fails explicitly;
+this operation never falls back to the baseline model.
+
+Each new idempotency key authorises a new provider call. Reuse the same key when
+checking an uncertain submission; replay returns the original job even after it
+finishes. Another active specialist job or a stale revision produces HTTP 409.
+Existing recommendations and their review remain available until regeneration
+succeeds, and remain unchanged if it fails. Success replaces the recommendations
+and clears their previous human review. Measurement evidence and scores are
+unchanged. Prior jobs and operation checkpoints remain saved for auditing.
+When the policy enables technical HTML checks, that separate browse runs again
+as part of the recommendation stage.
+
 All profiles are controlled evidence-packet simulations, not measurements of the consumer Copilot, Claude or ChatGPT services. The same ordered search packet must be used for each profile's answer to a query. Target-page text is not added to evaluator input; only returned search evidence can earn citation credit. A Claude label requires the Anthropic adapter, not a GPT persona. Actual deployments, access and underlying model identities still require live preflight.
 
 The Copilot-style system prompt is intentionally diagnostic: it identifies buyer criteria supported by the packet, labels material criteria that cannot be answered as evidence gaps, and supplies concrete next steps only when grounded in cited evidence. It must not infer missing product capabilities or page-content absence from an evidence gap. The common evidence-only guard remains authoritative for every profile.

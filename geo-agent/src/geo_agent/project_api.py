@@ -63,7 +63,7 @@ class ArchiveProjectRequest(Contract):
     expected_revision: int = Field(ge=1)
 
 
-class RetryRecommendationsRequest(Contract):
+class RecommendationCallRequest(Contract):
     expected_revision: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=200)
     confirm_provider_call: bool
@@ -603,7 +603,7 @@ def create_project_router(
     def retry_recommendations(
         project_id: str,
         run_id: str,
-        body: RetryRecommendationsRequest,
+        body: RecommendationCallRequest,
         background_tasks: BackgroundTasks,
         owner: OwnerIdentity = owner_dependency,
     ) -> dict:
@@ -611,6 +611,29 @@ def create_project_router(
             raise Conflict("Recommendation provider calls require explicit confirmation")
         run = scoped_run(project_id, run_id, owner)
         job, updated = automatic.retry_recommendations(
+            run,
+            expected_revision=body.expected_revision,
+            idempotency_key=body.idempotency_key,
+        )
+        if run_pending_jobs is not None:
+            background_tasks.add_task(run_pending_jobs)
+        return {"job": job_view(job), "run": run_view(updated, project_id)}
+
+    @router.post(
+        "/projects/{project_id}/runs/{run_id}/regenerate-recommendations",
+        status_code=202,
+    )
+    def regenerate_recommendations(
+        project_id: str,
+        run_id: str,
+        body: RecommendationCallRequest,
+        background_tasks: BackgroundTasks,
+        owner: OwnerIdentity = owner_dependency,
+    ) -> dict:
+        if body.confirm_provider_call is not True:
+            raise Conflict("Recommendation provider calls require explicit confirmation")
+        run = scoped_run(project_id, run_id, owner)
+        job, updated = automatic.regenerate_recommendations(
             run,
             expected_revision=body.expected_revision,
             idempotency_key=body.idempotency_key,

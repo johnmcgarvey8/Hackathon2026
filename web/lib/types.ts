@@ -335,18 +335,38 @@ export interface NewContentRecommendation {
   publish_permission: false;
 }
 
+export type TechnicalSignalName =
+  | "jsonld_types"
+  | "meta_title"
+  | "meta_description"
+  | "canonical"
+  | "robots"
+  | "hreflang"
+  | "open_graph"
+  | "h1"
+  | "h2"
+  | "image_alt_coverage"
+  | "internal_link_count";
+
+export interface TechnicalField {
+  state: "present" | "not-found" | "not-provided";
+  value?: string | number | boolean | string[] | null;
+}
+
+export interface TechnicalSignals extends Partial<Record<TechnicalSignalName, TechnicalField>> {
+  status: "captured" | "not-captured";
+  reason?: string | null;
+  crawled_at?: string | null;
+  browse_trace_id?: string | null;
+}
+
 export interface RecommendationPlanReport {
   schema_version: "geo-recommendation-report/v3";
   status: "completed" | "insufficient-evidence";
   diagnosis: string;
   key_findings: { summary: string; evidence: EvidenceQuote[] }[];
   items: (PageOptimisation | NewContentRecommendation)[];
-  technical_signals: {
-    status: "captured" | "not-captured";
-    reason?: string | null;
-    crawled_at?: string | null;
-    [key: string]: unknown;
-  };
+  technical_signals: TechnicalSignals;
   technical_findings: {
     findings: {
       check_id: string;

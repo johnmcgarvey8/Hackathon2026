@@ -270,6 +270,59 @@ class ProjectMeasurementOrchestrator:
             operation_ceiling=1 + int(self.policy.technical_browse),
         )
 
+    def regenerate_recommendations(
+        self,
+        run: MeasurementRun,
+        *,
+        expected_revision: int,
+        idempotency_key: str,
+    ) -> tuple[WorkflowJob, MeasurementRun]:
+        policy = self.require_live_policy()
+        existing = next(
+            (
+                item for item in self.repository.list_run_jobs(run.run_id, run.owner)
+                if item.idempotency_key == idempotency_key
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.job_type != JobType.AGENT_STAGE
+                or existing.request.get("role") != SpecialistAgentRole.RECOMMENDATIONS.value
+                or existing.request.get("regenerate") is not True
+            ):
+                raise Conflict("Idempotency key is bound to a different job request")
+            return existing, self.repository.get(run.run_id, run.owner)
+        if run.revision != expected_revision:
+            raise Conflict("Stale measurement revision; reload the run")
+        if (
+            run.measurement is None
+            or run.state not in {MeasurementState.READY, MeasurementState.PARTIAL}
+            or not any(result.status == "completed" for result in run.measurement.results)
+            or not any(packet.status == "completed" for packet in run.measurement.retrievals)
+        ):
+            raise Conflict("Recommendation regeneration requires saved measurement evidence")
+        binding, provider_mode = self._resolve_recommendations(run)
+        if binding is None:
+            raise Conflict("Configure a Foundry recommendations agent before regenerating")
+        return self.jobs.enqueue(
+            run.run_id,
+            run.owner,
+            expected_revision,
+            JobType.AGENT_STAGE,
+            idempotency_key,
+            SpecialistStageRequest(
+                role=SpecialistAgentRole.RECOMMENDATIONS,
+                provider_mode=provider_mode,
+                binding=binding,
+                confirm_provider_call=True,
+                regenerate=True,
+            ),
+            policy_id=policy.policy_id,
+            policy_hash=policy.policy_hash,
+            operation_ceiling=1 + int(policy.technical_browse),
+        )
+
     def _resolve_recommendations(
         self,
         current: MeasurementRun,
