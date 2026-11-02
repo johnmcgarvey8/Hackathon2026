@@ -1845,8 +1845,7 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                 ):
                     raise Conflict("Idempotency key is bound to a different job request")
                 return existing, current
-            if job_type != JobType.AGENT_STAGE:
-                self._require_no_active_specialist_job(connection, run_id, owner)
+            self._require_no_active_specialist_job(connection, run_id, owner)
             if current.revision != revision:
                 raise Conflict("Stale measurement revision; reload the run")
             if job_type == JobType.PREPARE:
@@ -1886,6 +1885,8 @@ class SQLAlchemyMeasurementRepository(MeasurementRepository):
                     raise Conflict("Specialist stages require saved measurement results")
                 next_state = current.state
                 event_type = f"{stage_request.role.value}-queued"
+                if stage_request.regenerate:
+                    event_type = f"{stage_request.role.value}-regeneration-queued"
             else:
                 raise Conflict("Unsupported workflow job type")
             self._lock_admission(connection)

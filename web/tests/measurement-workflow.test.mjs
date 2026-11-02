@@ -318,8 +318,8 @@ test("measurement detail provides accessible responsive section navigation", () 
     ["user-scenarios", "User Scenarios"],
     ["query-plan", "Grounding Queries"],
     ["model-answers", "LLM Provider Survey"],
-    ["citation-performance", "Citation Performance"],
     ["recommendations", "Recommendations"],
+    ["citation-performance", "Citation Performance"],
   ]) {
     assert.match(sectionNav, new RegExp(`id: "${id}", label: "${label}"`));
   }
@@ -334,6 +334,38 @@ test("measurement detail provides accessible responsive section navigation", () 
   assert.match(styles, /@media \(max-width: 1100px\)/);
   assert.match(styles, /scroll-behavior: smooth/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
+});
+
+test("citation performance follows artifacts and audit, before limitations, with matching navigation", () => {
+  const results = read("components/measurement/results/measurement-results.tsx");
+  const detail = read("app/projects/[projectId]/measurements/[runId]/page.tsx");
+  const sectionNav = read("components/measurement/measurement-section-nav.tsx");
+  const sections = [...results.matchAll(/<section\b[^>]*\bid="([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(sections.slice(-2), ["recommendations", "citation-performance"]);
+  const navSections = [...sectionNav.matchAll(/\{ id: "([^"]+)", label:/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(navSections.slice(-2), ["recommendations", "citation-performance"]);
+  assert.match(detail, /showCitationPerformance=\{false\}/);
+  assert.equal((detail.match(/<MeasurementCitationPerformance\b/g) || []).length, 1);
+  assert.ok(detail.indexOf("<MeasurementCitationPerformance") > detail.indexOf("Artifacts and audit"));
+  assert.ok(detail.indexOf("<MeasurementCitationPerformance") > detail.indexOf("Save human review"));
+  assert.ok(detail.indexOf("<MeasurementCitationPerformance") < detail.indexOf("<MeasurementLimitations"));
+});
+
+test("measurement limitations are collapsed by default after all run actions and audit", () => {
+  const results = read("components/measurement/results/measurement-results.tsx");
+  const detail = read("app/projects/[projectId]/measurements/[runId]/page.tsx");
+  const accordion = results.match(/<details className="card result-section limitations" id="limitations"[^>]*>/);
+  assert.ok(accordion);
+  assert.doesNotMatch(accordion[0], /\bopen\b/);
+  assert.match(results, /<summary className="card-heading">\s*<h2>Limitations and provenance<\/h2>/);
+  assert.match(results, /Array\.from\(new Set\(limitations\)\)/);
+  assert.match(detail, /showLimitations=\{false\}/);
+  assert.equal((detail.match(/<MeasurementLimitations\b/g) || []).length, 1);
+  assert.ok(detail.indexOf("<MeasurementLimitations") > detail.indexOf("Artifacts and audit"));
+  assert.ok(detail.indexOf("<MeasurementLimitations") > detail.indexOf("Save human review"));
+  assert.ok(detail.indexOf("<MeasurementLimitations") < detail.indexOf("{drawerOpen &&"));
 });
 
 test("chat renders query-centric workflow evidence without exposing internal IDs", () => {

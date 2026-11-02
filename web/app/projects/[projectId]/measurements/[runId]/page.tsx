@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useProject } from "@/components/project-context";
 import { RunProgressPanel } from "@/components/measurement/run-progress";
-import { EvidenceDrawer, MeasurementResultsView } from "@/components/measurement/results/measurement-results";
+import { EvidenceDrawer, MeasurementCitationPerformance, MeasurementLimitations, MeasurementResultsView } from "@/components/measurement/results/measurement-results";
 import { useRunPolling } from "@/components/measurement/use-run-polling";
 import { ScreenHeader } from "@/components/screen-header";
 import { LoadingState, UnavailableState } from "@/components/status-state";
@@ -328,7 +328,7 @@ export default function MeasurementRunPage() {
             </section>
           )}
 
-          <MeasurementResultsView run={run} assessment={assessment} strategy={strategy} onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)} />
+          <MeasurementResultsView run={run} assessment={assessment} strategy={strategy} showCitationPerformance={false} showLimitations={false} onOpenEvidence={(evidenceId) => void openEvidence(evidenceId)} />
 
           {actionAllowed(retryRecommendationsAction) && (
             <section className="card">
@@ -383,6 +383,9 @@ export default function MeasurementRunPage() {
             </div>
             <details><summary>Saved events ({events.length})</summary><ol className="event-list">{events.map((event) => <li key={event.sequence}><strong>{event.event_type}</strong><span>{displayDate(event.occurred_at)}</span></li>)}</ol></details>
           </section>
+
+          <MeasurementCitationPerformance run={run} />
+          <MeasurementLimitations run={run} assessment={assessment} strategy={strategy} />
 
       {drawerOpen && <EvidenceDrawer source={drawerSource} loading={drawerLoading} error={drawerError} onClose={() => setDrawerOpen(false)} />}
     </section>

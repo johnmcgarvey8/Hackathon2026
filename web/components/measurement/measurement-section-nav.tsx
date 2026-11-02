@@ -7,8 +7,8 @@ const sections = [
   { id: "user-scenarios", label: "User Scenarios" },
   { id: "query-plan", label: "Grounding Queries" },
   { id: "model-answers", label: "LLM Provider Survey" },
-  { id: "citation-performance", label: "Citation Performance" },
   { id: "recommendations", label: "Recommendations" },
+  { id: "citation-performance", label: "Citation Performance" },
 ] as const;
 
 type SectionId = (typeof sections)[number]["id"];
